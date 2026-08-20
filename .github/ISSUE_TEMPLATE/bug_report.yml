@@ -1,5 +1,5 @@
 name: Баг
- description: Что-то работает не так
+description: Что-то работает не так
 labels: ["bug"]
 body:
   - type: dropdown
