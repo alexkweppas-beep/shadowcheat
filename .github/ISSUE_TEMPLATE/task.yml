@@ -1,0 +1,29 @@
+name: Задача
+description: Фича, рефакторинг, любая работа кроме бага
+labels: ["enhancement"]
+body:
+  - type: dropdown
+    id: component
+    attributes:
+      label: Компонент
+      options:
+        - internal
+        - external
+        - shared
+        - launcher
+        - website
+    validations:
+      required: true
+
+  - type: textarea
+    id: what
+    attributes:
+      label: Что нужно сделать
+    validations:
+      required: true
+
+  - type: textarea
+    id: done
+    attributes:
+      label: Когда считаем готовым
+      description: Критерий, по которому закрываем задачу
