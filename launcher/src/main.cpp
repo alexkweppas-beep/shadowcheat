@@ -650,36 +650,46 @@ static std::string ComputeTextSectionHash() {
 // ─────────────────────────────────────────────────────────
 // Вспомогательный класс для временной остановки DPS (обход SRUM)
 // ─────────────────────────────────────────────────────────
+// Stops DPS (so SRUM never records this session) through the Service Control
+// Manager directly. The old version shelled out to cmd.exe for both the stop
+// and the start, which spawned a child process, and its destructor ran
+// `wevtutil cl System` + `wevtutil cl Application` — clearing entire event
+// logs, which fires a "log cleared" event and destroys unrelated records. A
+// service stop/start is a normal, low-signal event; the log clear was the
+// loudest thing the launcher did.
 struct DPSGuard {
+  bool was_running = false;
   DPSGuard() {
-    std::string cmd = xorstr_("cmd.exe /c net stop DPS /y");
-    STARTUPINFOA si = {sizeof(si)};
-    si.dwFlags = STARTF_USESHOWWINDOW;
-    si.wShowWindow = SW_HIDE;
-    PROCESS_INFORMATION pi = {};
-    std::vector<char> cmd_buf(cmd.begin(), cmd.end());
-    cmd_buf.push_back(0);
-    if (CreateProcessA(nullptr, cmd_buf.data(), nullptr, nullptr, FALSE,
-                       CREATE_NO_WINDOW, nullptr, nullptr, &si, &pi)) {
-      WaitForSingleObject(pi.hProcess, 15000);
-      CloseHandle(pi.hProcess);
-      CloseHandle(pi.hThread);
+    SC_HANDLE scm = OpenSCManagerW(nullptr, nullptr, SC_MANAGER_CONNECT);
+    if (!scm) return;
+    SC_HANDLE svc = OpenServiceW(
+        scm, L"DPS", SERVICE_STOP | SERVICE_QUERY_STATUS | SERVICE_START);
+    if (svc) {
+      SERVICE_STATUS ss{};
+      QueryServiceStatus(svc, &ss);
+      was_running = (ss.dwCurrentState == SERVICE_RUNNING);
+      if (was_running) {
+        ControlService(svc, SERVICE_CONTROL_STOP, &ss);
+        for (int i = 0; i < 25; ++i) {
+          Sleep(200);
+          QueryServiceStatus(svc, &ss);
+          if (ss.dwCurrentState == SERVICE_STOPPED) break;
+        }
+      }
+      CloseServiceHandle(svc);
     }
+    CloseServiceHandle(scm);
   }
   ~DPSGuard() {
-    std::string cmd = xorstr_("cmd.exe /c net start DPS & wevtutil cl System & "
-                              "wevtutil cl Application");
-    STARTUPINFOA si = {sizeof(si)};
-    si.dwFlags = STARTF_USESHOWWINDOW;
-    si.wShowWindow = SW_HIDE;
-    PROCESS_INFORMATION pi = {};
-    std::vector<char> cmd_buf(cmd.begin(), cmd.end());
-    cmd_buf.push_back(0);
-    if (CreateProcessA(nullptr, cmd_buf.data(), nullptr, nullptr, FALSE,
-                       CREATE_NO_WINDOW, nullptr, nullptr, &si, &pi)) {
-      CloseHandle(pi.hProcess);
-      CloseHandle(pi.hThread);
+    if (!was_running) return;
+    SC_HANDLE scm = OpenSCManagerW(nullptr, nullptr, SC_MANAGER_CONNECT);
+    if (!scm) return;
+    SC_HANDLE svc = OpenServiceW(scm, L"DPS", SERVICE_START);
+    if (svc) {
+      StartServiceW(svc, 0, nullptr);
+      CloseServiceHandle(svc);
     }
+    CloseServiceHandle(scm);
   }
 };
 
@@ -1960,7 +1970,10 @@ int APIENTRY wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
   ImGui::DestroyContext();
   CleanupD3D();
   DestroyWindow(hwnd);
-  UnregisterClassW(L"ShadowLoader", hInstance);
+  UnregisterClassW(L"ShdwLdr", hInstance);
+  // Restore the NVIDIA FTS keys written at startup before the anti-forensics
+  // shutdown restores the rest.
+  shadow_streamproof::RestoreNvidiaFtsRegistry();
   // Anti-forensics: финальная очистка всех трейсов текущего запуска
   shadow_af::Shutdown();
 
