@@ -1,0 +1,514 @@
+.products-page {
+  padding-top: 100px;
+  min-height: 100vh;
+  padding-bottom: 60px;
+  background-color: #17191c;
+}
+
+.product-layout {
+  display: grid;
+  grid-template-columns: 1fr 380px;
+  gap: 32px;
+  align-items: start;
+}
+
+/* LEFT COLUMN */
+.product-left {
+  display: flex;
+  flex-direction: column;
+  gap: 32px;
+}
+
+.product-slider-placeholder {
+  width: 100%;
+  aspect-ratio: 16/9;
+  background: rgba(255, 255, 255, 0.05);
+  border-radius: 16px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-secondary);
+  font-size: 24px;
+  border: 1px dashed rgba(255, 255, 255, 0.2);
+}
+
+.slider-thumbnails {
+  display: flex;
+  gap: 12px;
+  margin-top: 12px;
+  overflow-x: auto;
+  padding-bottom: 8px;
+}
+
+.thumbnail-placeholder {
+  width: 120px;
+  height: 68px;
+  flex-shrink: 0;
+  background: rgba(255, 255, 255, 0.05);
+  border-radius: 8px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  cursor: pointer;
+  transition: all 0.2s;
+}
+.thumbnail-placeholder:hover, .thumbnail-placeholder.active {
+  border-color: var(--accent-primary);
+  background: rgba(255, 255, 255, 0.1);
+}
+
+.product-section {
+  padding: 0;
+  margin-bottom: 32px;
+}
+
+.section-title {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  font-size: 20px;
+  font-weight: 700;
+  margin-bottom: 24px;
+}
+
+.section-title svg {
+  color: var(--accent-primary);
+}
+
+.description-text {
+  color: var(--text-secondary);
+  line-height: 1.6;
+  font-size: 15px;
+}
+
+/* Features Tabs */
+.features-tabs {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 32px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+  padding-bottom: 16px;
+  overflow-x: auto;
+}
+
+.tab-btn {
+  padding: 10px 20px;
+  border-radius: 8px;
+  color: var(--text-secondary);
+  font-weight: 600;
+  font-size: 14px;
+  background: rgba(255, 255, 255, 0.05);
+  transition: all 0.2s;
+}
+
+.tab-btn:hover {
+  background: rgba(255, 255, 255, 0.1);
+  color: var(--text-main);
+}
+
+.tab-btn.active {
+  background: #ffffff;
+  color: #000000;
+}
+
+.feature-group {
+  background: #111315;
+  border: 1px solid rgba(255, 255, 255, 0.03);
+  border-radius: 12px;
+  margin-bottom: 16px;
+  overflow: hidden;
+}
+
+.feature-group-header {
+  padding: 16px 24px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-weight: 600;
+  cursor: pointer;
+  background: rgba(255, 255, 255, 0.01);
+}
+
+.feature-group-header:hover {
+  background: rgba(255, 255, 255, 0.03);
+}
+
+.feature-list {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 16px;
+  padding: 24px;
+  border-top: 1px solid rgba(255, 255, 255, 0.05);
+}
+
+.feature-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--text-secondary);
+  font-size: 14px;
+}
+.feature-item span {
+  color: rgba(255,255,255,0.3);
+}
+
+/* Features Grid */
+.features-grid-container {
+  display: grid;
+  grid-template-columns: repeat(6, 1fr);
+  gap: 32px 16px;
+  padding: 16px 0;
+}
+
+.feature-grid-column {
+  display: flex;
+  flex-direction: column;
+  margin-bottom: 8px;
+}
+
+.feature-grid-title {
+  font-size: 14px;
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: #fff;
+  padding-bottom: 8px;
+  margin-bottom: 12px;
+}
+
+.feature-grid-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.feature-grid-item {
+  display: flex;
+  align-items: center;
+  font-size: 13px;
+  color: var(--text-secondary);
+}
+
+.feature-grid-arrow {
+  color: #fff;
+  font-size: 10px;
+  margin-right: 8px;
+}
+
+@media (max-width: 1024px) {
+  .features-grid-container {
+    grid-template-columns: repeat(2, 1fr);
+  }
+}
+
+@media (max-width: 640px) {
+  .features-grid-container {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* More from us */
+.more-games-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 16px;
+}
+
+.more-game-card {
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid rgba(255, 255, 255, 0.05);
+  border-radius: 12px;
+  overflow: hidden;
+  cursor: pointer;
+  transition: transform 0.2s;
+}
+.more-game-card:hover {
+  transform: translateY(-4px);
+}
+.more-game-img {
+  width: 100%;
+  height: 120px;
+  object-fit: cover;
+  background: #222;
+}
+.more-game-info {
+  padding: 16px;
+}
+.more-game-title {
+  font-weight: 700;
+  margin-bottom: 12px;
+  font-size: 15px;
+}
+.more-game-footer {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-size: 12px;
+}
+.more-game-price {
+  color: var(--text-secondary);
+}
+.more-game-badge {
+  background: rgba(34, 197, 94, 0.1);
+  color: #22c55e;
+  padding: 4px 8px;
+  border-radius: 4px;
+  font-weight: 700;
+  font-size: 11px;
+}
+
+/* RIGHT COLUMN */
+.product-right {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.right-card {
+  background: rgba(255, 255, 255, 0.03);
+  backdrop-filter: blur(10px);
+  border: 1px solid rgba(255, 255, 255, 0.05);
+  border-radius: 16px;
+  padding: 24px;
+}
+
+.product-header-logo {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 24px;
+}
+.header-logo-icon {
+  width: 32px;
+  height: 32px;
+  object-fit: contain;
+  filter: grayscale(1);
+}
+.header-logo-text {
+  font-weight: 700;
+  font-size: 16px;
+  letter-spacing: 1px;
+}
+
+.product-main-title {
+  font-size: 36px;
+  font-weight: 800;
+  margin-bottom: 12px;
+  letter-spacing: 1px;
+}
+
+.right-section-title {
+  font-size: 12px;
+  color: var(--text-secondary);
+  text-transform: uppercase;
+  letter-spacing: 1px;
+  font-weight: 700;
+  margin-bottom: 16px;
+}
+
+.status-badge {
+  display: inline-flex;
+  align-items: center;
+  background: rgba(34, 197, 94, 0.05);
+  border: 1px solid rgba(34, 197, 94, 0.2);
+  color: #22c55e;
+  padding: 8px 16px;
+  border-radius: 8px;
+  font-weight: 600;
+  font-size: 14px;
+  margin-bottom: 32px;
+}
+
+.ac-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.ac-item {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  background: rgba(255, 255, 255, 0.03);
+  backdrop-filter: blur(10px);
+  border: 1px solid rgba(255, 255, 255, 0.05);
+  padding: 12px 16px;
+  border-radius: 8px;
+}
+.ac-name {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 14px;
+  font-weight: 500;
+}
+.ac-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: #22c55e;
+}
+.ac-status {
+  background: rgba(34, 197, 94, 0.1);
+  color: #22c55e;
+  padding: 4px 12px;
+  border-radius: 100px;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.subscription-card {
+  padding: 16px 24px;
+}
+
+.plan-selector-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 12px;
+}
+
+.plan-btn {
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 12px;
+  padding: 10px 12px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  cursor: pointer;
+  transition: all 0.2s;
+  color: var(--text-secondary);
+}
+
+.plan-btn:hover {
+  background: rgba(255, 255, 255, 0.1);
+}
+
+.plan-btn.active {
+  background: rgba(255, 255, 255, 0.1);
+  border-color: rgba(255, 255, 255, 0.2);
+  color: #fff;
+}
+
+.plan-btn-days {
+  font-weight: 700;
+  font-size: 16px;
+}
+
+.plan-btn-perday {
+  font-size: 12px;
+  opacity: 0.8;
+}
+
+.coupon-box {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 24px;
+}
+.coupon-input {
+  flex: 1;
+  background: transparent;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 8px;
+  padding: 12px 16px;
+  color: white;
+  font-size: 14px;
+  outline: none;
+}
+.coupon-input::placeholder {
+  color: var(--text-secondary);
+}
+.coupon-btn {
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  color: var(--text-secondary);
+  padding: 0 16px;
+  border-radius: 8px;
+  font-weight: 600;
+  transition: all 0.2s;
+}
+.coupon-btn:hover {
+  background: rgba(255, 255, 255, 0.1);
+  color: white;
+}
+
+.payment-buttons {
+  display: flex;
+  gap: 12px;
+}
+.pay-btn {
+  flex: 1;
+  padding: 16px 0;
+  border-radius: 8px;
+  font-weight: 700;
+  font-size: 15px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.2s;
+}
+.pay-rub {
+  background: rgba(255, 255, 255, 0.85);
+  backdrop-filter: blur(10px);
+  border: 1px solid rgba(255, 255, 255, 0.9);
+  color: #000000;
+  border-radius: 12px;
+  padding: 10px 0;
+  gap: 8px;
+}
+.pay-rub:hover {
+  background: rgba(255, 255, 255, 1);
+}
+.pay-usdt {
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  color: white;
+}
+.pay-usdt:hover {
+  background: rgba(255, 255, 255, 0.1);
+}
+
+.info-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 24px;
+}
+.info-item {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.info-label {
+  font-size: 11px;
+  color: var(--text-secondary);
+  text-transform: uppercase;
+  letter-spacing: 1px;
+  font-weight: 700;
+}
+.info-value {
+  font-size: 14px;
+  font-weight: 600;
+}
+.info-footer {
+  margin-top: 24px;
+  font-size: 12px;
+  color: var(--text-secondary);
+  border-top: 1px solid rgba(255, 255, 255, 0.05);
+  padding-top: 16px;
+}
+
+@media (max-width: 1024px) {
+  .product-layout {
+    grid-template-columns: 1fr;
+  }
+}
+@media (max-width: 768px) {
+  .feature-list {
+    grid-template-columns: 1fr;
+  }
+  .more-games-grid {
+    grid-template-columns: 1fr;
+  }
+  .payment-buttons {
+    flex-direction: column;
+  }
+}

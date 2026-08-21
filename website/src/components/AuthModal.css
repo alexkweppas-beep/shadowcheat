@@ -1,0 +1,123 @@
+.auth-modal-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: rgba(0, 0, 0, 0.7);
+  backdrop-filter: blur(8px);
+  z-index: 1000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  animation: fadeIn 0.2s ease-out;
+  pointer-events: auto; /* FIX for clickability */
+}
+
+.auth-modal {
+  background: #101012;
+  border: none;
+  border-radius: 12px;
+  width: 400px;
+  max-width: 90%;
+  padding: 40px;
+  position: relative;
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.8);
+  animation: slideUp 0.3s ease-out;
+}
+
+.auth-logo-container {
+  display: flex;
+  align-items: center;
+  margin-bottom: 24px;
+}
+
+.auth-logo-icon {
+  height: 40px;
+  width: auto;
+  object-fit: contain;
+}
+
+@keyframes fadeIn {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+@keyframes slideUp {
+  from { opacity: 0; transform: translateY(20px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+.auth-title {
+  font-size: 22px;
+  font-weight: 700;
+  color: #fff;
+  margin-bottom: 32px;
+  text-align: left;
+}
+
+.auth-input-group {
+  margin-bottom: 16px;
+}
+
+.auth-input-group input {
+  width: 100%;
+  background: #1c1c1f;
+  border: none;
+  border-radius: 8px;
+  padding: 14px 16px;
+  color: #fff;
+  font-size: 14px;
+  outline: none;
+  transition: background-color 0.2s;
+}
+
+.auth-input-group input::placeholder {
+  color: #7a7a85;
+}
+
+.auth-input-group input:focus {
+  background: #242429;
+}
+
+.auth-submit-btn {
+  width: 100%;
+  background: #38383c;
+  color: #fff;
+  border: none;
+  border-radius: 8px;
+  padding: 14px;
+  font-size: 15px;
+  font-weight: 700;
+  cursor: pointer;
+  transition: all 0.2s;
+  margin-top: 12px;
+}
+
+.auth-submit-btn:hover {
+  background: #45454a;
+}
+
+.auth-links {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+  margin-top: 24px;
+  font-size: 13px;
+}
+
+.auth-text-muted {
+  color: #7a7a85;
+}
+
+.auth-link-bold {
+  color: #fff;
+  font-weight: 600;
+  cursor: pointer;
+  transition: opacity 0.2s;
+}
+
+.auth-link-bold:hover {
+  opacity: 0.8;
+}

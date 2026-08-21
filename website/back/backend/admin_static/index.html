@@ -1,0 +1,888 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Shadow Admin Panel</title>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --bg:       #0a0a0f;
+    --surface:  #111118;
+    --card:     #16161f;
+    --border:   #2a2a3a;
+    --accent:   #6c63ff;
+    --accent2:  #ff6584;
+    --green:    #00e676;
+    --red:      #ff5252;
+    --yellow:   #ffab40;
+    --text:     #e8e8f0;
+    --muted:    #7070a0;
+    --radius:   12px;
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{background:var(--bg);color:var(--text);font-family:'Inter',sans-serif;min-height:100vh;display:flex}
+
+  /* Sidebar */
+  .sidebar{width:220px;min-height:100vh;background:var(--surface);border-right:1px solid var(--border);display:flex;flex-direction:column;padding:24px 0;flex-shrink:0}
+  .logo{padding:0 20px 28px;display:flex;align-items:center;gap:10px;border-bottom:1px solid var(--border);margin-bottom:16px}
+  .logo-icon{width:36px;height:36px;background:linear-gradient(135deg,var(--accent),var(--accent2));border-radius:10px;display:flex;align-items:center;justify-content:center;font-size:18px}
+  .logo-text{font-weight:700;font-size:15px;letter-spacing:.5px}
+  .logo-sub{font-size:10px;color:var(--muted);letter-spacing:1px;text-transform:uppercase}
+  .nav-item{display:flex;align-items:center;gap:10px;padding:10px 20px;cursor:pointer;border-radius:0;transition:all .2s;font-size:13.5px;color:var(--muted);border-left:3px solid transparent}
+  .nav-item:hover{background:rgba(108,99,255,.08);color:var(--text)}
+  .nav-item.active{background:rgba(108,99,255,.12);color:var(--accent);border-left-color:var(--accent)}
+  .nav-icon{font-size:16px;width:20px;text-align:center}
+  .nav-sep{height:1px;background:var(--border);margin:10px 16px}
+
+  /* Main */
+  .main{flex:1;display:flex;flex-direction:column;overflow:hidden}
+  .topbar{height:56px;background:var(--surface);border-bottom:1px solid var(--border);display:flex;align-items:center;padding:0 24px;gap:12px;flex-shrink:0}
+  .topbar-title{font-weight:600;font-size:15px;flex:1}
+  .topbar-admin{display:flex;align-items:center;gap:8px;font-size:13px;color:var(--muted)}
+  .avatar{width:28px;height:28px;background:linear-gradient(135deg,var(--accent),var(--accent2));border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:700;color:#fff}
+
+  /* Content */
+  .content{flex:1;padding:24px;overflow-y:auto}
+
+  /* Cards */
+  .stat-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(180px,1fr));gap:16px;margin-bottom:24px}
+  .stat-card{background:var(--card);border:1px solid var(--border);border-radius:var(--radius);padding:20px;position:relative;overflow:hidden;transition:border-color .2s}
+  .stat-card:hover{border-color:var(--accent)}
+  .stat-card::before{content:'';position:absolute;top:0;left:0;right:0;height:2px}
+  .stat-card.purple::before{background:linear-gradient(90deg,var(--accent),var(--accent2))}
+  .stat-card.green::before{background:var(--green)}
+  .stat-card.red::before{background:var(--red)}
+  .stat-card.yellow::before{background:var(--yellow)}
+  .stat-card.blue::before{background:#40c4ff}
+  .stat-card.orange::before{background:#ff9800}
+  .stat-label{font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:1px;margin-bottom:8px}
+  .stat-val{font-size:28px;font-weight:700;line-height:1}
+  .stat-icon{position:absolute;right:16px;top:16px;font-size:24px;opacity:.15}
+
+  /* Table */
+  .table-card{background:var(--card);border:1px solid var(--border);border-radius:var(--radius);overflow:hidden;margin-bottom:24px}
+  .table-head{display:flex;align-items:center;padding:16px 20px;border-bottom:1px solid var(--border);gap:12px}
+  .table-title{font-weight:600;font-size:14px;flex:1}
+  .search-box{display:flex;align-items:center;gap:8px;background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:6px 12px}
+  .search-box input{background:none;border:none;outline:none;color:var(--text);font-size:13px;width:180px}
+  table{width:100%;border-collapse:collapse;font-size:13px}
+  th{padding:10px 16px;text-align:left;font-size:11px;text-transform:uppercase;letter-spacing:.8px;color:var(--muted);font-weight:500;border-bottom:1px solid var(--border)}
+  td{padding:10px 16px;border-bottom:1px solid rgba(42,42,58,.5)}
+  tr:last-child td{border-bottom:none}
+  tr:hover td{background:rgba(108,99,255,.04)}
+  .mono{font-family:'JetBrains Mono',monospace;font-size:11px}
+
+  /* Badges */
+  .badge{display:inline-flex;align-items:center;gap:4px;padding:2px 8px;border-radius:20px;font-size:11px;font-weight:600}
+  .badge-green{background:rgba(0,230,118,.12);color:var(--green);border:1px solid rgba(0,230,118,.2)}
+  .badge-red{background:rgba(255,82,82,.12);color:var(--red);border:1px solid rgba(255,82,82,.2)}
+  .badge-yellow{background:rgba(255,171,64,.12);color:var(--yellow);border:1px solid rgba(255,171,64,.2)}
+  .badge-purple{background:rgba(108,99,255,.12);color:var(--accent);border:1px solid rgba(108,99,255,.2)}
+  .badge-blue{background:rgba(64,196,255,.12);color:#40c4ff;border:1px solid rgba(64,196,255,.2)}
+
+  /* Buttons */
+  .btn{display:inline-flex;align-items:center;gap:6px;padding:6px 14px;border-radius:8px;font-size:12px;font-weight:600;cursor:pointer;border:none;transition:all .2s;letter-spacing:.3px}
+  .btn-primary{background:var(--accent);color:#fff}
+  .btn-primary:hover{background:#7c74ff;transform:translateY(-1px)}
+  .btn-danger{background:rgba(255,82,82,.12);color:var(--red);border:1px solid rgba(255,82,82,.2)}
+  .btn-danger:hover{background:var(--red);color:#fff}
+  .btn-success{background:rgba(0,230,118,.12);color:var(--green);border:1px solid rgba(0,230,118,.2)}
+  .btn-success:hover{background:var(--green);color:#000}
+  .btn-ghost{background:rgba(108,99,255,.08);color:var(--accent);border:1px solid rgba(108,99,255,.15)}
+  .btn-ghost:hover{background:rgba(108,99,255,.2)}
+  .btn-sm{padding:4px 10px;font-size:11px}
+
+  /* Modal */
+  .modal-overlay{position:fixed;inset:0;background:rgba(0,0,0,.7);backdrop-filter:blur(4px);display:flex;align-items:center;justify-content:center;z-index:100;opacity:0;pointer-events:none;transition:opacity .2s}
+  .modal-overlay.open{opacity:1;pointer-events:all}
+  .modal{background:var(--card);border:1px solid var(--border);border-radius:16px;padding:28px;min-width:440px;transform:translateY(20px);transition:transform .3s}
+  .modal-overlay.open .modal{transform:translateY(0)}
+  .modal-title{font-weight:700;font-size:16px;margin-bottom:20px;display:flex;align-items:center;gap:8px}
+  .modal-footer{display:flex;gap:8px;justify-content:flex-end;margin-top:24px;padding-top:16px;border-top:1px solid var(--border)}
+  .form-group{margin-bottom:16px}
+  .form-label{font-size:12px;color:var(--muted);margin-bottom:6px;display:block;text-transform:uppercase;letter-spacing:.5px}
+  .form-input{width:100%;background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:10px 14px;color:var(--text);font-size:13px;outline:none;font-family:inherit;transition:border-color .2s}
+  .form-input:focus{border-color:var(--accent)}
+  select.form-input option{background:var(--card)}
+
+  /* Toast */
+  .toast-container{position:fixed;bottom:24px;right:24px;display:flex;flex-direction:column;gap:8px;z-index:200}
+  .toast{background:var(--card);border:1px solid var(--border);border-radius:10px;padding:12px 16px;font-size:13px;min-width:240px;display:flex;align-items:center;gap:10px;animation:slideIn .3s ease;box-shadow:0 8px 32px rgba(0,0,0,.4)}
+  @keyframes slideIn{from{transform:translateX(100px);opacity:0}to{transform:translateX(0);opacity:1}}
+  .toast.success{border-color:rgba(0,230,118,.3)}
+  .toast.error{border-color:rgba(255,82,82,.3)}
+
+  /* Page sections */
+  .page{display:none}
+  .page.active{display:block}
+
+  /* Login */
+  .login-wrap{width:100%;height:100vh;display:flex;align-items:center;justify-content:center;background:var(--bg)}
+  .login-card{background:var(--card);border:1px solid var(--border);border-radius:20px;padding:40px;width:380px}
+  .login-logo{text-align:center;margin-bottom:32px}
+  .login-logo .logo-icon{width:56px;height:56px;margin:0 auto 12px;font-size:28px;border-radius:16px}
+  .login-logo h1{font-size:20px;font-weight:700}
+  .login-logo p{font-size:12px;color:var(--muted);margin-top:4px}
+
+  /* Pagination */
+  .pagination{display:flex;align-items:center;gap:8px;padding:16px 20px;border-top:1px solid var(--border)}
+  .page-btn{padding:4px 10px;border-radius:6px;background:var(--surface);border:1px solid var(--border);cursor:pointer;font-size:12px;color:var(--text)}
+  .page-btn.active{background:var(--accent);border-color:var(--accent)}
+  .page-btn:hover:not(.active){border-color:var(--accent);color:var(--accent)}
+  .page-info{font-size:12px;color:var(--muted);flex:1;text-align:right}
+
+  /* Scrollbar */
+  ::-webkit-scrollbar{width:6px;height:6px}
+  ::-webkit-scrollbar-track{background:transparent}
+  ::-webkit-scrollbar-thumb{background:var(--border);border-radius:3px}
+  ::-webkit-scrollbar-thumb:hover{background:var(--muted)}
+
+  .empty-state{padding:40px;text-align:center;color:var(--muted);font-size:13px}
+  .empty-icon{font-size:40px;margin-bottom:12px;opacity:.4}
+
+  .action-bar{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+  .divider{height:1px;background:var(--border);margin:20px 0}
+  .text-muted{color:var(--muted)}
+  .text-sm{font-size:12px}
+  .gap-chips{display:flex;gap:6px;flex-wrap:wrap}
+</style>
+</head>
+<body>
+
+<!-- LOGIN -->
+<div id="loginPage" class="login-wrap">
+  <div class="login-card">
+    <div class="login-logo">
+      <div class="logo-icon">🛡️</div>
+      <h1>Shadow Admin</h1>
+      <p>Панель управления Shadow Cheats</p>
+    </div>
+    <div class="form-group">
+      <label class="form-label">Логин</label>
+      <input id="loginUser" class="form-input" type="text" placeholder="fraud444" autocomplete="username">
+    </div>
+    <div class="form-group">
+      <label class="form-label">Пароль</label>
+      <input id="loginPass" class="form-input" type="password" placeholder="••••••••" autocomplete="current-password">
+    </div>
+    <button class="btn btn-primary" style="width:100%;justify-content:center;padding:12px" onclick="doLogin()">Войти</button>
+    <div id="loginErr" style="color:var(--red);font-size:12px;margin-top:12px;text-align:center"></div>
+  </div>
+</div>
+
+<!-- ADMIN APP -->
+<div id="adminApp" style="display:none;width:100%;display:none">
+  <div class="sidebar">
+    <div class="logo">
+      <div class="logo-icon">🛡️</div>
+      <div><div class="logo-text">Shadow</div><div class="logo-sub">Admin Panel</div></div>
+    </div>
+    <div class="nav-item active" data-page="dashboard" onclick="setPage(this)"><span class="nav-icon">📊</span> Дашборд</div>
+    <div class="nav-item" data-page="users" onclick="setPage(this)"><span class="nav-icon">👥</span> Пользователи</div>
+    <div class="nav-item" data-page="keys" onclick="setPage(this)"><span class="nav-icon">🔑</span> Ключи</div>
+    <div class="nav-sep"></div>
+    <div class="nav-item" data-page="security" onclick="setPage(this)"><span class="nav-icon">🚨</span> События безопасности</div>
+    <div class="nav-item" data-page="banReports" onclick="setPage(this)"><span class="nav-icon">🛡️</span> Бан-репорты</div>
+    <div class="nav-item" data-page="downloads" onclick="setPage(this)"><span class="nav-icon">📥</span> Загрузки</div>
+    <div class="nav-item" data-page="hwidBans" onclick="setPage(this)"><span class="nav-icon">🚫</span> HWID Баны</div>
+    <div class="nav-sep"></div>
+    <div class="nav-item" data-page="activity" onclick="setPage(this)"><span class="nav-icon">📈</span> Логи активности</div>
+    <div class="nav-item" data-page="sessions" onclick="setPage(this)"><span class="nav-icon">📡</span> Сессии лоадера</div>
+    <div class="nav-item" data-page="versions" onclick="setPage(this)"><span class="nav-icon">📦</span> Версии лоадера</div>
+    <div class="nav-item" data-page="audit" onclick="setPage(this)"><span class="nav-icon">📋</span> Аудит лог</div>
+    <div class="nav-item" onclick="logout()" style="margin-top:auto"><span class="nav-icon">🚪</span> Выйти</div>
+  </div>
+
+  <div class="main">
+    <div class="topbar">
+      <div class="topbar-title" id="pageTitle">Дашборд</div>
+      <div class="topbar-admin">
+        <div class="avatar">A</div>
+        <span id="adminName">Admin</span>
+      </div>
+    </div>
+    <div class="content">
+
+      <!-- DASHBOARD -->
+      <div class="page active" id="page-dashboard">
+        <div class="stat-grid" id="statsGrid">
+          <div class="stat-card purple"><div class="stat-label">Всего юзеров</div><div class="stat-val" id="s-users">—</div><div class="stat-icon">👥</div></div>
+          <div class="stat-card red"><div class="stat-label">Забанено</div><div class="stat-val" id="s-banned">—</div><div class="stat-icon">🚫</div></div>
+          <div class="stat-card green"><div class="stat-label">Активные подписки</div><div class="stat-val" id="s-subs">—</div><div class="stat-icon">✅</div></div>
+          <div class="stat-card blue"><div class="stat-label">Загрузок (24ч)</div><div class="stat-val" id="s-dl">—</div><div class="stat-icon">📥</div></div>
+          <div class="stat-card yellow"><div class="stat-label">Security Events (24ч)</div><div class="stat-val" id="s-sec">—</div><div class="stat-icon">🔥</div></div>
+          <div class="stat-card orange"><div class="stat-label">HWID Банов</div><div class="stat-val" id="s-hw">—</div><div class="stat-icon">💻</div></div>
+        </div>
+        <div class="table-card">
+          <div class="table-head"><div class="table-title">🚨 Последние события безопасности</div></div>
+          <div id="recentEvents"><div class="empty-state">Загрузка...</div></div>
+        </div>
+      </div>
+
+      <!-- USERS -->
+      <div class="page" id="page-users">
+        <div class="table-card">
+          <div class="table-head">
+            <div class="table-title">👥 Пользователи</div>
+            <div class="search-box">🔍 <input type="text" id="userSearch" placeholder="Поиск по нику или HWID..." oninput="loadUsers(1)"></div>
+            <button class="btn btn-primary btn-sm" onclick="openCreateUser()">+ Создать</button>
+          </div>
+          <table>
+            <thead><tr>
+              <th>ID</th><th>Ник</th><th>HWID</th><th>Статус</th><th>Подписки</th><th>Зарегистрирован</th><th>Действия</th>
+            </tr></thead>
+            <tbody id="usersTable"><tr><td colspan="7" class="empty-state">Загрузка...</td></tr></tbody>
+          </table>
+          <div class="pagination" id="usersPagination"></div>
+        </div>
+      </div>
+
+      <!-- KEYS -->
+      <div class="page" id="page-keys">
+        <div class="table-card" style="margin-bottom:16px">
+          <div class="table-head"><div class="table-title">🔑 Генерация ключей</div></div>
+          <div style="padding:20px;display:grid;grid-template-columns:1fr 1fr 1fr auto;gap:12px;align-items:end">
+            <div class="form-group" style="margin:0">
+              <label class="form-label">Продукт</label>
+              <select id="keyProduct" class="form-input">
+                <option value="external">External</option>
+                <option value="trigger">Trigger</option>
+                <option value="trigger_silent">Trigger + Silent</option>
+              </select>
+            </div>
+            <div class="form-group" style="margin:0">
+              <label class="form-label">Дней</label>
+              <input id="keyDays" class="form-input" type="number" value="30" min="1">
+            </div>
+            <div class="form-group" style="margin:0">
+              <label class="form-label">Количество</label>
+              <input id="keyAmount" class="form-input" type="number" value="1" min="1" max="100">
+            </div>
+            <button class="btn btn-primary" onclick="generateKeys()">Сгенерировать</button>
+          </div>
+          <div id="generatedKeys" style="padding:0 20px 16px;display:none">
+            <div class="form-label" style="margin-bottom:8px">Сгенерированные ключи:</div>
+            <textarea id="keysOutput" class="form-input mono" rows="4" readonly style="resize:none"></textarea>
+          </div>
+        </div>
+        <div class="table-card">
+          <div class="table-head"><div class="table-title">Все ключи</div><button class="btn btn-ghost btn-sm" onclick="loadKeys()">↻ Обновить</button></div>
+          <table>
+            <thead><tr><th>Ключ</th><th>Продукт</th><th>Дней</th><th>Использован</th><th>Кем</th><th>Дата использования</th></tr></thead>
+            <tbody id="keysTable"></tbody>
+          </table>
+        </div>
+      </div>
+
+      <!-- SECURITY EVENTS -->
+      <div class="page" id="page-security">
+        <div class="table-card">
+          <div class="table-head"><div class="table-title">🚨 События безопасности</div><button class="btn btn-ghost btn-sm" onclick="loadSecurityEvents()">↻ Обновить</button></div>
+          <table>
+            <thead><tr><th>ID</th><th>Пользователь</th><th>HWID</th><th>Тип</th><th>Детали</th><th>IP</th><th>Время</th></tr></thead>
+            <tbody id="securityTable"></tbody>
+          </table>
+        </div>
+      </div>
+
+      <!-- BAN REPORTS -->
+      <div class="page" id="page-banReports">
+        <div class="table-card">
+          <div class="table-head">
+            <div class="table-title">🛡️ Бан-репорты от лоадера</div>
+            <div class="search-box">🔍 <input type="text" id="banReportSearch" placeholder="Ник, HWID, IP, причина..." oninput="loadBanReports()"></div>
+            <button class="btn btn-ghost btn-sm" onclick="loadBanReports()">↻ Обновить</button>
+          </div>
+          <table>
+            <thead><tr>
+              <th>ID</th><th>Пользователь</th><th>HWID</th><th>IP</th><th>Причина</th><th>Детали</th><th>Время</th><th>Действие</th>
+            </tr></thead>
+            <tbody id="banReportsTable"><tr><td colspan="8" class="empty-state">Загрузка...</td></tr></tbody>
+          </table>
+        </div>
+      </div>
+
+      <!-- DOWNLOADS -->
+      <div class="page" id="page-downloads">
+        <div class="table-card">
+          <div class="table-head"><div class="table-title">📥 Лог загрузок</div><button class="btn btn-ghost btn-sm" onclick="loadDownloads()">↻ Обновить</button></div>
+          <table>
+            <thead><tr><th>ID</th><th>Пользователь</th><th>Продукт</th><th>HWID</th><th>Имя лоадера</th><th>Integrity Hash</th><th>Время</th></tr></thead>
+            <tbody id="downloadsTable"></tbody>
+          </table>
+        </div>
+      </div>
+
+      <!-- HWID BANS -->
+      <div class="page" id="page-hwidBans">
+        <div class="table-card">
+          <div class="table-head"><div class="table-title">🚫 HWID Баны</div><button class="btn btn-ghost btn-sm" onclick="loadHwidBans()">↻ Обновить</button></div>
+          <table>
+            <thead><tr><th>HWID</th><th>Причина</th><th>Пользователь</th><th>Дата</th><th>Действие</th></tr></thead>
+          <tbody id="hwidBansTable"></tbody></table>
+        </div>
+      </div>
+
+      <!-- ACTIVITY LOG -->
+      <div class="page" id="page-activity">
+        <div class="table-card">
+          <div class="table-head"><div class="table-title">📈 Логи активности</div><button class="btn btn-ghost btn-sm" onclick="loadActivity()">↻ Обновить</button></div>
+          <table>
+            <thead><tr><th>ID</th><th>Пользователь</th><th>Действие</th><th>Детали</th><th>HWID</th><th>IP</th><th>Время</th></tr></thead>
+          <tbody id="activityTable"></tbody></table>
+        </div>
+      </div>
+
+      <!-- LOADER SESSIONS -->
+      <div class="page" id="page-sessions">
+        <div class="table-card">
+          <div class="table-head"><div class="table-title">📡 Активные сессии лоадера</div><button class="btn btn-ghost btn-sm" onclick="loadSessions()">↻ Обновить</button></div>
+          <table>
+            <thead><tr><th>User ID</th><th>Пользователь</th><th>Integrity Hash</th><th>Session Key</th><th>Last Heartbeat</th><th>Действие</th></tr></thead>
+          <tbody id="sessionsTable"></tbody></table>
+        </div>
+      </div>
+
+      <!-- LOADER VERSIONS -->
+      <div class="page" id="page-versions">
+        <div class="table-card">
+          <div class="table-head">
+            <div class="table-title">📦 Версии лоадера</div>
+            <button class="btn btn-primary btn-sm" onclick="openCreateVersion()">+ Добавить версию</button>
+            <button class="btn btn-ghost btn-sm" onclick="loadVersions()">↻ Обновить</button>
+          </div>
+          <table>
+            <thead><tr><th>ID Версии</th><th>Токен</th><th>Описание</th><th>Скачиваний</th><th>Статус</th><th>Отозвано кем</th><th>Создано</th><th>Действия</th></tr></thead>
+          <tbody id="versionsTable"></tbody></table>
+        </div>
+      </div>
+
+      <!-- AUDIT -->
+      <div class="page" id="page-audit">
+        <div class="table-card">
+          <div class="table-head"><div class="table-title">📋 Аудит лог</div><button class="btn btn-ghost btn-sm" onclick="loadAudit()">↻ Обновить</button></div>
+          <table>
+            <thead><tr><th>ID</th><th>Администратор</th><th>Действие</th><th>Target ID</th><th>IP</th><th>Время</th></tr></thead>
+          <tbody id="auditTable"></tbody></table>
+        </div>
+      </div>
+
+    </div>
+  </div>
+</div>
+
+<!-- MODALS -->
+
+<!-- User Modal -->
+<div class="modal-overlay" id="userModal">
+  <div class="modal">
+    <div class="modal-title">👤 <span id="userModalTitle">Пользователь</span></div>
+    <div id="userModalBody"></div>
+    <div class="modal-footer">
+      <button class="btn btn-ghost" onclick="closeModal('userModal')">Закрыть</button>
+    </div>
+  </div>
+</div>
+
+<!-- Create User -->
+<div class="modal-overlay" id="createModal">
+  <div class="modal">
+    <div class="modal-title">➕ Создать пользователя</div>
+    <div class="form-group"><label class="form-label">Логин</label><input id="newUsername" class="form-input" placeholder="username"></div>
+    <div class="form-group"><label class="form-label">Пароль</label><input id="newPassword" class="form-input" type="password" placeholder="••••••••"></div>
+    <div class="modal-footer">
+      <button class="btn btn-ghost" onclick="closeModal('createModal')">Отмена</button>
+      <button class="btn btn-primary" onclick="createUser()">Создать</button>
+    </div>
+  </div>
+</div>
+
+<!-- Sub Modal -->
+<div class="modal-overlay" id="subModal">
+  <div class="modal">
+    <div class="modal-title">📦 Управление подпиской</div>
+    <input type="hidden" id="subUserId">
+    <div class="form-group"><label class="form-label">Продукт</label>
+      <select id="subProduct" class="form-input">
+        <option value="external">External</option>
+        <option value="trigger">Trigger</option>
+        <option value="trigger_silent">Trigger + Silent (addon)</option>
+      </select>
+    </div>
+    <div class="form-group"><label class="form-label">Дней (0 = отозвать)</label><input id="subDays" class="form-input" type="number" value="30" min="0"></div>
+    <div class="modal-footer">
+      <button class="btn btn-ghost" onclick="closeModal('subModal')">Отмена</button>
+      <button class="btn btn-primary" onclick="saveSub()">Сохранить</button>
+    </div>
+  </div>
+</div>
+
+<!-- Create Version Modal -->
+<div class="modal-overlay" id="createVersionModal">
+  <div class="modal">
+    <div class="modal-title">➕ Добавить версию лоадера</div>
+    <div class="form-group"><label class="form-label">Version ID (число, например 42)</label><input id="newVersionId" class="form-input" type="number" placeholder="42"></div>
+    <div class="form-group"><label class="form-label">Описание</label><input id="newVersionLabel" class="form-input" placeholder="Release v2.5"></div>
+    <div class="modal-footer">
+      <button class="btn btn-ghost" onclick="closeModal('createVersionModal')">Отмена</button>
+      <button class="btn btn-primary" onclick="createVersion()">Создать</button>
+    </div>
+  </div>
+</div>
+
+<!-- Toast -->
+<div class="toast-container" id="toasts"></div>
+
+<script>
+const API = '/api';
+let token = localStorage.getItem('shadow_admin_token');
+let currentPage_users = 1;
+
+// ── AUTH ──
+async function doLogin() {
+  const u = document.getElementById('loginUser').value;
+  const p = document.getElementById('loginPass').value;
+  document.getElementById('loginErr').textContent = '';
+  try {
+    const r = await fetch(`${API}/auth/login`, {
+      method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({ username:u, password:p, hwid:'admin_panel_'+u, timestamp:Date.now(), signature:'' })
+    });
+    const d = await r.json();
+    if (!d.token) { document.getElementById('loginErr').textContent = d.error||'Ошибка входа'; return; }
+    if (!d.user?.is_admin) { document.getElementById('loginErr').textContent = 'Нет прав администратора'; return; }
+    token = d.token;
+    localStorage.setItem('shadow_admin_token', token);
+    document.getElementById('adminName').textContent = d.user.username;
+    showAdmin();
+  } catch(e) { document.getElementById('loginErr').textContent = 'Ошибка подключения: '+e.message; }
+}
+
+function showAdmin() {
+  document.getElementById('loginPage').style.display = 'none';
+  document.getElementById('adminApp').style.display = 'flex';
+  loadDashboard();
+}
+
+function logout() {
+  localStorage.removeItem('shadow_admin_token');
+  location.reload();
+}
+
+async function api(path, method='GET', body=null) {
+  const opts = { method, headers:{'Authorization':'Bearer '+token,'Content-Type':'application/json'} };
+  if (body) opts.body = JSON.stringify(body);
+  const r = await fetch(API+path, opts);
+  if (r.status===401||r.status===403) { logout(); throw new Error('Auth'); }
+  return r.json();
+}
+
+// ── NAVIGATION ──
+function setPage(el) {
+  document.querySelectorAll('.nav-item').forEach(n=>n.classList.remove('active'));
+  el.classList.add('active');
+  document.querySelectorAll('.page').forEach(p=>p.classList.remove('active'));
+  const pg = el.dataset.page;
+  document.getElementById('page-'+pg).classList.add('active');
+  const titles = {dashboard:'📊 Дашборд',users:'👥 Пользователи',keys:'🔑 Ключи',security:'🚨 События безопасности',banReports:'🛡️ Бан-репорты',downloads:'📥 Лог загрузок',hwidBans:'🚫 HWID Баны',audit:'📋 Аудит лог',activity:'📈 Логи активности',sessions:'📡 Сессии лоадера',versions:'📦 Версии лоадера'};
+  document.getElementById('pageTitle').textContent = titles[pg]||pg;
+  if (pg==='users') loadUsers(1);
+  if (pg==='keys') loadKeys();
+  if (pg==='security') loadSecurityEvents();
+  if (pg==='banReports') loadBanReports();
+  if (pg==='downloads') loadDownloads();
+  if (pg==='hwidBans') loadHwidBans();
+  if (pg==='activity') loadActivity();
+  if (pg==='sessions') loadSessions();
+  if (pg==='versions') loadVersions();
+  if (pg==='audit') loadAudit();
+}
+
+// ── DASHBOARD ──
+async function loadDashboard() {
+  const s = await api('/admin/stats');
+  document.getElementById('s-users').textContent = s.total_users;
+  document.getElementById('s-banned').textContent = s.banned_users;
+  document.getElementById('s-subs').textContent = s.active_subs;
+  document.getElementById('s-dl').textContent = s.downloads_24h;
+  document.getElementById('s-sec').textContent = s.security_events_24h;
+  document.getElementById('s-hw').textContent = s.hwid_bans;
+  // Recent events
+  const ev = await api('/admin/security-events');
+  const recent = ev.slice(0,10);
+  if (!recent.length) { document.getElementById('recentEvents').innerHTML='<div class="empty-state">Событий нет</div>'; return; }
+  document.getElementById('recentEvents').innerHTML = `<table style="width:100%">
+    <thead><tr><th>Пользователь</th><th>Тип</th><th>Детали</th><th>IP</th><th>Время</th></tr></thead>
+    <tbody>${recent.map(e=>`<tr>
+      <td>${e.username||'<span class="text-muted">—</span>'}</td>
+      <td><span class="badge ${eventBadge(e.event_type)}">${e.event_type}</span></td>
+      <td class="mono">${e.detail||''}</td>
+      <td class="mono">${e.ip||''}</td>
+      <td class="text-muted text-sm">${fmtTime(e.ts)}</td>
+    </tr>`).join('')}</tbody>
+  </table>`;
+}
+
+function eventBadge(t) {
+  if (t==='BAN') return 'badge-red';
+  if (t==='INTEGRITY_FAIL') return 'badge-red';
+  if (t==='HONEYPOT') return 'badge-yellow';
+  if (t==='BRUTE_FORCE') return 'badge-yellow';
+  return 'badge-purple';
+}
+
+// ── USERS ──
+async function loadUsers(page=1) {
+  currentPage_users = page;
+  const search = document.getElementById('userSearch')?.value||'';
+  const d = await api(`/admin/users?page=${page}&search=${encodeURIComponent(search)}`);
+  const tbody = document.getElementById('usersTable');
+
+  tbody.innerHTML = d.users.map(u => {
+    const subBadges = u.subscriptions.map(s =>
+      `<span class="badge badge-${s.days_left>0?'green':'red'}">${s.product_id} ${s.days_left}д</span>`
+    ).join(' ') || '<span class="text-muted">—</span>';
+    return `<tr>
+      <td>${u.id}</td>
+      <td><strong>${u.username}</strong>${u.is_admin?' <span class="badge badge-purple">admin</span>':''}</td>
+      <td class="mono" style="font-size:10px;max-width:120px;overflow:hidden;text-overflow:ellipsis" title="${u.hwid||''}">${u.hwid?u.hwid.substring(0,20)+'...':'<span class="text-muted">—</span>'}</td>
+      <td><span class="badge ${u.banned?'badge-red':'badge-green'}">${u.banned?'Забанен':'Активен'}</span></td>
+      <td class="gap-chips">${subBadges}</td>
+      <td class="text-muted text-sm">${fmtTime(u.created_at)}</td>
+      <td>
+        <div style="display:flex;gap:4px">
+          <button class="btn btn-ghost btn-sm" onclick="openUser(${u.id})">Открыть</button>
+          <button class="btn ${u.banned?'btn-success':'btn-danger'} btn-sm" onclick="toggleBan(${u.id},'${u.username}',${u.banned})">${u.banned?'Разбанить':'Бан'}</button>
+        </div>
+      </td>
+    </tr>`;
+  }).join('');
+
+  if (!d.users.length) tbody.innerHTML = '<tr><td colspan="7" class="empty-state"><div class="empty-icon">🔍</div>Ничего не найдено</td></tr>';
+
+  // Pagination
+  const pg = document.getElementById('usersPagination');
+  let html = '';
+  for (let i=1;i<=d.pages;i++) html+=`<button class="page-btn${i===page?' active':''}" onclick="loadUsers(${i})">${i}</button>`;
+  pg.innerHTML = html + `<div class="page-info">Всего: ${d.total} пользователей</div>`;
+}
+
+async function openUser(id) {
+  const users = await api(`/admin/users?search=`);
+  const d = await api(`/admin/users`);
+  const user = d.users.find(u=>u.id===id) || (await api(`/admin/users?search=${id}`)).users[0];
+  document.getElementById('userModalTitle').textContent = user?.username||'Пользователь #'+id;
+  document.getElementById('userModalBody').innerHTML = `
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-bottom:20px">
+      <div><div class="form-label">ID</div><div class="mono">${user?.id||id}</div></div>
+      <div><div class="form-label">Статус</div><span class="badge ${user?.banned?'badge-red':'badge-green'}">${user?.banned?'Забанен':'Активен'}</span></div>
+      <div style="grid-column:1/-1"><div class="form-label">HWID</div><div class="mono" style="font-size:11px;word-break:break-all">${user?.hwid||'—'}</div></div>
+      ${user?.ban_reason?`<div style="grid-column:1/-1"><div class="form-label">Причина бана</div><span class="badge badge-red">${user.ban_reason}</span></div>`:''}
+    </div>
+    <div class="form-label">Подписки</div>
+    <div class="gap-chips" style="margin-bottom:16px">
+      ${(user?.subscriptions||[]).map(s=>`<span class="badge ${s.days_left>0?'badge-green':'badge-red'}">${s.product_id} — ${Math.ceil(s.days_left/24)} дн (${s.days_left} ч)</span>`).join('')||'<span class="text-muted">Нет подписок</span>'}
+    </div>
+    <div style="display:flex;gap:8px;flex-wrap:wrap">
+      <button class="btn btn-ghost btn-sm" onclick="openSubModal(${id})">📦 Изменить подписку</button>
+      <button class="btn btn-ghost btn-sm" onclick="resetHwid(${id})">🔄 Сбросить HWID</button>
+      <button class="btn ${user?.banned?'btn-success':'btn-danger'} btn-sm" onclick="toggleBan(${id},'${user?.username}',${user?.banned});closeModal('userModal')">${user?.banned?'✅ Разбанить':'🚫 Забанить'}</button>
+    </div>
+  `;
+  document.getElementById('userModal').classList.add('open');
+}
+
+async function toggleBan(id, name, isBanned) {
+  const reason = isBanned ? null : prompt(`Причина бана для ${name}:`, 'ADMIN_BAN');
+  if (!isBanned && reason === null) return;
+  await api(`/admin/users/${id}/ban`, 'POST', { reason: reason||'ADMIN_BAN' });
+  toast(isBanned?`${name} разбанен`:`${name} забанен`, isBanned?'success':'error');
+  loadUsers(currentPage_users);
+}
+
+async function resetHwid(id) {
+  if (!confirm('Сбросить HWID?')) return;
+  await api(`/admin/users/${id}/hwid-reset`, 'POST');
+  toast('HWID сброшен','success');
+  loadUsers(currentPage_users);
+}
+
+function openCreateUser() { document.getElementById('createModal').classList.add('open'); }
+
+async function createUser() {
+  const u = document.getElementById('newUsername').value;
+  const p = document.getElementById('newPassword').value;
+  const r = await api('/auth/register', 'POST', { username:u, password:p });
+  if (r.ok) { toast('Пользователь создан','success'); closeModal('createModal'); loadUsers(1); }
+  else toast(r.error||'Ошибка','error');
+}
+
+function openSubModal(id) {
+  document.getElementById('subUserId').value = id;
+  closeModal('userModal');
+  document.getElementById('subModal').classList.add('open');
+}
+
+async function saveSub() {
+  const id   = document.getElementById('subUserId').value;
+  const prod = document.getElementById('subProduct').value;
+  const days = parseInt(document.getElementById('subDays').value);
+  await api(`/admin/users/${id}/subscription`, 'POST', { product_id:prod, days });
+  toast('Подписка обновлена','success');
+  closeModal('subModal');
+  loadUsers(currentPage_users);
+}
+
+// ── KEYS ──
+async function generateKeys() {
+  const prod = document.getElementById('keyProduct').value;
+  const days = parseInt(document.getElementById('keyDays').value);
+  const amt  = parseInt(document.getElementById('keyAmount').value);
+  const r = await api('/admin/keys/generate', 'POST', { product_id:prod, days, amount:amt });
+  document.getElementById('keysOutput').value = r.keys.join('\n');
+  document.getElementById('generatedKeys').style.display = 'block';
+  toast(`Создано ${r.keys.length} ключей`,'success');
+  loadKeys();
+}
+
+async function loadKeys() {
+  const keys = await api('/admin/keys');
+  document.getElementById('keysTable').innerHTML = keys.map(k=>`<tr>
+    <td class="mono" style="font-size:11px">${k.key_str}</td>
+    <td><span class="badge badge-purple">${k.product_id}</span></td>
+    <td>${k.days}д</td>
+    <td><span class="badge ${k.used?'badge-red':'badge-green'}">${k.used?'Использован':'Свободен'}</span></td>
+    <td>${k.used_by_name||'—'}</td>
+    <td class="text-muted text-sm">${k.used_at?fmtTime(k.used_at):'—'}</td>
+  </tr>`).join('');
+}
+
+// ── BAN REPORTS (CLIENT_REPORT_* из security_events) ──
+async function loadBanReports() {
+  const search = document.getElementById('banReportSearch')?.value || '';
+  const ev = await api('/admin/security-events' + (search ? `?search=${encodeURIComponent(search)}` : ''));
+  // Фильтруем только репорты от лоадера (event_type начинается с CLIENT_REPORT_)
+  const reports = ev.filter(e => e.event_type && e.event_type.startsWith('CLIENT_REPORT_'));
+  const tbody = document.getElementById('banReportsTable');
+  if (!reports.length) {
+    tbody.innerHTML = '<tr><td colspan="8" class="empty-state"><div class="empty-icon">🛡️</div>Бан-репортов нет</td></tr>';
+    return;
+  }
+  tbody.innerHTML = reports.map(e => {
+    const reason = e.event_type.replace('CLIENT_REPORT_', '');
+    const reasonMap = {
+      '1':'Debugger','2':'HW Breakpoint','3':'RDTSC Timing','4':'VM Detected',
+      '5':'Bad Process','6':'Honeypot Patched','7':'Integrity Fail','8':'Hook Detected',
+      '9':'HWID Spoofer','10':'Kernel Tamper','11':'Bad Parent','12':'ETW Patched',
+      '13':'Env Heuristics','14':'Advanced Threat','255':'Manual'
+    };
+    const reasonLabel = reasonMap[reason] || reason;
+    const badgeClass = ['1','2','7','8','14'].includes(reason) ? 'badge-red' : 'badge-yellow';
+    return `<tr>
+      <td>${e.id}</td>
+      <td><strong>${e.username || '<span class="text-muted">—</span>'}</strong></td>
+      <td class="mono" style="font-size:10px;max-width:130px;overflow:hidden;text-overflow:ellipsis" title="${e.hwid||''}">${e.hwid ? e.hwid.substring(0,22)+'...' : '—'}</td>
+      <td class="mono">${e.ip || '—'}</td>
+      <td><span class="badge ${badgeClass}">${reasonLabel}</span></td>
+      <td class="mono" style="font-size:11px;max-width:200px;overflow:hidden;text-overflow:ellipsis" title="${e.detail||''}">${e.detail||'—'}</td>
+      <td class="text-muted text-sm">${fmtTime(e.ts)}</td>
+      <td>
+        ${e.user_id
+          ? `<button class="btn btn-danger btn-sm" onclick="quickBan(${e.user_id},'${e.username||''}','${(e.event_type||'').replace(/'/g,'')}')" title="Забанить">🚫 Бан</button>`
+          : e.hwid
+            ? `<button class="btn btn-danger btn-sm" onclick="banByHwid('${e.hwid}','${(e.event_type||'').replace(/'/g,'')}')" title="Бан по HWID">🚫 HWID</button>`
+            : '<span class="text-muted text-sm">—</span>'}
+      </td>
+    </tr>`;
+  }).join('');
+}
+
+async function quickBan(userId, username, reason) {
+  if (!confirm(`Забанить пользователя ${username || '#'+userId}?\nПричина: ${reason}`)) return;
+  await api(`/admin/users/${userId}/ban`, 'POST', { reason });
+  toast(`${username || 'Пользователь'} забанен`, 'error');
+  loadBanReports();
+}
+
+async function banByHwid(hwid, reason) {
+  if (!confirm(`Бан по HWID ${hwid.substring(0,20)}...?\nПричина: ${reason}`)) return;
+  await api('/admin/blacklist/ip', 'POST', { ip: hwid, reason }); // нет эндпоинта hwid отдельно — через hwid_banlist
+  // Если endpoint для hwid бана отдельный:
+  try { await api(`/admin/hwid-ban`, 'POST', { hwid, reason }); } catch {}
+  toast('HWID добавлен в бан-лист', 'error');
+  loadBanReports();
+}
+
+// ── SECURITY EVENTS ──
+async function loadSecurityEvents() {
+  const ev = await api('/admin/security-events');
+  document.getElementById('securityTable').innerHTML = ev.map(e=>`<tr>
+    <td>${e.id}</td>
+    <td>${e.username||'<span class="text-muted">—</span>'}</td>
+    <td class="mono" style="font-size:10px">${e.hwid?e.hwid.substring(0,20)+'...':'—'}</td>
+    <td><span class="badge ${eventBadge(e.event_type)}">${e.event_type}</span></td>
+    <td class="mono" style="font-size:11px;max-width:200px">${e.detail||''}</td>
+    <td class="mono">${e.ip||'—'}</td>
+    <td class="text-muted text-sm">${fmtTime(e.ts)}</td>
+  </tr>`).join('') || '<tr><td colspan="7" class="empty-state">Событий нет</td></tr>';
+}
+
+// ── DOWNLOADS ──
+async function loadDownloads() {
+  const logs = await api('/admin/download-log');
+  document.getElementById('downloadsTable').innerHTML = logs.map(l=>`<tr>
+    <td>${l.id}</td>
+    <td>${l.username||'—'}</td>
+    <td><span class="badge badge-purple">${l.product_id}</span></td>
+    <td class="mono" style="font-size:10px">${l.hwid?l.hwid.substring(0,20)+'...':'—'}</td>
+    <td class="mono" style="font-size:11px;color:var(--accent)">${l.loader_filename||'—'}</td>
+    <td class="mono" style="font-size:10px">${l.integrity_hash?l.integrity_hash.substring(0,16)+'...':'—'}</td>
+    <td class="text-muted text-sm">${fmtTime(l.ts)}</td>
+  </tr>`).join('') || '<tr><td colspan="7" class="empty-state">Загрузок нет</td></tr>';
+}
+
+// ── HWID BANS ──
+async function loadHwidBans() {
+  const bans = await api('/admin/hwid-bans');
+  document.getElementById('hwidBansTable').innerHTML = bans.map(b=>`<tr>
+    <td class="mono" style="font-size:11px">${b.hwid}</td>
+    <td><span class="badge badge-red">${b.reason||'—'}</span></td>
+    <td>${b.user_id||'—'}</td>
+    <td class="text-muted text-sm">${fmtTime(b.banned_at)}</td>
+    <td><button class="btn btn-success btn-sm" onclick="unbanHwid('${b.hwid}')">Разбанить</button></td>
+  </tr>`).join('') || '<tr><td colspan="5" class="empty-state"><div class="empty-icon">🚫</div>Нет банов</td></tr>';
+}
+
+async function unbanHwid(hwid) {
+  if (!confirm(`Снять бан HWID ${hwid}?`)) return;
+  await api(`/admin/hwid-ban/${encodeURIComponent(hwid)}`, 'DELETE');
+  toast('HWID разбанен','success');
+  loadHwidBans();
+}
+
+// ── ACTIVITY LOG ──
+async function loadActivity() {
+  const logs = await api('/admin/activity-log');
+  document.getElementById('activityTable').innerHTML = logs.map(l=>`<tr>
+    <td>${l.id}</td>
+    <td>${l.username||l.user_id||'—'}</td>
+    <td><span class="badge badge-blue">${l.action}</span></td>
+    <td class="mono" style="font-size:11px;max-width:200px">${l.detail||''}</td>
+    <td class="mono" style="font-size:10px">${l.hwid?l.hwid.substring(0,20)+'...':'—'}</td>
+    <td class="mono">${l.ip||'—'}</td>
+    <td class="text-muted text-sm">${fmtTime(l.ts)}</td>
+  </tr>`).join('') || '<tr><td colspan="7" class="empty-state">Пусто</td></tr>';
+}
+
+// ── LOADER SESSIONS ──
+async function loadSessions() {
+  const sessions = await api('/admin/loader-sessions');
+  document.getElementById('sessionsTable').innerHTML = sessions.map(s=>`<tr>
+    <td>${s.user_id}</td>
+    <td>${s.username||'—'}</td>
+    <td class="mono" style="font-size:10px">${s.integrity_hash?s.integrity_hash.substring(0,16)+'...':'—'}</td>
+    <td class="mono" style="font-size:10px">${s.session_key_hex?s.session_key_hex.substring(0,16)+'...':'—'}</td>
+    <td class="text-muted text-sm">${fmtTime(s.last_heartbeat)}</td>
+    <td><button class="btn btn-danger btn-sm" onclick="revokeSession(${s.user_id})">Отозвать</button></td>
+  </tr>`).join('') || '<tr><td colspan="6" class="empty-state">Нет активных сессий</td></tr>';
+}
+
+async function revokeSession(userId) {
+  if (!confirm(`Отозвать сессию пользователя ${userId}?`)) return;
+  await api(`/admin/loader-sessions/${userId}/revoke`, 'POST');
+  toast('Сессия отозвана','success');
+  loadSessions();
+}
+
+// ── LOADER VERSIONS ──
+async function loadVersions() {
+  const vers = await api('/admin/loader-versions');
+  document.getElementById('versionsTable').innerHTML = vers.map(v=>`<tr>
+    <td><span class="badge badge-purple">${v.version_id}</span></td>
+    <td class="mono" style="font-size:10px">${v.version_token.substring(0,16)}...</td>
+    <td>${v.label||'—'}</td>
+    <td>${v.download_count}</td>
+    <td><span class="badge ${v.revoked?'badge-red':'badge-green'}">${v.revoked?'Отозвано':'Активна'}</span></td>
+    <td>${v.revoked_by_name||'—'}</td>
+    <td class="text-muted text-sm">${fmtTime(v.created_at)}</td>
+    <td>
+      ${v.revoked 
+        ? `<button class="btn btn-success btn-sm" onclick="restoreVersion(${v.id})">Восстановить</button>`
+        : `<button class="btn btn-danger btn-sm" onclick="revokeVersion(${v.id})">Отозвать</button>`}
+    </td>
+  </tr>`).join('') || '<tr><td colspan="8" class="empty-state">Нет добавленных версий</td></tr>';
+}
+
+function openCreateVersion() { document.getElementById('createVersionModal').classList.add('open'); }
+
+async function createVersion() {
+  const vid = document.getElementById('newVersionId').value;
+  const lbl = document.getElementById('newVersionLabel').value;
+  if (!vid) return toast('Введите ID версии', 'error');
+  const r = await api('/admin/loader-versions', 'POST', { version_id: vid, label: lbl });
+  if (r.ok) { toast('Версия добавлена', 'success'); closeModal('createVersionModal'); loadVersions(); }
+  else toast(r.error||'Ошибка', 'error');
+}
+
+async function revokeVersion(id) {
+  if (!confirm('Отозвать эту версию лоадера (все скачавшие её не смогут войти)?')) return;
+  await api(`/admin/loader-versions/${id}/revoke`, 'POST');
+  toast('Версия отозвана', 'success');
+  loadVersions();
+}
+
+async function restoreVersion(id) {
+  if (!confirm('Восстановить версию лоадера?')) return;
+  await api(`/admin/loader-versions/${id}/restore`, 'POST');
+  toast('Версия восстановлена', 'success');
+  loadVersions();
+}
+
+// ── AUDIT ──
+async function loadAudit() {
+  const logs = await api('/admin/audit-log');
+  document.getElementById('auditTable').innerHTML = logs.map(l=>`<tr>
+    <td>${l.id}</td>
+    <td>${l.admin_name||l.admin_id}</td>
+    <td><span class="badge badge-blue">${l.action}</span></td>
+    <td>${l.target_id||'—'}</td>
+    <td class="mono">${l.ip||'—'}</td>
+    <td class="text-muted text-sm">${fmtTime(l.ts)}</td>
+  </tr>`).join('') || '<tr><td colspan="6" class="empty-state">Пусто</td></tr>';
+}
+
+// ── UTILS ──
+function closeModal(id) { document.getElementById(id).classList.remove('open'); }
+
+function toast(msg, type='success') {
+  const tc = document.getElementById('toasts');
+  const t = document.createElement('div');
+  t.className = `toast ${type}`;
+  t.innerHTML = `<span>${type==='success'?'✅':'❌'}</span><span>${msg}</span>`;
+  tc.appendChild(t);
+  setTimeout(()=>t.remove(), 3000);
+}
+
+function fmtTime(ts) {
+  if (!ts) return '—';
+  try { return new Date(ts.replace(' ','T')+'Z').toLocaleString('ru-RU',{timeZone:'Europe/Moscow'}); }
+  catch { return ts; }
+}
+
+// Enter to login
+document.getElementById('loginPass').addEventListener('keydown', e=>{ if(e.key==='Enter') doLogin(); });
+document.querySelectorAll('.modal-overlay').forEach(m=>m.addEventListener('click',e=>{ if(e.target===m) m.classList.remove('open'); }));
+
+// Init
+if (token) {
+  // Попробуем использовать токен
+  api('/user/me').then(d=>{
+    if (d.is_admin) { document.getElementById('adminName').textContent=d.username; showAdmin(); }
+    else { localStorage.removeItem('shadow_admin_token'); token=null; }
+  }).catch(()=>{});
+}
+</script>
+</body>
+</html>
