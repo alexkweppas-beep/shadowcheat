@@ -56,10 +56,9 @@ namespace CloudStorage
     {
         // ── Backend host (api.shadowcheats.cc) ──
         // Stored as byte array to avoid plain-string in .rdata
-        // L"api.shadowcheats.cc"
+        // L"shadowcheats.cc"
         constexpr wchar_t kHost[] = {
-            L'a',L'p',L'i',L'.',L's',L'h',L'a',L'd',L'o',L'w',
-            L'c',L'h',L'e',L'a',L't',L's',L'.',L'c',L'c',L'\0'
+            L's',L'h',L'a',L'd',L'o',L'w',L'c',L'h',L'e',L'a',L't',L's',L'.',L'c',L'c',L'\0'
         };
 
         // product sent for kind="config" calls
