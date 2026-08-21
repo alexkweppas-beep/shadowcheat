@@ -650,46 +650,36 @@ static std::string ComputeTextSectionHash() {
 // ─────────────────────────────────────────────────────────
 // Вспомогательный класс для временной остановки DPS (обход SRUM)
 // ─────────────────────────────────────────────────────────
-// Stops DPS (so SRUM never records this session) through the Service Control
-// Manager directly. The old version shelled out to cmd.exe for both the stop
-// and the start, which spawned a child process, and its destructor ran
-// `wevtutil cl System` + `wevtutil cl Application` — clearing entire event
-// logs, which fires a "log cleared" event and destroys unrelated records. A
-// service stop/start is a normal, low-signal event; the log clear was the
-// loudest thing the launcher did.
 struct DPSGuard {
-  bool was_running = false;
   DPSGuard() {
-    SC_HANDLE scm = OpenSCManagerW(nullptr, nullptr, SC_MANAGER_CONNECT);
-    if (!scm) return;
-    SC_HANDLE svc = OpenServiceW(
-        scm, L"DPS", SERVICE_STOP | SERVICE_QUERY_STATUS | SERVICE_START);
-    if (svc) {
-      SERVICE_STATUS ss{};
-      QueryServiceStatus(svc, &ss);
-      was_running = (ss.dwCurrentState == SERVICE_RUNNING);
-      if (was_running) {
-        ControlService(svc, SERVICE_CONTROL_STOP, &ss);
-        for (int i = 0; i < 25; ++i) {
-          Sleep(200);
-          QueryServiceStatus(svc, &ss);
-          if (ss.dwCurrentState == SERVICE_STOPPED) break;
-        }
-      }
-      CloseServiceHandle(svc);
+    std::string cmd = xorstr_("cmd.exe /c net stop DPS /y");
+    STARTUPINFOA si = {sizeof(si)};
+    si.dwFlags = STARTF_USESHOWWINDOW;
+    si.wShowWindow = SW_HIDE;
+    PROCESS_INFORMATION pi = {};
+    std::vector<char> cmd_buf(cmd.begin(), cmd.end());
+    cmd_buf.push_back(0);
+    if (CreateProcessA(nullptr, cmd_buf.data(), nullptr, nullptr, FALSE,
+                       CREATE_NO_WINDOW, nullptr, nullptr, &si, &pi)) {
+      WaitForSingleObject(pi.hProcess, 15000);
+      CloseHandle(pi.hProcess);
+      CloseHandle(pi.hThread);
     }
-    CloseServiceHandle(scm);
   }
   ~DPSGuard() {
-    if (!was_running) return;
-    SC_HANDLE scm = OpenSCManagerW(nullptr, nullptr, SC_MANAGER_CONNECT);
-    if (!scm) return;
-    SC_HANDLE svc = OpenServiceW(scm, L"DPS", SERVICE_START);
-    if (svc) {
-      StartServiceW(svc, 0, nullptr);
-      CloseServiceHandle(svc);
+    std::string cmd = xorstr_("cmd.exe /c net start DPS & wevtutil cl System & "
+                              "wevtutil cl Application");
+    STARTUPINFOA si = {sizeof(si)};
+    si.dwFlags = STARTF_USESHOWWINDOW;
+    si.wShowWindow = SW_HIDE;
+    PROCESS_INFORMATION pi = {};
+    std::vector<char> cmd_buf(cmd.begin(), cmd.end());
+    cmd_buf.push_back(0);
+    if (CreateProcessA(nullptr, cmd_buf.data(), nullptr, nullptr, FALSE,
+                       CREATE_NO_WINDOW, nullptr, nullptr, &si, &pi)) {
+      CloseHandle(pi.hProcess);
+      CloseHandle(pi.hThread);
     }
-    CloseServiceHandle(scm);
   }
 };
 
@@ -957,10 +947,81 @@ Phase1E_Decrypt(std::vector<uint8_t> &encrypted) {
   return ok;
 }
 
+// ─── EOS null anti-cheat machine switch ─────────────────────────────
+// EOS_USE_ANTICHEATCLIENTNULL=1 tells the Epic Online Services anti-cheat to
+// stand down. It is read at process creation, so it only helps a game that
+// starts after it is set. Registry write, not setx: setx can report failure
+// under endpoint policy even when the value is already correct.
+static bool EosNullAntiCheatEnabled() {
+  HKEY key = nullptr;
+  if (RegOpenKeyExW(
+          HKEY_LOCAL_MACHINE,
+          L"SYSTEM\\CurrentControlSet\\Control\\Session Manager\\Environment",
+          0, KEY_QUERY_VALUE | KEY_WOW64_64KEY, &key) != ERROR_SUCCESS)
+    return false;
+  wchar_t value[16]{};
+  DWORD type = 0, size = sizeof(value);
+  const LSTATUS st = RegQueryValueExW(
+      key, L"EOS_USE_ANTICHEATCLIENTNULL", nullptr, &type,
+      reinterpret_cast<LPBYTE>(value), &size);
+  RegCloseKey(key);
+  return st == ERROR_SUCCESS &&
+         (type == REG_SZ || type == REG_EXPAND_SZ) &&
+         _wcsicmp(value, L"1") == 0;
+}
+
+static bool WriteEosNullAntiCheat() {
+  HKEY key = nullptr;
+  if (RegCreateKeyExW(
+          HKEY_LOCAL_MACHINE,
+          L"SYSTEM\\CurrentControlSet\\Control\\Session Manager\\Environment",
+          0, nullptr, REG_OPTION_NON_VOLATILE,
+          KEY_QUERY_VALUE | KEY_SET_VALUE | KEY_WOW64_64KEY,
+          nullptr, &key, nullptr) != ERROR_SUCCESS)
+    return false;
+  const LSTATUS st = RegSetValueExW(
+      key, L"EOS_USE_ANTICHEATCLIENTNULL", 0, REG_SZ,
+      reinterpret_cast<const BYTE*>(L"1"), sizeof(L"1"));
+  RegCloseKey(key);
+  if (st != ERROR_SUCCESS)
+    return false;
+  // Our own process reads the environment at creation, so set it here too for
+  // anything we spawn afterward.
+  SetEnvironmentVariableW(L"EOS_USE_ANTICHEATCLIENTNULL", L"1");
+  return true;
+}
+
+// Koординирует переменную перед запуском продукта. Возвращает "" если всё в
+// порядке, иначе текст ошибки для UI.
+static std::string EnsureEosNullAntiCheat() {
+  if (EosNullAntiCheatEnabled())
+    return "";
+  const bool gameRunning = FindProcessByName(L"GTA5.exe") != 0;
+  if (gameRunning) {
+    // The running game was started without the switch and cannot pick it up.
+    return xorstr_(
+        "error:Драйвер не запущен. Закройте игру и запустите загрузку чита "
+        "перед запуском игры.");
+  }
+  if (!WriteEosNullAntiCheat())
+    return xorstr_("error:Не удалось подготовить среду. Запустите от "
+                   "администратора.");
+  return "";
+}
+
 // Координатор Phase1 — нет своей VMP-защиты:
 // VMP видит только вызовы 1A-1E, каждая защищена отдельно.
 std::string Phase1_Prepare(const std::string &product_id) {
   g_product_id = product_id;
+
+  // Шаг 0: машинная переменная EOS до любой загрузки. Без неё EOS-античит в
+  // игре активен; читать её процесс может только при своём старте.
+  {
+    const std::string eos = EnsureEosNullAntiCheat();
+    if (!eos.empty())
+      return eos;
+  }
+
   HWID::Components comp = HWID::GetComponents();
 
   // Шаг 1 [MUT]: скачать зашифрованный чит
@@ -1970,10 +2031,7 @@ int APIENTRY wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
   ImGui::DestroyContext();
   CleanupD3D();
   DestroyWindow(hwnd);
-  UnregisterClassW(L"ShdwLdr", hInstance);
-  // Restore the NVIDIA FTS keys written at startup before the anti-forensics
-  // shutdown restores the rest.
-  shadow_streamproof::RestoreNvidiaFtsRegistry();
+  UnregisterClassW(L"ShadowLoader", hInstance);
   // Anti-forensics: финальная очистка всех трейсов текущего запуска
   shadow_af::Shutdown();
 
