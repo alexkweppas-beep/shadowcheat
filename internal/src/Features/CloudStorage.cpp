@@ -112,7 +112,7 @@ namespace CloudStorage
                 if (!first) written += wsprintfA(tmp + written, ",");
                 first = false;
                 // Escape val: replace " → \" and \ → \\
-                char escaped[4096]{};
+                char escaped[4096] = {0};
                 int ei = 0;
                 for (const char* p = val; *p && ei < (int)sizeof(escaped) - 4; ++p) {
                     if (*p == '"' || *p == '\\') escaped[ei++] = '\\';
