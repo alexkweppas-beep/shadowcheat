@@ -3,7 +3,7 @@
 #include <iostream>
 
 #include "utils.hpp"
-#include "intel_driver.hpp"
+#include "amd_driver.hpp"
 #include "nt.hpp"
 #include "portable_executable.hpp"
 
@@ -69,12 +69,12 @@ bool ResolveImports(portable_executable::vec_imports imports) {
 		}
 
 		for (auto& current_function_data : current_import.function_datas) {
-			ULONG64 function_address = intel_driver::GetKernelModuleExport(Module, current_function_data.name);
+			ULONG64 function_address = amd_driver::GetKernelModuleExport(Module, current_function_data.name);
 
 			if (!function_address) {
 				//Lets try with ntoskrnl
-				if (Module != intel_driver::ntoskrnlAddr) {
-					function_address = intel_driver::GetKernelModuleExport(intel_driver::ntoskrnlAddr, current_function_data.name);
+				if (Module != amd_driver::ntoskrnlAddr) {
+					function_address = amd_driver::GetKernelModuleExport(amd_driver::ntoskrnlAddr, current_function_data.name);
 					if (!function_address) {
 #if !defined(DISABLE_OUTPUT)
 						std::cout << "[-] Failed to resolve import " << current_function_data.name << " (" << current_import.module_name << ")" << std::endl;
@@ -117,10 +117,10 @@ ULONG64 kdmapper::MapDriver(BYTE* data, ULONG64 param1, ULONG64 param2, bool fre
 	ULONG64 kernel_image_base = 0;
 	if (mode == AllocationMode::AllocateIndependentPages)
 	{
-		kernel_image_base = intel_driver::MmAllocateIndependentPagesEx(image_size);
+		kernel_image_base = amd_driver::MmAllocateIndependentPagesEx(image_size);
 	}
 	else { // AllocatePool by default
-		kernel_image_base = intel_driver::AllocatePool(nt::POOL_TYPE::NonPagedPool, image_size);
+		kernel_image_base = amd_driver::AllocatePool(nt::POOL_TYPE::NonPagedPool, image_size);
 	}
 
 	if (!kernel_image_base) {
@@ -172,7 +172,7 @@ ULONG64 kdmapper::MapDriver(BYTE* data, ULONG64 param1, ULONG64 param2, bool fre
 
 		// Write fixed image to kernel
 
-		if (!intel_driver::WriteMemory(realBase, (PVOID)((uintptr_t)local_image_base + (destroyHeader ? TotalVirtualHeaderSize : 0)), image_size)) {
+		if (!amd_driver::WriteMemory(realBase, (PVOID)((uintptr_t)local_image_base + (destroyHeader ? TotalVirtualHeaderSize : 0)), image_size)) {
 			kdmLog(L"[-] Failed to write local image to remote image" << std::endl);
 			kernel_image_base = realBase;
 			break;
@@ -223,7 +223,7 @@ ULONG64 kdmapper::MapDriver(BYTE* data, ULONG64 param1, ULONG64 param2, bool fre
 					<< L" Prot: " << ProtectionToString(prot)
 					<< std::dec << std::endl);
 
-				if (!intel_driver::MmSetPageProtection(secAddr, secSize, prot)) {
+				if (!amd_driver::MmSetPageProtection(secAddr, secSize, prot)) {
 					kdmLog(L"[-] Failed to set protection for section: " << (char*)sec->Name << std::endl);
 				}
 			}
@@ -244,7 +244,7 @@ ULONG64 kdmapper::MapDriver(BYTE* data, ULONG64 param1, ULONG64 param2, bool fre
 		}
 
 		NTSTATUS status = 0;
-		if (!intel_driver::CallKernelFunction(&status, address_of_entry_point, (PassAllocationAddressAsFirstParam ? realBase : param1), param2)) {
+		if (!amd_driver::CallKernelFunction(&status, address_of_entry_point, (PassAllocationAddressAsFirstParam ? realBase : param1), param2)) {
 			kdmLog(L"[-] Failed to call driver entry" << std::endl);
 			kernel_image_base = realBase;
 			break;
@@ -262,10 +262,10 @@ ULONG64 kdmapper::MapDriver(BYTE* data, ULONG64 param1, ULONG64 param2, bool fre
 
 			if (mode == AllocationMode::AllocateIndependentPages)
 			{
-				free_status = intel_driver::MmFreeIndependentPages(realBase, image_size);
+				free_status = amd_driver::MmFreeIndependentPages(realBase, image_size);
 			}
 			else {
-				free_status = intel_driver::FreePool(realBase);
+				free_status = amd_driver::FreePool(realBase);
 			}
 
 			if (free_status) {
@@ -291,10 +291,10 @@ ULONG64 kdmapper::MapDriver(BYTE* data, ULONG64 param1, ULONG64 param2, bool fre
 
 	if (mode == AllocationMode::AllocateIndependentPages)
 	{
-		free_status = intel_driver::MmFreeIndependentPages(kernel_image_base, image_size);
+		free_status = amd_driver::MmFreeIndependentPages(kernel_image_base, image_size);
 	}
 	else {
-		free_status = intel_driver::FreePool(kernel_image_base);
+		free_status = amd_driver::FreePool(kernel_image_base);
 	}
 
 	if (free_status) {

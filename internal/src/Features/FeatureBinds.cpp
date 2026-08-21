@@ -6,6 +6,9 @@
 #include "FeatureBinds.h"
 
 extern HMODULE g_ThisModule;
+// Captured in DllMain before the PE header wipe; StableId must not read the
+// header afterwards.
+extern uint32_t g_ThisModuleSize;
 
 namespace FeatureBinds
 {
@@ -50,25 +53,12 @@ namespace FeatureBinds
                 reinterpret_cast<std::uintptr_t>(value);
             const auto base =
                 reinterpret_cast<std::uintptr_t>(g_ThisModule);
-            if (base && address >= base)
+            // g_ThisModuleSize was captured before the header wipe; the
+            // header itself is zeroed and must not be read here.
+            if (base && g_ThisModuleSize && address >= base &&
+                address < base + g_ThisModuleSize)
             {
-                __try
-                {
-                    const auto eLfanew =
-                        *reinterpret_cast<const std::uint32_t*>(
-                            base + 0x3C);
-                    const auto* nt =
-                        reinterpret_cast<const IMAGE_NT_HEADERS64*>(
-                            base + eLfanew);
-                    const std::uintptr_t end =
-                        base +
-                        nt->OptionalHeader.SizeOfImage;
-                    if (address < end)
-                        return address - base;
-                }
-                __except (EXCEPTION_EXECUTE_HANDLER)
-                {
-                }
+                return address - base;
             }
             return HashLabel(label);
         }

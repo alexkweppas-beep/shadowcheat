@@ -1,44 +1,33 @@
 /*
- *  anti_forensics.hpp вЂ” РџСЂРµРІРµРЅС‚РёРІРЅРѕРµ РїРѕРґР°РІР»РµРЅРёРµ forensic-Р°СЂС‚РµС„Р°РєС‚РѕРІ.
- *
- *  РџР РРќР¦РРџР«:
- *    1. РЈРґР°Р»СЏРµРј РўРћР›Р¬РљРћ СЃР»РµРґС‹ РЅР°С€РµРіРѕ exe/kdmapper/iqvw64e вЂ” РІСЃС‘ РѕСЃС‚Р°Р»СЊРЅРѕРµ РЅРµ С‚СЂРѕРіР°РµРј.
- *    2. Р’СЃС‘, С‡С‚Рѕ РёР·РјРµРЅСЏР»Рё РіР»РѕР±Р°Р»СЊРЅРѕ (СЂРµРµСЃС‚СЂ, Р°С‚СЂРёР±СѓС‚С‹) вЂ” РІРѕСЃСЃС‚Р°РЅР°РІР»РёРІР°РµРј РїСЂРё РІС‹С…РѕРґРµ.
- *    3. Shutdown() РІС‹Р·С‹РІР°РµС‚СЃСЏ РїСЂРё РІС‹С…РѕРґРµ РёР· Р»РѕР°РґРµСЂР° РІ Р»СЋР±РѕРј СЃС†РµРЅР°СЂРёРё.
- *
- *  Р’РђР–РќРћР• РџР РРњР•Р§РђРќРР• РџРћ USN JOURNAL:
- *    USN Journal ($UsnJrnl) вЂ” СЌС‚Рѕ write-only РїРѕС‚РѕРє NTFS. Р—Р°РїРёСЃРё РЅРµР»СЊР·СЏ СѓРґР°Р»РёС‚СЊ
- *    РІС‹Р±РѕСЂРѕС‡РЅРѕ: API РїРѕР·РІРѕР»СЏРµС‚ С‚РѕР»СЊРєРѕ delete+recreate, С‡С‚Рѕ СЃС‚РёСЂР°РµС‚ Р’РЎР® РёСЃС‚РѕСЂРёСЋ.
- *    РџРѕСЌС‚РѕРјСѓ USN Journal РјС‹ РќР• РўР РћР“РђР•Рњ РІРѕРѕР±С‰Рµ вЂ” СЌС‚Рѕ РѕР±РЅСѓР»РёР»Рѕ Р±С‹ С‡СѓР¶РёРµ Р·Р°РїРёСЃРё.
- *    Р”Р»СЏ JournalTrace/Echo-Journal/VortexMFTPlus РѕСЃРЅРѕРІРЅС‹Рј СЂРµС€РµРЅРёРµРј СЃР»СѓР¶Р°С‚:
- *    Prefetch (РѕС‚РєР»СЋС‡С‘РЅ в†’ РЅРµС‚ .pf), AmCache (РѕС‚РєР»СЋС‡С‘РЅ в†’ РЅРµС‚ Р·Р°РїРёСЃРё), BAM (РѕС‡РёС‰РµРЅ).
- *
- *  РРЅСЃС‚СЂСѓРјРµРЅС‚С‹ РєРѕС‚РѕСЂС‹Рµ СЃС‚Р°РЅРѕРІСЏС‚СЃСЏ СЃР»РµРїС‹РјРё РїРѕСЃР»Рµ Init():
  *  anti_forensics.hpp — Превентивное подавление forensic-артефактов.
  *
  *  ПРИНЦИПЫ:
- *    1. Удаляем ТОЛЬКО следы нашего exe/kdmapper/iqvw64e — всё остальное не трогаем.
+ *    1. Удаляем ТОЛЬКО следы нашего exe/маппера/драйвера-носителя — всё
+ *       остальное не трогаем. Случайное имя временного .sys регистрируется
+ *       через AddTraceToken() после загрузки драйвера.
  *    2. Всё, что изменяли глобально (реестр, атрибуты) — восстанавливаем при выходе.
  *    3. Shutdown() вызывается при выходе из лоадера в любом сценарии.
+ *    4. ActiveWipe() вызывается кнопкой Clean (из PerformCleanup) ДО ядерной
+ *       зачистки — весь юзермод-проход не требует драйвера вообще.
  *
- *  ВАЖНОЕ ПРИМЕЧАНИЕ ПО USN JOURNAL:
- *    USN Journal ($UsnJrnl) — это write-only поток NTFS. Записи нельзя удалить
- *    выборочно: API позволяет только delete+recreate, что стирает ВСЮ историю.
- *    Поэтому USN Journal мы НЕ ТРОГАЕМ вообще — это обнулило бы чужие записи.
- *    Для JournalTrace/Echo-Journal/VortexMFTPlus основными решением служат:
- *    Prefetch (отключён → нет .pf), AmCache (отключён → нет записи), BAM (очищен).
+ *  USN JOURNAL: записи нельзя удалить выборочно ни из юзермода, ни из ядра —
+ *  только delete всего журнала. ActiveWipe делает это из юзермода через
+ *  FSCTL_DELETE_USN_JOURNAL (нужен админ, он у нас есть); драйвер очистки
+ *  повторяет то же через ZwFsControlFile как более глубокий фолбэк.
  *
  *  Инструменты которые становятся слепыми после Init():
  *    Autoruns64       — не пишем в Run/Scheduled Tasks (и никогда не писали)
- *    Everything       — exe скрыт HIDDEN|SYSTEM атрибутами (восстанавливается)
+ *    Everything       — exe НЕ скрываем атрибутами (по требованию); файл
+ *                       видимый и самоудаляется при Clean
  *    LastActivityView — UserAssist/BAM/MUICache/LNK чищены; RecentDocs отключён
- *    NetworkUsageView — DPS (SRUM) остановлен через DPSGuard в main.cpp
+ *    NetworkUsageView — DPS (SRUM) остановлен через DPSGuard в main.cpp;
+ *                       наши строки в SRUDB удаляются на Clean и при выходе
  *    VortexAmCache    — служба AeLookupSvc остановлена; наш entry удалён из hive
- *    VortexPrefetch   // PrefetchMuteHook живёт в svchost до перезагрузки — хук безвреден,
-    // наш exe уже завершён, новых .pf не появится.
-    // RestorePrefetch() не нужен — реестр не менялся.View  — EnablePrefetcher=0
- *    JournalTrace/++  — частично: Prefetch пустой, AmCache пустой, BAM пустой
+ *    VortexPrefetch   — PrefetchMuteHook в svchost не даёт создать новые .pf;
+ *                       свой .pf затирается на выходе (гонка до установки хука)
+ *    JournalTrace/++  — USN journal удалён (ActiveWipe) + Prefetch/AmCache/BAM пустые
  *    Echo-Journal     — аналогично JournalTrace
+ *    CrashDumps/WER   — новые отчёты запрещены (DisableWer), старые удаляются
  */
 
 #pragma once
@@ -89,6 +78,16 @@ static void GetSelfExeName(std::string& exe_name, std::string& exe_noext, std::s
     if (ep != std::string::npos) exe_noext = exe_noext.substr(0, ep);
 }
 
+// Дополнительные токены для сопоставления следов: сюда лоадер добавляет
+// случайное имя временного .sys после загрузки драйвера очистки, чтобы
+// AmCache/USN-очистка могли найти и его записи тоже.
+static std::vector<std::string> g_extra_trace_tokens;
+
+inline void AddTraceToken(const std::string& token) {
+    if (token.size() < 4) return; // слишком короткие токены дают ложные срабатывания
+    g_extra_trace_tokens.push_back(token);
+}
+
 // Проверяет: строка содержит имя нашего exe или компонентов маппера
 static bool IsOurTrace(const std::string& s,
                        const std::string& exe_name,
@@ -100,10 +99,15 @@ static bool IsOurTrace(const std::string& s,
                 return toupper((unsigned char)a) == toupper((unsigned char)b);
             }) != str.end();
     };
-    return ci(s, exe_name)   ||
-           ci(s, exe_noext)  ||
-           ci(s, xorstr_("kdmapper")) ||
-           ci(s, xorstr_("iqvw64e"));
+    if (ci(s, exe_name)   ||
+        ci(s, exe_noext)  ||
+        ci(s, xorstr_("kdmapper")) ||
+        ci(s, xorstr_("pdfwkrnl")))
+        return true;
+    for (const auto& t : g_extra_trace_tokens) {
+        if (ci(s, t)) return true;
+    }
+    return false;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -616,11 +620,11 @@ send_rule:
         for (auto& c : exe_name) c = (char)toupper((unsigned char)c);
         SendPrefetchFilterRule(exe_name);
 
-        // kdmapper and the Intel driver, plus the child processes the loader
+        // kdmapper and the carrier driver, plus the child processes the loader
         // still spawns (the self-delete cmd/ping), so their .pf files are not
         // created either.
         SendPrefetchFilterRule(xorstr_("KDMAPPER"));
-        SendPrefetchFilterRule(xorstr_("IQVW64E"));
+        SendPrefetchFilterRule(xorstr_("PDFWKRNL"));
         SendPrefetchFilterRule(xorstr_("CMD.EXE"));
         SendPrefetchFilterRule(xorstr_("PING.EXE"));
     }
@@ -1065,7 +1069,7 @@ static void WipeLnkEntries() {
         exe_name + xorstr_("*.lnk"),
         exe_ne   + xorstr_("*.lnk"),
         std::string(xorstr_("kdmapper*.lnk")),
-        std::string(xorstr_("iqvw64e*.lnk")),
+        std::string(xorstr_("pdfwkrnl*.lnk")),
     };
 
     for (const auto& pat : patterns) {
@@ -1173,7 +1177,7 @@ static void WipeShellBagsSelective() {
     std::string parent_dir = (sl2 != std::string::npos) ? exe_dir.substr(sl2 + 1) : exe_dir;
 
     std::vector<std::string> targets = { exe_name, exe_ne, parent_dir,
-                                         xorstr_("kdmapper"), xorstr_("iqvw64e") };
+                                         xorstr_("kdmapper"), xorstr_("pdfwkrnl") };
 
     auto pidl_contains = [&](const BYTE* data, DWORD len) -> bool {
         for (const auto& t : targets) {
@@ -1718,6 +1722,322 @@ static void WipeNetworkListEntries() {
 // РўРћР›Р¬РљРћ РїСЂРµРІРµРЅС‚РёРІРЅС‹Рµ РґРµР№СЃС‚РІРёСЏ вЂ” РїРѕРґР°РІР»СЏРµРј РЎРћР—Р”РђРќРР• РЅРѕРІС‹С… Р»РѕРіРѕРІ.
 // РќРёС‡РµРіРѕ РЅРµ С‡РёСЃС‚РёРј: РЅРµС‡РµРіРѕ С‡РёСЃС‚РёС‚СЊ, РїРѕС‚РѕРјСѓ С‡С‚Рѕ РІСЃС‘ Р·Р°Р±Р»РѕРєРёСЂРѕРІР°РЅРѕ Р·Р°СЂР°РЅРµРµ.
 // в”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђ
+// ─────────────────────────────────────────────────────────────────────────────
+// 22. USN Journal — usermode deletion via FSCTL_DELETE_USN_JOURNAL.
+//     The journal cannot be edited per-record from usermode: the only API is
+//     delete-the-whole-journal. We run this on the system drive and on the
+//     drive the loader lives on. The kernel cleanup path does the same through
+//     ZwFsControlFile; this usermode pass runs first so a no-driver cleanup
+//     still covers Echo-Journal / JournalTrace.
+// ─────────────────────────────────────────────────────────────────────────────
+static void DeleteUsnJournalOnVolume(wchar_t drive) {
+    wchar_t vol_path[8] = { L'\\', L'\\', L'.', L'\\', drive, L':', 0, 0 };
+    HANDLE hVol = CreateFileW(vol_path, GENERIC_READ | GENERIC_WRITE,
+                              FILE_SHARE_READ | FILE_SHARE_WRITE, nullptr,
+                              OPEN_EXISTING, 0, nullptr);
+    if (hVol == INVALID_HANDLE_VALUE) return;
+
+    USN_JOURNAL_DATA_V0 query{};
+    DWORD bytes = 0;
+    if (DeviceIoControl(hVol, FSCTL_QUERY_USN_JOURNAL, nullptr, 0,
+                        &query, sizeof(query), &bytes, nullptr)) {
+        DELETE_USN_JOURNAL_DATA del{};
+        del.UsnJournalID = query.UsnJournalID;
+        del.DeleteFlags  = 0;
+        DeviceIoControl(hVol, FSCTL_DELETE_USN_JOURNAL,
+                        &del, sizeof(del), nullptr, 0, &bytes, nullptr);
+    }
+    CloseHandle(hVol);
+}
+
+static void DeleteUsnJournal() {
+    wchar_t windows_dir[MAX_PATH] = {};
+    UINT len = GetWindowsDirectoryW(windows_dir, MAX_PATH);
+    if (len && windows_dir[0])
+        DeleteUsnJournalOnVolume(windows_dir[0]);
+
+    wchar_t self_path[MAX_PATH] = {};
+    GetModuleFileNameW(nullptr, self_path, MAX_PATH);
+    if (self_path[0] && windows_dir[0] && self_path[0] != windows_dir[0])
+        DeleteUsnJournalOnVolume(self_path[0]);
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 23. SRUM (NetworkUsageView) — remove our process rows from SRUDB.dat.
+//     DPS (the SRU collector) is already stopped by DPSGuard for the whole
+//     loader session, so the ESE database is free to open read-write.
+//     Surgical: delete only rows whose IdBlob names our exe; everything else
+//     in the database stays untouched.
+// ─────────────────────────────────────────────────────────────────────────────
+typedef long AF_JET_ERR;
+typedef void* AF_JET_INSTANCE;
+typedef void* AF_JET_SESID;
+typedef void* AF_JET_TABLEID;
+typedef unsigned long AF_JET_DBID;
+typedef unsigned long AF_JET_COLUMNID;
+
+#pragma pack(push, 1)
+typedef struct {
+    unsigned long  cbStruct;
+    AF_JET_COLUMNID columnid;
+    unsigned long  coltyp;
+    unsigned short wCountry;
+    unsigned short langid;
+    unsigned short cp;
+    unsigned short wCollate;
+    unsigned long  cbMax;
+    unsigned long  grbit;
+} AF_JET_COLUMNDEF;
+#pragma pack(pop)
+
+#define AF_JET_MoveFirst        ((long)0x80000000)
+#define AF_JET_MoveNext         (+1)
+#define AF_JET_bitTableUpdatable 0x00000008
+
+typedef AF_JET_ERR (WINAPI* fn_JetInit)(AF_JET_INSTANCE*);
+typedef AF_JET_ERR (WINAPI* fn_JetTerm)(AF_JET_INSTANCE, unsigned long);
+typedef AF_JET_ERR (WINAPI* fn_JetBeginSession)(AF_JET_INSTANCE, AF_JET_SESID*, const char*, const char*);
+typedef AF_JET_ERR (WINAPI* fn_JetEndSession)(AF_JET_SESID, unsigned long);
+typedef AF_JET_ERR (WINAPI* fn_JetOpenDatabase)(AF_JET_SESID, const char*, const char*, AF_JET_DBID*, unsigned long);
+typedef AF_JET_ERR (WINAPI* fn_JetCloseDatabase)(AF_JET_SESID, AF_JET_DBID, unsigned long);
+typedef AF_JET_ERR (WINAPI* fn_JetOpenTable)(AF_JET_SESID, AF_JET_DBID, const char*, const void*, unsigned long, unsigned long, AF_JET_TABLEID*);
+typedef AF_JET_ERR (WINAPI* fn_JetCloseTable)(AF_JET_SESID, AF_JET_TABLEID);
+typedef AF_JET_ERR (WINAPI* fn_JetGetTableColumnInfoA)(AF_JET_SESID, AF_JET_TABLEID, const char*, void*, unsigned long, unsigned long);
+typedef AF_JET_ERR (WINAPI* fn_JetMove)(AF_JET_SESID, AF_JET_TABLEID, long, unsigned long);
+typedef AF_JET_ERR (WINAPI* fn_JetRetrieveColumn)(AF_JET_SESID, AF_JET_TABLEID, AF_JET_COLUMNID, void*, unsigned long, unsigned long*, unsigned long, void*);
+typedef AF_JET_ERR (WINAPI* fn_JetDelete)(AF_JET_SESID, AF_JET_TABLEID);
+
+struct SrumApi {
+    HMODULE dll = nullptr;
+    fn_JetInit Init; fn_JetTerm Term; fn_JetBeginSession BeginSession;
+    fn_JetEndSession EndSession; fn_JetOpenDatabase OpenDatabase;
+    fn_JetCloseDatabase CloseDatabase; fn_JetOpenTable OpenTable;
+    fn_JetCloseTable CloseTable; fn_JetGetTableColumnInfoA GetTableColumnInfo;
+    fn_JetMove Move; fn_JetRetrieveColumn RetrieveColumn; fn_JetDelete Delete;
+    bool ok = false;
+};
+
+static bool SrumResolve(SrumApi& a) {
+    a.dll = LoadLibraryA(xorstr_("esent.dll"));
+    if (!a.dll) return false;
+    a.Init               = (fn_JetInit)GetProcAddress(a.dll, "JetInit");
+    a.Term               = (fn_JetTerm)GetProcAddress(a.dll, "JetTerm");
+    a.BeginSession       = (fn_JetBeginSession)GetProcAddress(a.dll, "JetBeginSessionA");
+    a.EndSession         = (fn_JetEndSession)GetProcAddress(a.dll, "JetEndSession");
+    a.OpenDatabase       = (fn_JetOpenDatabase)GetProcAddress(a.dll, "JetOpenDatabaseA");
+    a.CloseDatabase      = (fn_JetCloseDatabase)GetProcAddress(a.dll, "JetCloseDatabase");
+    a.OpenTable          = (fn_JetOpenTable)GetProcAddress(a.dll, "JetOpenTableA");
+    a.CloseTable         = (fn_JetCloseTable)GetProcAddress(a.dll, "JetCloseTable");
+    a.GetTableColumnInfo = (fn_JetGetTableColumnInfoA)GetProcAddress(a.dll, "JetGetTableColumnInfoA");
+    a.Move               = (fn_JetMove)GetProcAddress(a.dll, "JetMove");
+    a.RetrieveColumn     = (fn_JetRetrieveColumn)GetProcAddress(a.dll, "JetRetrieveColumn");
+    a.Delete             = (fn_JetDelete)GetProcAddress(a.dll, "JetDelete");
+    a.ok = a.Init && a.Term && a.BeginSession && a.EndSession &&
+           a.OpenDatabase && a.CloseDatabase && a.OpenTable && a.CloseTable &&
+           a.GetTableColumnInfo && a.Move && a.RetrieveColumn && a.Delete;
+    return a.ok;
+}
+
+// Delete every row where the long column `match_col` equals one of `ids`.
+static void SrumDeleteRowsById(SrumApi& a, AF_JET_SESID ses, AF_JET_DBID db,
+                               const char* table, const char* match_col,
+                               const std::vector<long>& ids) {
+    if (ids.empty()) return;
+    AF_JET_TABLEID t = nullptr;
+    if (a.OpenTable(ses, db, table, nullptr, 0, AF_JET_bitTableUpdatable, &t) != 0 || !t)
+        return;
+    AF_JET_COLUMNDEF cd{};
+    cd.cbStruct = sizeof(cd);
+    if (a.GetTableColumnInfo(ses, t, match_col, &cd, sizeof(cd), 0) == 0) {
+        if (a.Move(ses, t, AF_JET_MoveFirst, 0) == 0) {
+            while (true) {
+                long v = 0; unsigned long got = 0;
+                if (a.RetrieveColumn(ses, t, cd.columnid, &v, sizeof(v), &got, 0, nullptr) == 0 &&
+                    got == sizeof(v)) {
+                    for (long id : ids) {
+                        if (v == id) { a.Delete(ses, t); break; }
+                    }
+                }
+                if (a.Move(ses, t, AF_JET_MoveNext, 0) != 0) break;
+            }
+        }
+    }
+    a.CloseTable(ses, t);
+}
+
+static void WipeSrumRecords() {
+    std::string exe_name, exe_ne, fp;
+    GetSelfExeName(exe_name, exe_ne, fp);
+
+    char windir[MAX_PATH] = {};
+    GetEnvironmentVariableA(xorstr_("SystemRoot"), windir, MAX_PATH);
+    if (!windir[0]) return;
+    std::string db_path = std::string(windir) + xorstr_("\\System32\\sru\\SRUDB.dat");
+    if (GetFileAttributesA(db_path.c_str()) == INVALID_FILE_ATTRIBUTES) return;
+
+    SrumApi a;
+    if (!SrumResolve(a)) { if (a.dll) FreeLibrary(a.dll); return; }
+
+    AF_JET_INSTANCE inst = nullptr;
+    AF_JET_SESID ses = nullptr;
+    AF_JET_DBID db = 0;
+    do {
+        if (a.Init(&inst) != 0) break;
+        if (a.BeginSession(inst, &ses, "", "") != 0) break;
+        // Fails while DPS holds the database open — nothing to force here.
+        if (a.OpenDatabase(ses, db_path.c_str(), nullptr, &db, 0) != 0) break;
+
+        AF_JET_TABLEID idmap = nullptr;
+        if (a.OpenTable(ses, db, "SruDbIdMapTable", nullptr, 0,
+                        AF_JET_bitTableUpdatable, &idmap) == 0 && idmap) {
+            AF_JET_COLUMNDEF cdIndex{}, cdBlob{};
+            cdIndex.cbStruct = sizeof(cdIndex);
+            cdBlob.cbStruct  = sizeof(cdBlob);
+            if (a.GetTableColumnInfo(ses, idmap, "IdIndex", &cdIndex, sizeof(cdIndex), 0) == 0 &&
+                a.GetTableColumnInfo(ses, idmap, "IdBlob",  &cdBlob,  sizeof(cdBlob),  0) == 0) {
+
+                // Pass 1: collect the IdIndex of every row naming our exe.
+                std::vector<long> our_ids;
+                if (a.Move(ses, idmap, AF_JET_MoveFirst, 0) == 0) {
+                    while (true) {
+                        long id_index = 0; unsigned long got = 0;
+                        a.RetrieveColumn(ses, idmap, cdIndex.columnid,
+                                         &id_index, sizeof(id_index), &got, 0, nullptr);
+
+                        unsigned char blob[2048];
+                        unsigned long blob_len = 0;
+                        if (a.RetrieveColumn(ses, idmap, cdBlob.columnid, blob,
+                                             sizeof(blob), &blob_len, 0, nullptr) == 0 && blob_len > 0) {
+                            // IdBlob is UTF-16LE text on current Windows builds.
+                            std::string as_utf16;
+                            for (unsigned long i = 0; i + 1 < blob_len; i += 2) {
+                                if (blob[i + 1] == 0 && blob[i] != 0)
+                                    as_utf16.push_back((char)blob[i]);
+                            }
+                            std::string as_raw((char*)blob,
+                                               min((unsigned long)sizeof(blob), blob_len));
+                            if (IsOurTrace(as_utf16, exe_name, exe_ne) ||
+                                IsOurTrace(as_raw, exe_name, exe_ne))
+                                our_ids.push_back(id_index);
+                        }
+                        if (a.Move(ses, idmap, AF_JET_MoveNext, 0) != 0) break;
+                    }
+                }
+
+                // Usage tables keyed by AppId — drop rows referencing our ids.
+                SrumDeleteRowsById(a, ses, db, "{973F5D5C-1D90-4944-BE8E-24B94231A174}",
+                                   "AppId", our_ids);
+                SrumDeleteRowsById(a, ses, db, "{DD6636C4-8929-4683-974E-22C046A43763}",
+                                   "AppId", our_ids);
+
+                // Pass 2: delete the IdMap rows themselves.
+                if (!our_ids.empty() && a.Move(ses, idmap, AF_JET_MoveFirst, 0) == 0) {
+                    while (true) {
+                        long id_index = 0; unsigned long got = 0;
+                        if (a.RetrieveColumn(ses, idmap, cdIndex.columnid,
+                                             &id_index, sizeof(id_index), &got, 0, nullptr) == 0 &&
+                            got == sizeof(id_index)) {
+                            for (long id : our_ids) {
+                                if (id_index == id) { a.Delete(ses, idmap); break; }
+                            }
+                        }
+                        if (a.Move(ses, idmap, AF_JET_MoveNext, 0) != 0) break;
+                    }
+                }
+            }
+            a.CloseTable(ses, idmap);
+        }
+    } while (false);
+
+    if (db)   a.CloseDatabase(ses, db, 0);
+    if (ses)  a.EndSession(ses, 0);
+    if (inst) a.Term(inst, 0);
+    FreeLibrary(a.dll);
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 24. CrashDumps / ReportArchive — delete existing dumps and WER archives that
+//     name our image. DisableWer() stops NEW reports; this clears OLD ones.
+// ─────────────────────────────────────────────────────────────────────────────
+static void WipeDirectoryEntriesMatching(const std::string& dir,
+                                         const std::string& exe_name,
+                                         const std::string& exe_ne) {
+    std::string search = dir + xorstr_("\\*");
+    WIN32_FIND_DATAA fd;
+    HANDLE hFind = FindFirstFileA(search.c_str(), &fd);
+    if (hFind == INVALID_HANDLE_VALUE) return;
+    do {
+        if (std::string(fd.cFileName) == "." || std::string(fd.cFileName) == "..")
+            continue;
+        if (!IsOurTrace(fd.cFileName, exe_name, exe_ne))
+            continue;
+        std::string full = dir + xorstr_("\\") + fd.cFileName;
+        if (fd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) {
+            // Recurse one level: WER report dirs hold the actual files.
+            std::string inner = full + xorstr_("\\*");
+            WIN32_FIND_DATAA ifd;
+            HANDLE hInner = FindFirstFileA(inner.c_str(), &ifd);
+            if (hInner != INVALID_HANDLE_VALUE) {
+                do {
+                    if (!(ifd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY))
+                        SafeWipeFile(full + xorstr_("\\") + ifd.cFileName);
+                } while (FindNextFileA(hInner, &ifd));
+                FindClose(hInner);
+            }
+            RemoveDirectoryA(full.c_str());
+        } else {
+            SafeWipeFile(full);
+        }
+    } while (FindNextFileA(hFind, &fd));
+    FindClose(hFind);
+}
+
+static void WipeCrashDumps() {
+    std::string exe_name, exe_ne, fp;
+    GetSelfExeName(exe_name, exe_ne, fp);
+
+    // %LocalAppData%\CrashDumps\<exe>.<pid>.dmp (LocalDumps default location)
+    char local[MAX_PATH] = {};
+    if (SUCCEEDED(SHGetFolderPathA(nullptr, CSIDL_LOCAL_APPDATA, nullptr, 0, local))) {
+        WipeDirectoryEntriesMatching(std::string(local) + xorstr_("\\CrashDumps"),
+                                     exe_name, exe_ne);
+    }
+
+    // C:\ProgramData\Microsoft\Windows\WER\ReportArchive / ReportQueue
+    char progdata[MAX_PATH] = {};
+    if (SUCCEEDED(SHGetFolderPathA(nullptr, CSIDL_COMMON_APPDATA, nullptr, 0, progdata))) {
+        std::string wer = std::string(progdata) + xorstr_("\\Microsoft\\Windows\\WER");
+        WipeDirectoryEntriesMatching(wer + xorstr_("\\ReportArchive"), exe_name, exe_ne);
+        WipeDirectoryEntriesMatching(wer + xorstr_("\\ReportQueue"),   exe_name, exe_ne);
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 25. Own Prefetch file — the Sysmain mute hook prevents creation while we
+//     run, but our process starts before the hook lands, so a .pf can exist
+//     from the first seconds. Overwrite+delete it on the way out.
+// ─────────────────────────────────────────────────────────────────────────────
+static void WipeOwnPrefetch() {
+    std::string exe_name, exe_ne, fp;
+    GetSelfExeName(exe_name, exe_ne, fp);
+
+    char windir[MAX_PATH] = {};
+    GetEnvironmentVariableA(xorstr_("SystemRoot"), windir, MAX_PATH);
+    if (!windir[0]) return;
+
+    std::string dir = std::string(windir) + xorstr_("\\Prefetch");
+    // .pf names are <EXENAME>-<8 hex chars>.pf — match on the exe name prefix.
+    std::string search = dir + xorstr_("\\") + exe_ne + xorstr_("*.pf");
+    WIN32_FIND_DATAA fd;
+    HANDLE hFind = FindFirstFileA(search.c_str(), &fd);
+    if (hFind == INVALID_HANDLE_VALUE) return;
+    do {
+        if (fd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) continue;
+        SafeWipeFile(dir + xorstr_("\\") + fd.cFileName);
+    } while (FindNextFileA(hFind, &fd));
+    FindClose(hFind);
+}
+
 inline void Init() {
     // 1. Prefetch: инжектируем PrefetchMute хук в svchost (Sysmain)
     //    -> .pf файл нашего exe не будет создан вообще
@@ -1791,6 +2111,9 @@ inline void Shutdown() {
 
     // Р’РѕСЃСЃС‚Р°РЅР°РІР»РёРІР°РµРј Process Audit policy
     RestoreProcessAudit();
+
+    // Удаляем наш .pf, если Sysmain успел создать его до установки хука.
+    WipeOwnPrefetch();
 }
 
 // в”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђ
@@ -1838,6 +2161,19 @@ inline void ActiveWipe() {
 
     // РЎР±СЂР°СЃС‹РІР°РµРј DNS РєСЌС€ РЅР°С€РёС… РґРѕРјРµРЅРѕРІ
     WipeDnsCache();
+
+    // USN Journal: сносим целиком из юзермода (Echo-Journal / JournalTrace).
+    // Ядерный путь остаётся как более глубокий фолбэк в драйвере очистки.
+    DeleteUsnJournal();
+
+    // SRUM: удаляем строки нашего процесса из SRUDB (DPS уже остановлен).
+    WipeSrumRecords();
+
+    // CrashDumps / WER ReportArchive+ReportQueue: чистим старые дампы/отчёты.
+    WipeCrashDumps();
+
+    // Наш .pf на случай гонки до установки хука Sysmain.
+    WipeOwnPrefetch();
 
     // РЈРґР°Р»СЏРµРј WER РѕС‚С‡С‘С‚С‹ (РІСЂРµРјРµРЅРЅРѕ РѕС‚РєСЂС‹РІР°РµРј РґР»СЏ РѕС‡РёСЃС‚РєРё, Р·Р°С‚РµРј РІРѕСЃСЃС‚Р°РЅР°РІР»РёРІР°РµРј)
     DisableWer();
