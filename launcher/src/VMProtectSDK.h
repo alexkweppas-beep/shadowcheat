@@ -9,11 +9,11 @@
 #define VMP_API __stdcall
 #define VMP_WCHAR wchar_t
 #ifdef _M_IX86
-#pragma comment(lib, "VMProtectSDK32.lib")
+// #pragma comment(lib, "VMProtectSDK32.lib")
 #elif _M_X64 
-#pragma comment(lib, "VMProtectSDK64.lib")
+// #pragma comment(lib, "VMProtectSDK64.lib")
 #elif _M_ARM64 
-#pragma comment(lib, "VMProtectARM64.lib")
+// #pragma comment(lib, "VMProtectARM64.lib")
 #else
 #error "Unsupported target architecture"
 #endif
