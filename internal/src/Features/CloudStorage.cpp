@@ -1,3 +1,27 @@
+/*
+ * CloudStorage.cpp — Shadow Backend edition
+ *
+ * Replaces the Supabase edge-function transport with our own
+ * Express backend (api.shadowcheats.cc).
+ *
+ * Token source: reads JWT from the loader's shared memory
+ * (ShadowSharedAuth::token) instead of cloud.session.
+ *
+ * Endpoint mapping:
+ *   kind="config"  → /api/configs/{list|save|load|delete}  (product=ragemp)
+ *   kind="script"  → /api/scripts/{list|save|load|delete}
+ *
+ * Public API (CloudStorage.h) is unchanged:
+ *   List   → enumerate names
+ *   Get    → load one item by name (we use name as key, not UUID)
+ *   Upsert → create or update
+ *   Delete → remove by name
+ *
+ * NOTE: IsSafeId / Base64 helpers kept for source-compat but Get/Delete
+ * now accept a name string, not a UUID.  The header still exposes the
+ * old signatures so the rest of the DLL doesn't need to change.
+ */
+
 #define WIN32_LEAN_AND_MEAN
 #include <Windows.h>
 #include <winhttp.h>
@@ -9,15 +33,41 @@
 
 #pragma comment(lib, "winhttp.lib")
 
+// ── Shared memory layout (keep in sync with launcher/src/shared_ipc.hpp) ──
+#pragma pack(push, 1)
+struct ShadowSharedAuth {
+    uint32_t magic;
+    uint32_t version;
+    uint64_t timestamp;
+    char     username[64];
+    char     token[512];
+    char     hwid[128];
+    int32_t  days_remaining;
+    uint32_t pid;
+};
+#pragma pack(pop)
+
+#define SHADOW_SHARED_MEMORY_NAME "Local\\SHADOW_IPC_AUTH_SECTION"
+#define SHADOW_SHARED_MAGIC       0x53484457u
+
 namespace CloudStorage
 {
     namespace
     {
-        constexpr wchar_t kHost[] = L"oeefhdljyfrcjanbzzxo.supabase.co";
-        constexpr wchar_t kSessionPath[] = L"C:\\RAGEMP\\cloud.session";
-        char g_Token[65]{};
-        std::int64_t g_ExpiresAt = 0;
-        char g_Error[96] = "Cloud session unavailable";
+        // ── Backend host (api.shadowcheats.cc) ──
+        // Stored as byte array to avoid plain-string in .rdata
+        // L"api.shadowcheats.cc"
+        constexpr wchar_t kHost[] = {
+            L'a',L'p',L'i',L'.',L's',L'h',L'a',L'd',L'o',L'w',
+            L'c',L'h',L'e',L'a',L't',L's',L'.',L'c',L'c',L'\0'
+        };
+
+        // product sent for kind="config" calls
+        constexpr char kConfigProduct[] = "ragemp";
+
+        // Live JWT token copied from shared memory
+        char g_Token[512]{};
+        char g_Error[128] = "Cloud unavailable";
 
         void SetError(const char* value)
         {
@@ -30,259 +80,163 @@ namespace CloudStorage
                 (!lstrcmpA(kind, "config") || !lstrcmpA(kind, "script"));
         }
 
-        bool IsSafeId(const char* id)
+        // Name safety — printable UTF-8, no slashes, 1-63 chars
+        bool IsSafeName(const char* name)
         {
-            if (!id || lstrlenA(id) != 36)
-                return false;
-            for (int i = 0; i < 36; ++i) {
-                const char c = id[i];
-                if (i == 8 || i == 13 || i == 18 || i == 23) {
-                    if (c != '-') return false;
-                } else if (!((c >= '0' && c <= '9') ||
-                             (c >= 'a' && c <= 'f') ||
-                             (c >= 'A' && c <= 'F'))) {
-                    return false;
-                }
-            }
-            return true;
-        }
-
-        bool Utf8NameIsSafe(const char* name)
-        {
-            if (!name)
-                return false;
-            const int length = lstrlenA(name);
-            if (length < 1 || length > 63)
-                return false;
-            for (int i = 0; i < length; ++i) {
-                const unsigned char c =
-                    static_cast<unsigned char>(name[i]);
+            if (!name) return false;
+            const int len = lstrlenA(name);
+            if (len < 1 || len > 63) return false;
+            for (int i = 0; i < len; ++i) {
+                const unsigned char c = static_cast<unsigned char>(name[i]);
                 if (c < 0x20 || c == 0x7f || c == '/' || c == '\\')
                     return false;
             }
             return true;
         }
 
-        bool Base64Encode(
-            const unsigned char* data,
-            std::size_t size,
-            char* output,
-            std::size_t capacity)
+        // ── JSON builder (minimal, no heap) ──
+        // Writes  {"product":"ragemp","name":"...","data":"..."}  into buf.
+        // Returns false if buf is too small.
+        static bool BuildJsonBody(
+            char* buf, std::size_t cap,
+            const char* product,   // may be nullptr → omit field
+            const char* name,      // may be nullptr → omit field
+            const char* data)      // may be nullptr → omit field
         {
-            static constexpr char alphabet[] =
-                "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
-            const std::size_t required = ((size + 2) / 3) * 4 + 1;
-            if (!data || !output || capacity < required)
-                return false;
-            std::size_t in = 0;
-            std::size_t out = 0;
-            while (in < size) {
-                const unsigned a = data[in++];
-                const unsigned b = in < size ? data[in++] : 0;
-                const unsigned c = in < size ? data[in++] : 0;
-                const unsigned value = (a << 16) | (b << 8) | c;
-                output[out++] = alphabet[(value >> 18) & 63];
-                output[out++] = alphabet[(value >> 12) & 63];
-                output[out++] =
-                    (in - 1 <= size) && (in > size + 1)
-                    ? '=' : alphabet[(value >> 6) & 63];
-                output[out++] =
-                    in > size ? '=' : alphabet[value & 63];
-            }
-            const std::size_t remainder = size % 3;
-            if (remainder == 1) {
-                output[out - 2] = '=';
-                output[out - 1] = '=';
-            } else if (remainder == 2) {
-                output[out - 1] = '=';
-            }
-            output[out] = 0;
-            return true;
-        }
+            char tmp[8192]{};
+            int written = 0;
+            written += wsprintfA(tmp + written, "{");
+            bool first = true;
 
-        int Base64Value(char c)
-        {
-            if (c >= 'A' && c <= 'Z') return c - 'A';
-            if (c >= 'a' && c <= 'z') return c - 'a' + 26;
-            if (c >= '0' && c <= '9') return c - '0' + 52;
-            if (c == '+') return 62;
-            if (c == '/') return 63;
-            return -1;
-        }
-
-        bool Base64Decode(
-            const char* input,
-            char* output,
-            std::size_t capacity)
-        {
-            if (!input || !output || capacity == 0)
-                return false;
-            std::size_t out = 0;
-            int accumulator = 0;
-            int bits = -8;
-            for (const char* p = input; *p; ++p) {
-                if (*p == '=') break;
-                const int value = Base64Value(*p);
-                if (value < 0) return false;
-                accumulator = (accumulator << 6) | value;
-                bits += 6;
-                if (bits >= 0) {
-                    if (out + 1 >= capacity) return false;
-                    output[out++] =
-                        static_cast<char>((accumulator >> bits) & 0xff);
-                    bits -= 8;
+            auto AppendStr = [&](const char* key, const char* val) {
+                if (!val) return;
+                if (!first) written += wsprintfA(tmp + written, ",");
+                first = false;
+                // Escape val: replace " → \" and \ → \\
+                char escaped[4096]{};
+                int ei = 0;
+                for (const char* p = val; *p && ei < (int)sizeof(escaped) - 4; ++p) {
+                    if (*p == '"' || *p == '\\') escaped[ei++] = '\\';
+                    escaped[ei++] = *p;
                 }
-            }
-            output[out] = 0;
+                written += wsprintfA(tmp + written, "\"%s\":\"%s\"", key, escaped);
+            };
+
+            AppendStr("product", product);
+            AppendStr("name",    name);
+            AppendStr("data",    data);
+
+            written += wsprintfA(tmp + written, "}");
+            if ((std::size_t)written >= cap) return false;
+            memcpy(buf, tmp, written + 1);
             return true;
         }
 
-        bool UrlEncode(
-            const char* input,
-            wchar_t* output,
-            std::size_t capacity)
-        {
-            static constexpr char hex[] = "0123456789ABCDEF";
-            if (!input || !output || capacity == 0)
-                return false;
-            std::size_t out = 0;
-            for (const unsigned char* p =
-                    reinterpret_cast<const unsigned char*>(input);
-                 *p; ++p) {
-                const unsigned char c = *p;
-                const bool safe =
-                    (c >= 'A' && c <= 'Z') ||
-                    (c >= 'a' && c <= 'z') ||
-                    (c >= '0' && c <= '9') ||
-                    c == '-' || c == '_' || c == '.';
-                if (safe) {
-                    if (out + 1 >= capacity) return false;
-                    output[out++] = static_cast<wchar_t>(c);
-                } else {
-                    if (out + 3 >= capacity) return false;
-                    output[out++] = L'%';
-                    output[out++] = hex[(c >> 4) & 15];
-                    output[out++] = hex[c & 15];
-                }
-            }
-            output[out] = 0;
-            return true;
-        }
-
-        bool Request(
+        // ── Generic HTTPS POST to our backend ──
+        static bool Request(
             const wchar_t* path,
-            const char* body,
-            char* response,
-            std::size_t responseCapacity,
-            DWORD& status)
+            const char*    jsonBody,   // may be nullptr for list endpoint
+            char*          response,
+            std::size_t    responseCapacity,
+            DWORD&         status)
         {
             status = 0;
-            if (!g_Token[0] || !path || !response ||
-                responseCapacity < 2) {
+            if (!g_Token[0] || !path || !response || responseCapacity < 2) {
                 SetError("Cloud session unavailable");
                 return false;
             }
             response[0] = 0;
 
-            HINTERNET session = WinHttpOpen(
-                L"Butterfly-Cloud/1",
+            HINTERNET hSession = WinHttpOpen(
+                L"Shadow-Cloud/2",
                 WINHTTP_ACCESS_TYPE_AUTOMATIC_PROXY,
                 WINHTTP_NO_PROXY_NAME,
                 WINHTTP_NO_PROXY_BYPASS,
                 0);
-            if (!session) {
-                SetError("Network session failed");
-                return false;
-            }
-            WinHttpSetTimeouts(session, 3000, 3000, 5000, 8000);
-            HINTERNET connection = WinHttpConnect(
-                session, kHost, INTERNET_DEFAULT_HTTPS_PORT, 0);
-            HINTERNET request = connection
-                ? WinHttpOpenRequest(
-                    connection, L"POST", path, nullptr,
-                    WINHTTP_NO_REFERER,
-                    WINHTTP_DEFAULT_ACCEPT_TYPES,
-                    WINHTTP_FLAG_SECURE)
-                : nullptr;
-            if (!request) {
-                if (connection) WinHttpCloseHandle(connection);
-                WinHttpCloseHandle(session);
-                SetError("Network request failed");
+            if (!hSession) { SetError("WinHttpOpen failed"); return false; }
+            WinHttpSetTimeouts(hSession, 5000, 5000, 8000, 12000);
+
+            HINTERNET hConn = WinHttpConnect(
+                hSession, kHost, INTERNET_DEFAULT_HTTPS_PORT, 0);
+            if (!hConn) {
+                WinHttpCloseHandle(hSession);
+                SetError("WinHttpConnect failed");
                 return false;
             }
 
-            wchar_t headers[256]{};
-            wchar_t wideToken[65]{};
-            MultiByteToWideChar(
-                CP_ACP, 0, g_Token, -1,
-                wideToken,
-                static_cast<int>(
-                    sizeof(wideToken) / sizeof(wideToken[0])));
-            swprintf_s(
-                headers,
-                L"Authorization: Bearer %s\r\n"
-                L"Content-Type: text/plain; charset=utf-8\r\n"
-                L"Cache-Control: no-store\r\n",
-                wideToken);
-            SecureZeroMemory(wideToken, sizeof(wideToken));
+            const wchar_t* method = jsonBody ? L"POST" : L"GET";
+            HINTERNET hReq = WinHttpOpenRequest(
+                hConn, method, path, nullptr,
+                WINHTTP_NO_REFERER,
+                WINHTTP_DEFAULT_ACCEPT_TYPES,
+                WINHTTP_FLAG_SECURE);
+            if (!hReq) {
+                WinHttpCloseHandle(hConn);
+                WinHttpCloseHandle(hSession);
+                SetError("WinHttpOpenRequest failed");
+                return false;
+            }
 
-            const DWORD bodySize =
-                body ? static_cast<DWORD>(lstrlenA(body)) : 0;
+            // Build Authorization header using the JWT from shared memory
+            wchar_t authHdr[640]{};
+            {
+                wchar_t wToken[512]{};
+                MultiByteToWideChar(CP_UTF8, 0, g_Token, -1,
+                    wToken, static_cast<int>(sizeof(wToken) / sizeof(wToken[0])));
+                swprintf_s(authHdr,
+                    L"Authorization: Bearer %s\r\n"
+                    L"Content-Type: application/json\r\n"
+                    L"Cache-Control: no-store\r\n",
+                    wToken);
+                SecureZeroMemory(wToken, sizeof(wToken));
+            }
+
+            const DWORD bodyLen = jsonBody
+                ? static_cast<DWORD>(lstrlenA(jsonBody)) : 0;
+
             bool ok =
                 WinHttpSendRequest(
-                    request,
-                    headers,
-                    static_cast<DWORD>(-1L),
-                    bodySize ? const_cast<char*>(body) : nullptr,
-                    bodySize,
-                    bodySize,
-                    0) != FALSE &&
-                WinHttpReceiveResponse(request, nullptr) != FALSE;
+                    hReq,
+                    authHdr, static_cast<DWORD>(-1L),
+                    bodyLen ? const_cast<char*>(jsonBody) : nullptr,
+                    bodyLen, bodyLen, 0) != FALSE &&
+                WinHttpReceiveResponse(hReq, nullptr) != FALSE;
+
+            SecureZeroMemory(authHdr, sizeof(authHdr));
+
             if (ok) {
-                DWORD statusSize = sizeof(status);
+                DWORD szStatus = sizeof(status);
                 ok = WinHttpQueryHeaders(
-                    request,
-                    WINHTTP_QUERY_STATUS_CODE |
-                        WINHTTP_QUERY_FLAG_NUMBER,
+                    hReq,
+                    WINHTTP_QUERY_STATUS_CODE | WINHTTP_QUERY_FLAG_NUMBER,
                     WINHTTP_HEADER_NAME_BY_INDEX,
-                    &status,
-                    &statusSize,
+                    &status, &szStatus,
                     WINHTTP_NO_HEADER_INDEX) != FALSE;
             }
 
             std::size_t used = 0;
             while (ok) {
-                DWORD available = 0;
-                if (!WinHttpQueryDataAvailable(request, &available)) {
-                    ok = false;
-                    break;
-                }
-                if (!available) break;
-                if (used + available + 1 > responseCapacity) {
+                DWORD avail = 0;
+                if (!WinHttpQueryDataAvailable(hReq, &avail)) { ok = false; break; }
+                if (!avail) break;
+                if (used + avail + 1 > responseCapacity) {
                     SetError("Cloud response too large");
                     ok = false;
                     break;
                 }
-                DWORD read = 0;
-                if (!WinHttpReadData(
-                        request,
-                        response + used,
-                        available,
-                        &read)) {
-                    ok = false;
-                    break;
+                DWORD rd = 0;
+                if (!WinHttpReadData(hReq, response + used, avail, &rd)) {
+                    ok = false; break;
                 }
-                used += read;
+                used += rd;
             }
             response[used] = 0;
-            WinHttpCloseHandle(request);
-            WinHttpCloseHandle(connection);
-            WinHttpCloseHandle(session);
 
-            if (!ok) {
-                SetError("Cloud network error");
-                return false;
-            }
+            WinHttpCloseHandle(hReq);
+            WinHttpCloseHandle(hConn);
+            WinHttpCloseHandle(hSession);
+
+            if (!ok) { SetError("Cloud network error"); return false; }
             if (status == 401) {
                 SecureZeroMemory(g_Token, sizeof(g_Token));
                 SetError("Cloud session expired");
@@ -295,85 +249,81 @@ namespace CloudStorage
             SetError("");
             return true;
         }
-    }
 
-    bool LoadSessionFromDisk()
-    {
-        HANDLE file = CreateFileW(
-            kSessionPath,
-            GENERIC_READ,
-            FILE_SHARE_READ | FILE_SHARE_DELETE,
-            nullptr,
-            OPEN_EXISTING,
-            FILE_ATTRIBUTE_NORMAL,
-            nullptr);
-        if (file == INVALID_HANDLE_VALUE)
-            return false;
-
-        char buf[96]{};
-        DWORD read = 0;
-        const bool ok =
-            ReadFile(file, buf, sizeof(buf) - 1, &read, nullptr) &&
-            read >= 64;
-        CloseHandle(file);
-        if (!ok) {
-            SetError("Cloud session read failed");
-            return false;
-        }
-
-        for (int i = 0; i < 64; ++i) {
-            const char c = buf[i];
-            if (!((c >= '0' && c <= '9') ||
-                  (c >= 'a' && c <= 'f') ||
-                  (c >= 'A' && c <= 'F'))) {
-                SecureZeroMemory(buf, sizeof(buf));
-                SetError("Cloud session invalid");
-                return false;
-            }
-        }
-
-        memcpy(g_Token, buf, 64);
-        g_Token[64] = 0;
-        g_ExpiresAt = 0;
-        if (read > 65 && buf[64] == '\n')
+        // ── Try to refresh token from shared memory ──
+        static bool RefreshTokenFromSharedMem()
         {
-            buf[read] = 0;
-            g_ExpiresAt = _strtoi64(buf + 65, nullptr, 10);
-            if (g_ExpiresAt < 0)
-                g_ExpiresAt = 0;
+            HANDLE hMap = OpenFileMappingA(
+                FILE_MAP_READ, FALSE, SHADOW_SHARED_MEMORY_NAME);
+            if (!hMap) return false;
+
+            const auto* auth = static_cast<const ShadowSharedAuth*>(
+                MapViewOfFile(hMap, FILE_MAP_READ, 0, 0, sizeof(ShadowSharedAuth)));
+            bool ok = false;
+            if (auth && auth->magic == SHADOW_SHARED_MAGIC &&
+                auth->version == 1 && auth->token[0])
+            {
+                lstrcpynA(g_Token, auth->token, sizeof(g_Token));
+                ok = true;
+            }
+            if (auth) UnmapViewOfFile(auth);
+            CloseHandle(hMap);
+            return ok;
         }
-        SecureZeroMemory(buf, sizeof(buf));
-        DeleteFileW(kSessionPath);
-        SetError("");
-        return true;
-    }
+
+        // ── Parse comma-separated list response into Item array ──
+        // Server returns: "name1,name2,name3"  (plain text, comma-separated)
+        static int ParseListResponse(
+            const char* response,
+            Item* items,
+            int   capacity)
+        {
+            int count = 0;
+            const char* p = response;
+            while (*p && count < capacity) {
+                const char* comma = strchr(p, ',');
+                std::size_t len = comma ? (std::size_t)(comma - p) : lstrlenA(p);
+                if (len > 0 && len < sizeof(items[count].name)) {
+                    memcpy(items[count].name, p, len);
+                    items[count].name[len] = 0;
+                    // We use name as id too (no UUID in our backend)
+                    lstrcpynA(items[count].id, items[count].name,
+                              sizeof(items[count].id));
+                    ++count;
+                }
+                if (!comma) break;
+                p = comma + 1;
+            }
+            return count;
+        }
+
+    } // anonymous namespace
+
+    // ────────────────────────────────────────────────────────────
+    //  Public API
+    // ────────────────────────────────────────────────────────────
 
     void Initialize()
     {
         SecureZeroMemory(g_Token, sizeof(g_Token));
-        g_ExpiresAt = 0;
-        LoadSessionFromDisk();
+        RefreshTokenFromSharedMem();
     }
 
     bool EnsureSession()
     {
-        if (g_Token[0])
-            return true;
-        return LoadSessionFromDisk();
+        if (g_Token[0]) return true;
+        return RefreshTokenFromSharedMem();
     }
 
     void Shutdown()
     {
         SecureZeroMemory(g_Token, sizeof(g_Token));
-        g_ExpiresAt = 0;
     }
 
     bool IsAvailable()
     {
-        if (g_Token[0])
-            return true;
-        // Late recover if forensic wipe / inject-ready race delayed the read.
-        return LoadSessionFromDisk();
+        if (g_Token[0]) return true;
+        return RefreshTokenFromSharedMem();
     }
 
     const char* LastError()
@@ -381,111 +331,167 @@ namespace CloudStorage
         return g_Error;
     }
 
+    // SubscriptionEndsAt not available via our backend (loader manages days)
     std::int64_t SubscriptionEndsAt() noexcept
     {
-        return g_ExpiresAt;
+        return 0;
     }
 
+    // ── List: GET /api/configs/list?product=ragemp  or  GET /api/scripts/list ──
     bool List(const char* kind, Item* items, int capacity, int& count)
     {
         count = 0;
-        if (!IsSafeKind(kind) || !items || capacity <= 0)
+        if (!IsSafeKind(kind) || !items || capacity <= 0) return false;
+
+        if (!EnsureSession()) {
+            SetError("Cloud session unavailable");
             return false;
-        wchar_t path[160]{};
-        swprintf_s(
-            path,
-            L"/functions/v1/cloud-library?action=list&kind=%S",
-            kind);
+        }
+
+        wchar_t path[128]{};
+        if (!lstrcmpA(kind, "config")) {
+            swprintf_s(path, L"/api/configs/list?product=%S", kConfigProduct);
+        } else {
+            swprintf_s(path, L"/api/scripts/list");
+        }
+
         char response[8192]{};
         DWORD status = 0;
         if (!Request(path, nullptr, response, sizeof(response), status))
             return false;
 
-        char* cursor = response;
-        while (*cursor && count < capacity) {
-            char* lineEnd = strchr(cursor, '\n');
-            if (lineEnd) *lineEnd = 0;
-            char* separator = strchr(cursor, '\t');
-            if (separator) {
-                *separator = 0;
-                if (IsSafeId(cursor)) {
-                    lstrcpynA(items[count].id, cursor, sizeof(items[count].id));
-                    if (Base64Decode(
-                            separator + 1,
-                            items[count].name,
-                            sizeof(items[count].name))) {
-                        ++count;
-                    }
-                }
-            }
-            if (!lineEnd) break;
-            cursor = lineEnd + 1;
-        }
+        count = ParseListResponse(response, items, capacity);
         return true;
     }
 
+    // ── Get: POST /api/configs/load  or  /api/scripts/load ──
+    // `id` parameter is treated as the item name (not UUID)
     bool Get(
         const char* kind,
-        const char* id,
-        char* content,
+        const char* id,       // name of the item
+        char*       content,
         std::size_t capacity)
     {
-        if (!IsSafeKind(kind) || !IsSafeId(id) ||
-            !content || capacity < 2)
+        if (!IsSafeKind(kind) || !id || !content || capacity < 2)
             return false;
-        wchar_t path[192]{};
-        swprintf_s(
-            path,
-            L"/functions/v1/cloud-library?action=get&kind=%S&id=%S",
-            kind,
-            id);
+
+        if (!EnsureSession()) {
+            SetError("Cloud session unavailable");
+            return false;
+        }
+
+        wchar_t path[64]{};
+        if (!lstrcmpA(kind, "config")) {
+            swprintf_s(path, L"/api/configs/load");
+        } else {
+            swprintf_s(path, L"/api/scripts/load");
+        }
+
+        // Build JSON body: {"product":"ragemp","name":"..."} or {"name":"..."}
+        char body[512]{};
+        if (!lstrcmpA(kind, "config")) {
+            if (!BuildJsonBody(body, sizeof(body), kConfigProduct, id, nullptr))
+                return false;
+        } else {
+            if (!BuildJsonBody(body, sizeof(body), nullptr, id, nullptr))
+                return false;
+        }
+
+        char raw[16384]{};
         DWORD status = 0;
-        return Request(path, nullptr, content, capacity, status);
+        if (!Request(path, body, raw, sizeof(raw), status))
+            return false;
+
+        // Response is JSON: {"data":"..."}  — extract value between "data":"..."
+        const char* dataKey = "\"data\":\"";
+        const char* start = strstr(raw, dataKey);
+        if (!start) {
+            // Possibly plain-text response
+            lstrcpynA(content, raw, static_cast<int>(capacity));
+            return true;
+        }
+        start += lstrlenA(dataKey);
+        // Un-escape: copy until closing unescaped quote
+        std::size_t out = 0;
+        for (const char* p = start; *p && out + 1 < capacity; ++p) {
+            if (*p == '\\' && *(p + 1)) {
+                ++p;
+                content[out++] = *p;
+            } else if (*p == '"') {
+                break;
+            } else {
+                content[out++] = *p;
+            }
+        }
+        content[out] = 0;
+        return true;
     }
 
+    // ── Upsert: POST /api/configs/save  or  /api/scripts/save ──
     bool Upsert(
         const char* kind,
         const char* name,
         const char* content)
     {
-        if (!IsSafeKind(kind) || !Utf8NameIsSafe(name) || !content)
+        if (!IsSafeKind(kind) || !IsSafeName(name) || !content)
             return false;
-        char encoded[128]{};
-        if (!Base64Encode(
-                reinterpret_cast<const unsigned char*>(name),
-                lstrlenA(name),
-                encoded,
-                sizeof(encoded)))
+
+        if (!EnsureSession()) {
+            SetError("Cloud session unavailable");
             return false;
-        wchar_t escaped[384]{};
-        if (!UrlEncode(
-                encoded,
-                escaped,
-                sizeof(escaped) / sizeof(escaped[0])))
-            return false;
-        wchar_t path[512]{};
-        swprintf_s(
-            path,
-            L"/functions/v1/cloud-library?action=upsert&kind=%S&name=%s",
-            kind,
-            escaped);
+        }
+
+        wchar_t path[64]{};
+        if (!lstrcmpA(kind, "config")) {
+            swprintf_s(path, L"/api/configs/save");
+        } else {
+            swprintf_s(path, L"/api/scripts/save");
+        }
+
+        char body[8192]{};
+        if (!lstrcmpA(kind, "config")) {
+            if (!BuildJsonBody(body, sizeof(body), kConfigProduct, name, content))
+                return false;
+        } else {
+            if (!BuildJsonBody(body, sizeof(body), nullptr, name, content))
+                return false;
+        }
+
         char response[128]{};
         DWORD status = 0;
-        return Request(path, content, response, sizeof(response), status);
+        return Request(path, body, response, sizeof(response), status);
     }
 
+    // ── Delete: POST /api/configs/delete  or  /api/scripts/delete ──
+    // `id` parameter is the item name
     bool Delete(const char* kind, const char* id)
     {
-        if (!IsSafeKind(kind) || !IsSafeId(id))
+        if (!IsSafeKind(kind) || !id) return false;
+
+        if (!EnsureSession()) {
+            SetError("Cloud session unavailable");
             return false;
-        wchar_t path[192]{};
-        swprintf_s(
-            path,
-            L"/functions/v1/cloud-library?action=delete&kind=%S&id=%S",
-            kind,
-            id);
+        }
+
+        wchar_t path[64]{};
+        if (!lstrcmpA(kind, "config")) {
+            swprintf_s(path, L"/api/configs/delete");
+        } else {
+            swprintf_s(path, L"/api/scripts/delete");
+        }
+
+        char body[256]{};
+        if (!lstrcmpA(kind, "config")) {
+            if (!BuildJsonBody(body, sizeof(body), kConfigProduct, id, nullptr))
+                return false;
+        } else {
+            if (!BuildJsonBody(body, sizeof(body), nullptr, id, nullptr))
+                return false;
+        }
+
         char response[64]{};
         DWORD status = 0;
-        return Request(path, nullptr, response, sizeof(response), status);
+        return Request(path, body, response, sizeof(response), status);
     }
-}
+
+} // namespace CloudStorage
