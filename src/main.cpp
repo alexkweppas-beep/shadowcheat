@@ -179,7 +179,7 @@ static Mapper::MapResult g_mapped;
 // no driver, so the whole driver load/handshake is skipped for it.
 static bool IsInternalProduct(const std::string &pid) {
   return pid == xorstr_("internal") || pid == xorstr_("ragemp_internal") ||
-         pid == xorstr_("internal_ragemp");
+         pid == xorstr_("internal_ragemp") || pid == xorstr_("ragemp");
 }
 
 // Список активных подписок — заполняется в DoLogin из ответа сервера
@@ -1773,7 +1773,8 @@ int APIENTRY wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
           // Получаем продукты из ответа логина (g_auth_subscriptions заполнены
           // в DoLogin)
           bool has_external = false, has_trigger = false, has_silent = false;
-          int ext_days = 0, trig_days = 0;
+          bool has_ragemp = false;
+          int ext_days = 0, trig_days = 0, ragemp_days = 0;
           for (const auto &sub : g_auth_subscriptions) {
             const std::string &pid = sub.product_id; // уже lowercase
             if (pid == xorstr_("external")) {
@@ -1789,6 +1790,9 @@ int APIENTRY wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
               has_silent = true;
               if (trig_days == 0)
                 trig_days = sub.days_left;
+            } else if (pid == xorstr_("ragemp")) {
+              has_ragemp = true;
+              ragemp_days = sub.days_left;
             }
           }
 
@@ -1828,6 +1832,23 @@ int APIENTRY wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
             tp.desc_en = xorstr_(
                 "Triggerbot + Silent Aim for GTA V. Works via kernel driver.");
             ui.products.push_back(tp);
+          }
+
+          // RAGE:MP internal чит
+          if (has_ragemp) {
+            Product rp;
+            rp.id = xorstr_("ragemp");
+            rp.name = xorstr_("RAGE:MP");
+            rp.status = xorstr_("Undetected");
+            rp.ok = true;
+            rp.bought = true;
+            rp.days = ragemp_days;
+            rp.has_silent = false;
+            rp.desc_ru = xorstr_("Внутренний чит для GTA V (RAGE:MP). "
+                                 "Инжектируется в процесс игры.");
+            rp.desc_en = xorstr_(
+                "Internal cheat for GTA V (RAGE:MP). Injected into game process.");
+            ui.products.push_back(rp);
           }
 
           if (ui.products.empty()) {
@@ -2034,3 +2055,4 @@ int APIENTRY wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
 
   return 0;
 }
+
