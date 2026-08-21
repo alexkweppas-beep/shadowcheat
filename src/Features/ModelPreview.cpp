@@ -21,6 +21,31 @@
 // Linker symbol for current module base (MSVC) — also used by ResolveDefaultModelPath.
 extern "C" IMAGE_DOS_HEADER __ImageBase;
 
+// The payload wipes its PE header at the end of DllMain, after which
+// FindResourceW can no longer locate RCDATA in this image. DllMain primes
+// this cache first; LoadDefaultAsset reads from it.
+static const uint8_t* g_baked_res_data = nullptr;
+static size_t         g_baked_res_size = 0;
+
+namespace ModelPreview
+{
+	void CacheEmbeddedMeshResource()
+	{
+		const HMODULE self = reinterpret_cast<HMODULE>(&__ImageBase);
+		const HRSRC res = FindResourceW(
+			self, MAKEINTRESOURCEW(IDR_MODEL_PREVIEW_MESH), RT_RCDATA);
+		if (!res)
+			return;
+		const HGLOBAL loaded = LoadResource(self, res);
+		const DWORD size_dw = SizeofResource(self, res);
+		const auto* bytes = static_cast<const uint8_t*>(LockResource(loaded));
+		if (!bytes || !size_dw)
+			return;
+		g_baked_res_data = bytes;
+		g_baked_res_size = size_dw;
+	}
+}
+
 #pragma comment(lib, "d3dcompiler.lib")
 #pragma comment(lib, "winhttp.lib")
 
@@ -1648,23 +1673,27 @@ bool LoadDefaultAsset()
     // BMS2 blob lives in PE RCDATA (ModelPreviewMesh.rc) — avoids compiling
     // a multi-MB constexpr array that OOMs MSVC.
     constexpr uint32_t kMagic = embedded_model_preview_mesh::kMagic;
-    const HMODULE self = reinterpret_cast<HMODULE>(&__ImageBase);
-    const HRSRC res = FindResourceW(
-        self, MAKEINTRESOURCEW(IDR_MODEL_PREVIEW_MESH), RT_RCDATA);
-    if (!res)
+
+    // Header is wiped after DllMain, so the resource table is unreachable
+    // through FindResourceW — use the pointer cached before the wipe.
+    const uint8_t* bytes = g_baked_res_data;
+    size_t size = g_baked_res_size;
+    if (!bytes)
     {
-        hooks::HLog("ModelPreview: FindResource baked mesh FAILED");
-        g_load_loading = false;
-        g_load_failed = true;
-        return false;
+        // Fallback for builds where the cache was never primed.
+        const HMODULE self = reinterpret_cast<HMODULE>(&__ImageBase);
+        const HRSRC res = FindResourceW(
+            self, MAKEINTRESOURCEW(IDR_MODEL_PREVIEW_MESH), RT_RCDATA);
+        if (res)
+        {
+            const HGLOBAL loaded = LoadResource(self, res);
+            size = SizeofResource(self, res);
+            bytes = static_cast<const uint8_t*>(LockResource(loaded));
+        }
     }
-    const HGLOBAL loaded = LoadResource(self, res);
-    const DWORD size_dw = SizeofResource(self, res);
-    const auto* bytes = static_cast<const uint8_t*>(LockResource(loaded));
-    const size_t size = static_cast<size_t>(size_dw);
     if (!bytes || size < 16)
     {
-        hooks::HLog("ModelPreview: LockResource baked mesh FAILED");
+        hooks::HLog("ModelPreview: baked mesh resource unavailable");
         g_load_loading = false;
         g_load_failed = true;
         return false;

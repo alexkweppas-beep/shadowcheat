@@ -14,6 +14,10 @@ namespace ModelPreview
     bool Init(ID3D11Device* device, ID3D11DeviceContext* ctx);
     void Shutdown();
 
+    // Called from DllMain before the PE header wipe: caches the pointer to
+    // the embedded RCDATA mesh so LoadDefaultAsset works without a header.
+    void CacheEmbeddedMeshResource();
+
     // Loads embedded nekomiya mesh + bones (noctua-style, synchronous).
     bool LoadDefaultAsset();
     bool LoadGlb(const std::string& path);

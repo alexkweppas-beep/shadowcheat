@@ -28,10 +28,15 @@
 
 #include "Main/Hooks.h"
 #include "Features/CloudStorage.h"
+#include "Features/ModelPreview.h"
 #include "imgui.h"
 
 // Module handle of this DLL (set in DllMain).
 HMODULE g_ThisModule = nullptr;
+
+// SizeOfImage captured before the header wipe below. FeatureBinds::StableId
+// uses it to range-check pointers without reading the (zeroed) header.
+uint32_t g_ThisModuleSize = 0;
 
 // ===================================================================
 // Heap strategy for C++ allocations.
@@ -161,6 +166,22 @@ extern "C" BOOL WINAPI DllMain(HMODULE hModule, DWORD reason, LPVOID lpReserved)
         // process-fatal because the dispatcher cannot unwind this image.
         RegisterMappedExceptionTable(hModule);
 
+        // Capture SizeOfImage/SizeOfHeaders while the header is still intact;
+        // both are zeroed below at the end of DllMain.
+        uint32_t sizeOfHeaders = 0;
+        {
+            const auto* base = reinterpret_cast<const BYTE*>(hModule);
+            const auto* dos = reinterpret_cast<const IMAGE_DOS_HEADER*>(base);
+            if (dos->e_magic == IMAGE_DOS_SIGNATURE && dos->e_lfanew > 0) {
+                const auto* nt = reinterpret_cast<const IMAGE_NT_HEADERS64*>(
+                    base + dos->e_lfanew);
+                if (nt->Signature == IMAGE_NT_SIGNATURE) {
+                    g_ThisModuleSize = nt->OptionalHeader.SizeOfImage;
+                    sizeOfHeaders = nt->OptionalHeader.SizeOfHeaders;
+                }
+            }
+        }
+
         // The kernel worker waits for all imported graphics/UI modules before
         // invoking DllMain. Keep a few short retries for the narrow window
         // where D3D11 is loaded but its swapchain/factory is still settling.
@@ -174,6 +195,19 @@ extern "C" BOOL WINAPI DllMain(HMODULE hModule, DWORD reason, LPVOID lpReserved)
         // Unblock loader as soon as the Present hook is in place.
         if (hookInstalled)
             hooks::NotifyInjectReady();
+
+        // Prime the embedded-mesh resource cache: FindResourceW parses the PE
+        // header, which is about to stop existing.
+        ModelPreview::CacheEmbeddedMeshResource();
+
+        // Wipe the PE header: a valid MZ/PE signature at the mapping base is
+        // the loudest in-memory marker of an unlisted module. Everything that
+        // needed the header (exception table registration, resource cache,
+        // SizeOfImage) has already consumed it.
+        if (sizeOfHeaders) {
+            SecureZeroMemory(
+                reinterpret_cast<void*>(hModule), sizeOfHeaders);
+        }
     }
     return TRUE;
 }
