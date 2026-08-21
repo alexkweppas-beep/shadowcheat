@@ -1045,6 +1045,7 @@ export default function AdminPanel() {
                   <option value="external">EXTERNAL</option>
                   <option value="trigger">TRIGGER</option>
                   <option value="trigger_silent">TRIGGER + SILENT</option>
+                  <option value="ragemp">RAGE:MP</option>
                 </select>
                 <label style={{ fontSize: '13px', color: 'var(--text-secondary)' }}>Дней (0 = забрать)</label>
                 <input type="number" className="admin-input" value={subDays} onChange={e => setSubDays(e.target.value)} />
@@ -1089,6 +1090,7 @@ export default function AdminPanel() {
                   <option value="external">EXTERNAL</option>
                   <option value="trigger">TRIGGER</option>
                   <option value="trigger_silent">TRIGGER + SILENT</option>
+                  <option value="ragemp">RAGE:MP</option>
                 </select>
                 <label style={{ fontSize: '13px', color: 'var(--text-secondary)' }}>Дней подписки на ключ</label>
                 <input type="number" className="admin-input" value={keysDays} onChange={e => setKeysDays(e.target.value)} />
@@ -1171,6 +1173,7 @@ export default function AdminPanel() {
                     <option value="external">EXTERNAL</option>
                     <option value="trigger">TRIGGER</option>
                     <option value="trigger_silent">TRIGGER + SILENT</option>
+                    <option value="ragemp">RAGE:MP</option>
                   </select>
                   <input type="number" className="admin-input" placeholder="Дней" value={keysDays} onChange={e => setKeysDays(e.target.value)} />
                   <input type="number" className="admin-input" placeholder="Штук" value={keysAmount} onChange={e => setKeysAmount(e.target.value)} />
