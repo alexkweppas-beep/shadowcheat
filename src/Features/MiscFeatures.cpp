@@ -1136,6 +1136,11 @@ if(g.__bfKd(0x41,34))np=new mp.Vector3(np.x-nrx*nspd,np.y-nry*nspd,np.z);
 if(g.__bfKd(0x44,35))np=new mp.Vector3(np.x+nrx*nspd,np.y+nry*nspd,np.z);
 if(g.__bfKd(0x20,22))np=new mp.Vector3(np.x,np.y,np.z+nspd);
 if(g.__bfKd(0x11,36))np=new mp.Vector3(np.x,np.y,np.z-nspd);
+/* Noclip moves the player every frame, so the window is renewed on a timer
+instead of per move: the call is the server's own "a jump is coming" API and
+spamming it every frame would itself stand out. */
+try{var nw=Date.now();if(!s._acAt||nw-s._acAt>2000){s._acAt=nw;
+mp.events.call('c:ac:check',3000);}}catch(e){}
 try{p.setCoordsNoOffset(np.x,np.y,np.z,false,false,false);}catch(e){}
 });
 }catch(e){}})();)JS";
@@ -1414,6 +1419,10 @@ if(p.vehicle&&p.vehicle.handle){
 if(mp.game.vehicle.getPedInVehicleSeat(p.vehicle.handle,-1)===p.handle)ent=p.vehicle;
 }
 }catch(e){}
+/* The server's own spawn and yacht scripts announce a coming position jump
+with this call before they move the player, and its checks expect the jump
+inside that window. A warp that skips it looks exactly like what they hunt. */
+try{mp.events.call('c:ac:check',3000);}catch(e){}
 try{ent.setCoordsNoOffset(x,y,z,false,false,false);}catch(e){}
 }
 function keyDown(vk){
@@ -2964,26 +2973,20 @@ void RenderPlayersOverlay() noexcept
         ImGui::Dummy(ImVec2(0.f, 4.f));
     }
 
-    // label on the left, count hard right: the eye finds the number without
-    // reading the line.
+    // Label and number on one line, the number brighter than the label. Right
+    // aligning the count put it outside the auto-resized window and it was
+    // simply not there.
     const auto countRow =
         [](const char* label, int value) noexcept {
             ImGui::TextColored(
                 ImVec4(0.78f, 0.81f, 0.86f, 1.f),
-                "%s",
+                "%s:",
                 label);
-            char number[16]{};
-            sprintf_s(number, "%d", value);
-            const float width =
-                ImGui::GetContentRegionAvail().x;
-            const ImVec2 size = ImGui::CalcTextSize(number);
-            ImGui::SameLine(0.f, 0.f);
-            ImGui::SetCursorPosX(
-                ImGui::GetCursorPosX() + width - size.x);
+            ImGui::SameLine(0.f, 6.f);
             ImGui::TextColored(
                 ImVec4(1.f, 1.f, 1.f, 1.f),
-                "%s",
-                number);
+                "%d",
+                value);
         };
 
     const float maxDist = g_Settings.playersDistance > 1.f

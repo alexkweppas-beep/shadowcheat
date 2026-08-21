@@ -2154,6 +2154,11 @@ namespace Menu
             menuSize.y = ImMax(menuSize.y, 240.f);
         }
         static bool s_SettingsOpen = false;
+        if (s_PreviewOpenSettings)
+        {
+            s_SettingsOpen = true;
+            s_PreviewOpenSettings = false;
+        }
         static float s_SettingsFlyoutFade = 0.f;
         s_SettingsFlyoutFade = MenuMotion::Approach(
             s_SettingsFlyoutFade,
@@ -2172,8 +2177,10 @@ namespace Menu
             const float ease =
                 MenuMotion::EaseStandard(s_SettingsFlyoutFade);
             const float margin = 12.f * scale;
+            // Two columns of settings plus the account block. Narrower than
+            // this and the columns collapse back into one long scroll.
             const float panelW = ImMin(
-                268.f * scale,
+                560.f * scale,
                 ImMax(180.f * scale, io.DisplaySize.x - margin * 2.f));
             const float roomRight =
                 io.DisplaySize.x - (hostPos.x + hostSize.x) - margin * 2.f;

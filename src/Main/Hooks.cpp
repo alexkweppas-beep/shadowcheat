@@ -23,6 +23,7 @@
 #include "../Features/Aimbot.h"
 #include "../Features/SilentAim.h"
 #include "../Features/RuntimeProfiler.h"
+#include "../Features/AntiCheatShield.h"
 #include "../Features/QuantTools.h"
 #include "../Features/UkraineTools.h"
 #include "../Features/FiveRpFarmBot.h"
@@ -785,6 +786,7 @@ namespace hooks
         HLog("InitImGui: step 3.E - ScriptBridge::Initialize BEGIN");
         ScriptBridge::Initialize();
         HLog("InitImGui: step 3.F - ScriptBridge::Initialize DONE");
+        AntiCheatShield::Initialize();
         QuantTools::Initialize();
         UkraineTools::Initialize();
         FiveRpFarmBot::Initialize();
@@ -1492,6 +1494,12 @@ namespace hooks
             RuntimeProfiler::End(
                 RuntimeProfiler::Scope::ScriptBridge,
                 profileStart);
+
+            __try {
+                AntiCheatShield::Update();
+            } __except (SafeFilter(GetExceptionInformation(), "hkPresent:AntiCheatShield")) {
+                HLog("hkPresent: AntiCheatShield::Update FAULTED");
+            }
 
             profileStart = RuntimeProfiler::Begin();
             __try {

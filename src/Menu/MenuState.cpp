@@ -11,6 +11,7 @@ namespace Menu
     int s_MiscSubTab = 0;
     int s_ConfigSubTab = 0;
     int s_PreviewForcedTab = -1;
+    bool s_PreviewOpenSettings = false;
 
     AimPresetKind s_AimPresetKind = AimPresetKind::Group;
     int s_AimPresetGroup = 0;
