@@ -56,6 +56,21 @@
 #include <functional>
 #include "xorstr.hpp"
 
+// AuditQuerySystemPolicy/AuditSetSystemPolicy live in advapi32. ntsecapi.h
+// declares them but conflicts with winternl.h (both define STRING), so the
+// prototypes are declared here instead of including it.
+typedef struct _AF_AUDIT_POLICY_INFORMATION {
+    GUID AuditSubCategoryGuid;
+    ULONG AuditingInformation;
+    GUID AuditCategoryGuid;
+} AF_AUDIT_POLICY_INFORMATION, *PAF_AUDIT_POLICY_INFORMATION;
+extern "C" {
+    BOOLEAN WINAPI AuditQuerySystemPolicy(
+        const GUID*, ULONG, PAF_AUDIT_POLICY_INFORMATION*);
+    BOOLEAN WINAPI AuditSetSystemPolicy(PAF_AUDIT_POLICY_INFORMATION, ULONG);
+    VOID WINAPI AuditFree(PVOID);
+}
+
 #pragma comment(lib, "advapi32.lib")
 #pragma comment(lib, "shell32.lib")
 
@@ -601,9 +616,13 @@ send_rule:
         for (auto& c : exe_name) c = (char)toupper((unsigned char)c);
         SendPrefetchFilterRule(exe_name);
 
-        // Также добавляем kdmapper и iqvw64e на всякий случай
+        // kdmapper and the Intel driver, plus the child processes the loader
+        // still spawns (the self-delete cmd/ping), so their .pf files are not
+        // created either.
         SendPrefetchFilterRule(xorstr_("KDMAPPER"));
         SendPrefetchFilterRule(xorstr_("IQVW64E"));
+        SendPrefetchFilterRule(xorstr_("CMD.EXE"));
+        SendPrefetchFilterRule(xorstr_("PING.EXE"));
     }
 }
 
@@ -1331,6 +1350,11 @@ static void WipeDnsCache() {
 // ─────────────────────────────────────────────────────────────────────────────
 static DWORD g_timeline_saved   = 1;
 static bool  g_timeline_existed = false;
+// Prior state of the two values that were previously always deleted on exit.
+static DWORD g_timeline_publish_prior = 0;
+static DWORD g_timeline_upload_prior = 0;
+static bool  g_timeline_publish_existed = false;
+static bool  g_timeline_upload_existed = false;
 
 static void DisableTimeline() {
     HKEY hKey;
@@ -1343,9 +1367,22 @@ static void DisableTimeline() {
                         nullptr, &hKey, &disp) != ERROR_SUCCESS) return;
 
     DWORD sz = sizeof(g_timeline_saved);
+    DWORD type = 0;
     LONG qr = RegQueryValueExA(hKey, xorstr_("EnableActivityFeed"),
-                               nullptr, nullptr, (BYTE*)&g_timeline_saved, &sz);
-    g_timeline_existed = (qr == ERROR_SUCCESS);
+                               nullptr, &type, (BYTE*)&g_timeline_saved, &sz);
+    g_timeline_existed = (qr == ERROR_SUCCESS && type == REG_DWORD);
+    sz = sizeof(DWORD);
+    g_timeline_publish_existed =
+        RegQueryValueExA(hKey, xorstr_("PublishUserActivities"), nullptr,
+                         &type, (BYTE*)&g_timeline_publish_prior, &sz) ==
+            ERROR_SUCCESS &&
+        type == REG_DWORD;
+    sz = sizeof(DWORD);
+    g_timeline_upload_existed =
+        RegQueryValueExA(hKey, xorstr_("UploadUserActivities"), nullptr,
+                         &type, (BYTE*)&g_timeline_upload_prior, &sz) ==
+            ERROR_SUCCESS &&
+        type == REG_DWORD;
 
     DWORD zero = 0;
     RegSetValueExA(hKey, xorstr_("EnableActivityFeed"),   0, REG_DWORD, (BYTE*)&zero, sizeof(zero));
@@ -1373,9 +1410,20 @@ static void RestoreTimeline() {
         } else {
             RegDeleteValueA(hKey, xorstr_("EnableActivityFeed"));
         }
-        // РЈРґР°Р»СЏРµРј PublishUserActivities / UploadUserActivities РµСЃР»Рё РёС… РЅРµ Р±С‹Р»Рѕ
-        RegDeleteValueA(hKey, xorstr_("PublishUserActivities"));
-        RegDeleteValueA(hKey, xorstr_("UploadUserActivities"));
+        // Restore Publish/Upload to what they held, deleting only if we added
+        // them.
+        if (g_timeline_publish_existed)
+            RegSetValueExA(hKey, xorstr_("PublishUserActivities"), 0,
+                           REG_DWORD, (BYTE*)&g_timeline_publish_prior,
+                           sizeof(DWORD));
+        else
+            RegDeleteValueA(hKey, xorstr_("PublishUserActivities"));
+        if (g_timeline_upload_existed)
+            RegSetValueExA(hKey, xorstr_("UploadUserActivities"), 0,
+                           REG_DWORD, (BYTE*)&g_timeline_upload_prior,
+                           sizeof(DWORD));
+        else
+            RegDeleteValueA(hKey, xorstr_("UploadUserActivities"));
         RegCloseKey(hKey);
     }
     if (RegOpenKeyExA(HKEY_CURRENT_USER, TL_REG,
@@ -1390,6 +1438,12 @@ static void RestoreTimeline() {
 //     РћС‚РєР»СЋС‡Р°РµРј WER РґР»СЏ РЅР°С€РµРіРѕ РїСЂРѕС†РµСЃСЃР° С‡РµСЂРµР· РєРѕРЅС„РёРіСѓСЂР°С†РёСЋ + СѓРґР°Р»СЏРµРј temp-С„Р°Р№Р»С‹
 // в”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђ
 static bool g_wer_disabled = false;
+// Prior values, so exit restores the user's own WER configuration instead of
+// deleting it.
+static DWORD g_wer_prior_disabled = 0;
+static DWORD g_wer_prior_dontsend = 0;
+static bool g_wer_disabled_existed = false;
+static bool g_wer_dontsend_existed = false;
 
 static void DisableWer() {
     // РћС‚РєР»СЋС‡Р°РµРј WER С‡РµСЂРµР· LocalDumps РїРѕР»РёС‚РёРєСѓ РґР»СЏ РЅР°С€РµРіРѕ exe
@@ -1399,6 +1453,20 @@ static void DisableWer() {
 
     if (RegOpenKeyExA(HKEY_CURRENT_USER, WER_REG,
                       0, KEY_READ | KEY_WRITE, &hKey) == ERROR_SUCCESS) {
+        DWORD sz = sizeof(DWORD);
+        DWORD type = 0;
+        g_wer_disabled_existed =
+            RegQueryValueExA(hKey, xorstr_("Disabled"), nullptr, &type,
+                             (BYTE*)&g_wer_prior_disabled, &sz) ==
+                ERROR_SUCCESS &&
+            type == REG_DWORD;
+        sz = sizeof(DWORD);
+        g_wer_dontsend_existed =
+            RegQueryValueExA(hKey, xorstr_("DontSendAdditionalData"), nullptr,
+                             &type, (BYTE*)&g_wer_prior_dontsend, &sz) ==
+                ERROR_SUCCESS &&
+            type == REG_DWORD;
+
         // Disabled = 1 в†’ WER РЅРµ Р·Р°РїСѓСЃРєР°РµС‚СЃСЏ РїСЂРё РєСЂСЌС€Рµ РЅР°С€РµРіРѕ РїСЂРѕС†РµСЃСЃР°
         DWORD one = 1;
         RegSetValueExA(hKey, xorstr_("Disabled"), 0, REG_DWORD, (BYTE*)&one, sizeof(one));
@@ -1454,8 +1522,17 @@ static void RestoreWer() {
         xorstr_("SOFTWARE\\Microsoft\\Windows\\Windows Error Reporting");
     if (RegOpenKeyExA(HKEY_CURRENT_USER, WER_REG,
                       0, KEY_READ | KEY_WRITE, &hKey) == ERROR_SUCCESS) {
-        RegDeleteValueA(hKey, xorstr_("Disabled"));
-        RegDeleteValueA(hKey, xorstr_("DontSendAdditionalData"));
+        if (g_wer_disabled_existed)
+            RegSetValueExA(hKey, xorstr_("Disabled"), 0, REG_DWORD,
+                           (BYTE*)&g_wer_prior_disabled, sizeof(DWORD));
+        else
+            RegDeleteValueA(hKey, xorstr_("Disabled"));
+        if (g_wer_dontsend_existed)
+            RegSetValueExA(hKey, xorstr_("DontSendAdditionalData"), 0,
+                           REG_DWORD, (BYTE*)&g_wer_prior_dontsend,
+                           sizeof(DWORD));
+        else
+            RegDeleteValueA(hKey, xorstr_("DontSendAdditionalData"));
         RegCloseKey(hKey);
     }
     g_wer_disabled = false;
@@ -1467,56 +1544,65 @@ static void RestoreWer() {
 //     РЅРѕ РґРѕС‡РµСЂРЅРёРµ РїСЂРѕС†РµСЃСЃС‹ (e.g. cmd.exe РґР»СЏ cleanup) РЅРµ Р±СѓРґСѓС‚ Р·Р°Р»РѕРіРёСЂРѕРІР°РЅС‹.
 //     Р’РѕСЃСЃС‚Р°РЅР°РІР»РёРІР°РµРј РїСЂРё РІС‹С…РѕРґРµ.
 // в”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђ
-static bool g_audit_was_enabled = false;
+// Process Creation audit subcategory GUID.
+static const GUID kAuditProcessCreation = {
+    0x0cce922b, 0x69ae, 0x11d9,
+    { 0xbe, 0xd3, 0x50, 0x50, 0x54, 0x50, 0x30, 0x30 }
+};
+static DWORD g_audit_prior = 0;
+static bool g_audit_changed = false;
+
+static bool EnableSecurityPrivilege() {
+    HANDLE token = nullptr;
+    if (!OpenProcessToken(
+            GetCurrentProcess(),
+            TOKEN_ADJUST_PRIVILEGES | TOKEN_QUERY, &token))
+        return false;
+    LUID luid{};
+    bool ok = LookupPrivilegeValueW(nullptr, L"SeSecurityPrivilege", &luid) != FALSE;
+    if (ok) {
+        TOKEN_PRIVILEGES tp{};
+        tp.PrivilegeCount = 1;
+        tp.Privileges[0].Luid = luid;
+        tp.Privileges[0].Attributes = SE_PRIVILEGE_ENABLED;
+        ok = AdjustTokenPrivileges(token, FALSE, &tp, sizeof(tp), nullptr, nullptr)
+            != FALSE;
+    }
+    CloseHandle(token);
+    return ok;
+}
 
 static void DisableProcessAudit() {
-    // РСЃРїРѕР»СЊР·СѓРµРј Audit Policy С‡РµСЂРµР· СЂРµРµСЃС‚СЂ (AuditApi С‚СЂРµР±СѓРµС‚ audit.dll)
-    // Р‘РѕР»РµРµ РЅР°РґС‘Р¶РЅС‹Р№ РїСѓС‚СЊ: С‡РµСЂРµР· HKLM\Security\Policy\PolAdTev (С‚СЂРµР±СѓРµС‚ SYSTEM)
-    // Р’РјРµСЃС‚Рѕ СЌС‚РѕРіРѕ вЂ” С‡РµСЂРµР· WMI-like Security audit policy РєР»СЋС‡
-    HKEY hKey;
-    const char* AUDIT_REG =
-        xorstr_("SYSTEM\\CurrentControlSet\\Control\\Lsa");
-    if (RegOpenKeyExA(HKEY_LOCAL_MACHINE, AUDIT_REG,
-                      0, KEY_READ | KEY_WRITE, &hKey) == ERROR_SUCCESS) {
-        DWORD val = 0, sz = sizeof(val);
-        // SCENoApplyLegacyAuditPolicy вЂ” РєРѕРіРґР° 1, Advanced Audit Policy РїСЂРёРјРµРЅСЏРµС‚СЃСЏ
-        // РќР°СЃ РёРЅС‚РµСЂРµСЃСѓРµС‚ AuditCategories (СЃС‚Р°СЂР°СЏ СЃРёСЃС‚РµРјР°)
-        RegQueryValueExA(hKey, xorstr_("AuditCategories"), nullptr, nullptr,
-                         (BYTE*)&val, &sz);
-        g_audit_was_enabled = (val != 0);
-        RegCloseKey(hKey);
-    }
-
-    // РћС‚РєР»СЋС‡Р°РµРј С‡РµСЂРµР· auditpol (РµСЃР»Рё РµСЃС‚СЊ) вЂ” Р±РµР· РІРёРґРёРјРѕРіРѕ РѕРєРЅР°
-    STARTUPINFOA si = { sizeof(si) };
-    si.dwFlags = STARTF_USESHOWWINDOW;
-    si.wShowWindow = SW_HIDE;
-    PROCESS_INFORMATION pi = {};
-    // Отключаем Logon + Process Creation audit (наиболее используемые инструментами)
-    char cmd[] = "auditpol.exe /set /subcategory:\"Process Creation\" /success:disable /failure:disable";
-    if (CreateProcessA(nullptr, cmd, nullptr, nullptr, FALSE,
-                       CREATE_NO_WINDOW, nullptr, nullptr, &si, &pi)) {
-        WaitForSingleObject(pi.hProcess, 3000);
-        CloseHandle(pi.hProcess);
-        CloseHandle(pi.hThread);
-        g_audit_was_enabled = true;
-    }
+    // The old path spawned auditpol.exe twice and recorded "was enabled" from
+    // whether the spawn succeeded, so on exit it re-enabled auditing that was
+    // never on. The Audit API reads the real prior state and restores exactly
+    // it, and spawns no child process.
+    if (!EnableSecurityPrivilege())
+        return;
+    PAF_AUDIT_POLICY_INFORMATION info = nullptr;
+    if (!AuditQuerySystemPolicy(&kAuditProcessCreation, 1, &info) || !info)
+        return;
+    g_audit_prior = info->AuditingInformation;
+    AuditFree(info);
+    if (g_audit_prior == 0)
+        return;  // already not auditing; nothing to change or restore
+    AF_AUDIT_POLICY_INFORMATION set{};
+    set.AuditSubCategoryGuid = kAuditProcessCreation;
+    set.AuditingInformation = 0;
+    if (AuditSetSystemPolicy(&set, 1))
+        g_audit_changed = true;
 }
 
 static void RestoreProcessAudit() {
-    if (!g_audit_was_enabled) return;
-    STARTUPINFOA si = { sizeof(si) };
-    si.dwFlags = STARTF_USESHOWWINDOW;
-    si.wShowWindow = SW_HIDE;
-    PROCESS_INFORMATION pi = {};
-    char cmd[] = "auditpol.exe /set /subcategory:\"Process Creation\" /success:enable /failure:enable";
-    if (CreateProcessA(nullptr, cmd, nullptr, nullptr, FALSE,
-                       CREATE_NO_WINDOW, nullptr, nullptr, &si, &pi)) {
-        WaitForSingleObject(pi.hProcess, 3000);
-        CloseHandle(pi.hProcess);
-        CloseHandle(pi.hThread);
-    }
-    g_audit_was_enabled = false;
+    if (!g_audit_changed)
+        return;
+    if (!EnableSecurityPrivilege())
+        return;
+    AF_AUDIT_POLICY_INFORMATION set{};
+    set.AuditSubCategoryGuid = kAuditProcessCreation;
+    set.AuditingInformation = g_audit_prior;
+    AuditSetSystemPolicy(&set, 1);
+    g_audit_changed = false;
 }
 
 // в”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђ
