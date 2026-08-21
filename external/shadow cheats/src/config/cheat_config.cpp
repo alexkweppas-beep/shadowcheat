@@ -1215,7 +1215,7 @@ std::vector<std::string> get_configs() {
 
   if (!is_fetching_configs.exchange(true)) {
     std::thread([]() {
-      std::string url = xorstr_("https://shadowcheats.cc/api/configs/list");
+      std::string url = xorstr_("https://shadowcheats.cc/api/configs/list?product=external");
       log_cfg("Fetching config list with user=" + g_username +
               " hwid=" + g_hwid.substr(0, 16) + "...");
       std::string response = http::get(url, g_token, g_hwid);
@@ -1307,7 +1307,7 @@ void save(const std::string &name) {
   }
 
   std::string json_payload =
-      xorstr_("{\"name\":\"") + name + xorstr_("\",\"data\":\"") +
+      xorstr_("{\"product\":\"external\",\"name\":\"") + name + xorstr_("\",\"data\":\"") +
       escaped_data + xorstr_("\",\"hwid\":\"") + g_hwid +
       xorstr_("\",\"username\":\"") + g_username + xorstr_("\",\"token\":\"") +
       g_token + xorstr_("\"}");
@@ -1334,7 +1334,7 @@ void load(const std::string &name) {
     log_cfg("load('" + name + "') starting, user=" + g_username +
             " hwid=" + g_hwid.substr(0, 16) + "...");
     std::string json_payload =
-        xorstr_("{\"name\":\"") + name + xorstr_("\",\"hwid\":\"") + g_hwid +
+        xorstr_("{\"product\":\"external\",\"name\":\"") + name + xorstr_("\",\"hwid\":\"") + g_hwid +
         xorstr_("\",\"username\":\"") + g_username +
         xorstr_("\",\"token\":\"") + g_token + xorstr_("\"}");
     std::string url = xorstr_("https://shadowcheats.cc/api/configs/load");
@@ -1406,7 +1406,7 @@ void remove(const std::string &name) {
   }
 
   std::string json_payload =
-      xorstr_("{\"name\":\"") + name + xorstr_("\",\"hwid\":\"") + g_hwid +
+      xorstr_("{\"product\":\"external\",\"name\":\"") + name + xorstr_("\",\"hwid\":\"") + g_hwid +
       xorstr_("\",\"username\":\"") + g_username + xorstr_("\",\"token\":\"") +
       g_token + xorstr_("\"}");
   std::string url = xorstr_("https://shadowcheats.cc/api/configs/delete");
@@ -1420,3 +1420,4 @@ void remove(const std::string &name) {
   }).detach();
 }
 } // namespace config_system
+
