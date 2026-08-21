@@ -438,7 +438,7 @@ try {
 
 // ─── CREATE TABLE: user_scripts (cloud scripts for ragemp) ───
 try {
-    db.exec(\CREATE TABLE IF NOT EXISTS user_scripts (
+    db.exec(`CREATE TABLE IF NOT EXISTS user_scripts (
         id         INTEGER PRIMARY KEY AUTOINCREMENT,
         user_id    INTEGER NOT NULL REFERENCES users(id),
         name       TEXT    NOT NULL,
@@ -446,7 +446,7 @@ try {
         created_at TEXT    DEFAULT (datetime('now')),
         updated_at TEXT    DEFAULT (datetime('now')),
         UNIQUE(user_id, name)
-    )\);
+    )`);
 } catch (e) { }
 // ─── INIT ADMIN USER ───
 const ADMIN_USERNAME = process.env.ADMIN_USERNAME;
