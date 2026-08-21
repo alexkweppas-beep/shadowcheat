@@ -81,7 +81,7 @@
     <ClCompile Include="src\imgui\imgui_impl_win32.cpp" />
     <ClCompile Include="src\imgui\imgui_impl_dx11.cpp" />
     <ClCompile Include="src\mapper\KDSymbolsHandler.cpp" />
-    <ClCompile Include="src\mapper\intel_driver.cpp" />
+    <ClCompile Include="src\mapper\amd_driver.cpp" />
     <ClCompile Include="src\mapper\kdmapper.cpp" />
     <ClCompile Include="src\mapper\portable_executable.cpp" />
     <ClCompile Include="src\mapper\service.cpp" />
@@ -100,8 +100,8 @@
     <ClInclude Include="src\imgui\imstb_textedit.h" />
     <ClInclude Include="src\imgui\imstb_truetype.h" />
     <ClInclude Include="src\mapper\KDSymbolsHandler.h" />
-    <ClInclude Include="src\mapper\intel_driver.hpp" />
-    <ClInclude Include="src\mapper\intel_driver_resource.hpp" />
+    <ClInclude Include="src\mapper\amd_driver.hpp" />
+    <ClInclude Include="src\mapper\amd_driver_resource.hpp" />
     <ClInclude Include="src\mapper\kdmapper.hpp" />
     <ClInclude Include="src\mapper\launcher.hpp" />
     <ClInclude Include="src\mapper\nt.hpp" />
