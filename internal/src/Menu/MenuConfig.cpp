@@ -494,6 +494,7 @@ namespace Menu
                 CFG_WRITE(key, p.silentFovColor[c]);
             }
             WG_WRITE("trig_on", p.triggerEnabled);
+            WG_WRITE("trig_key", p.triggerKey);
             WG_WRITE("trig_delay", p.triggerDelayMs);
             WG_WRITE("trig_cooldown", p.triggerCooldownMs);
             WG_WRITE("trig_vis", p.triggerVisible);
@@ -623,6 +624,7 @@ namespace Menu
                 CFG_WRITE(key, p.silentFovColor[c]);
             }
             WO_WRITE("trig_on", p.triggerEnabled);
+            WO_WRITE("trig_key", p.triggerKey);
             WO_WRITE("trig_delay", p.triggerDelayMs);
             WO_WRITE("trig_cooldown", p.triggerCooldownMs);
             WO_WRITE("trig_vis", p.triggerVisible);
@@ -667,6 +669,8 @@ namespace Menu
             PROFILE_WRITE("faction", profile.factionTag);
             PROFILE_WRITE("family", profile.familyTag);
             PROFILE_WRITE("skeleton", profile.skeleton);
+            PROFILE_WRITE("snapline", profile.snapLine);
+            PROFILE_WRITE("snapline_origin", profile.snapLineOrigin);
             PROFILE_WRITE("distance", profile.distance);
             PROFILE_WRITE("weapon", profile.weaponTag);
             PROFILE_WRITE("dyn_id", profile.dynamicIdTag);
@@ -716,6 +720,8 @@ namespace Menu
                 CFG_WRITE(key, profile.armorColor[c]);
                 sprintf_s(key, "esp%d_skeleton_color%d", p, c);
                 CFG_WRITE(key, profile.skeletonColor[c]);
+                sprintf_s(key, "esp%d_snapline_color%d", p, c);
+                CFG_WRITE(key, profile.snapLineColor[c]);
                 sprintf_s(key, "esp%d_distance_color%d", p, c);
                 CFG_WRITE(key, profile.distanceColor[c]);
                 sprintf_s(key, "esp%d_weapon_color%d", p, c);
@@ -782,6 +788,10 @@ namespace Menu
         CFG_WRITE("vehicle_vis_boats", s_VehicleVisualSettings.showBoats);
         CFG_WRITE("vehicle_vis_aircraft", s_VehicleVisualSettings.showAircraft);
         CFG_WRITE("vehicle_vis_other", s_VehicleVisualSettings.showOther);
+        CFG_WRITE("vehicle_vis_snapline", s_VehicleVisualSettings.snapLine);
+        CFG_WRITE(
+            "vehicle_vis_snapline_origin",
+            s_VehicleVisualSettings.snapLineOrigin);
         CFG_WRITE("vehicle_vis_range", s_VehicleVisualSettings.maxDistance);
         CFG_WRITE(
             "vehicle_vis_include_count",
@@ -797,6 +807,10 @@ namespace Menu
         CFG_WRITE("object_vis_remote_id", s_ObjectVisualSettings.remoteId);
         CFG_WRITE("object_vis_objects", s_ObjectVisualSettings.showObjects);
         CFG_WRITE("object_vis_pickups", s_ObjectVisualSettings.showPickups);
+        CFG_WRITE("object_vis_snapline", s_ObjectVisualSettings.snapLine);
+        CFG_WRITE(
+            "object_vis_snapline_origin",
+            s_ObjectVisualSettings.snapLineOrigin);
         CFG_WRITE("object_vis_range", s_ObjectVisualSettings.maxDistance);
         CFG_WRITE(
             "object_vis_include_count",
@@ -826,6 +840,10 @@ namespace Menu
             CFG_WRITE(key, s_ObjectVisualSettings.pickupColor[c]);
             sprintf_s(key, "object_vis_text_color%d", c);
             CFG_WRITE(key, s_ObjectVisualSettings.textColor[c]);
+            sprintf_s(key, "vehicle_vis_snapline_color%d", c);
+            CFG_WRITE(key, s_VehicleVisualSettings.snapLineColor[c]);
+            sprintf_s(key, "object_vis_snapline_color%d", c);
+            CFG_WRITE(key, s_ObjectVisualSettings.snapLineColor[c]);
         }
         for (int i = 0; i < kMaxVisualModelFilters; ++i)
         {
@@ -1102,6 +1120,7 @@ namespace Menu
                 CFG_READ_FLOAT(key, p.silentFovColor[c]);
             }
             WG_READ_BOOL("trig_on", p.triggerEnabled);
+            WG_READ_INT("trig_key", p.triggerKey);
             WG_READ_FLOAT("trig_delay", p.triggerDelayMs);
             WG_READ_FLOAT("trig_cooldown", p.triggerCooldownMs);
             WG_READ_BOOL("trig_vis", p.triggerVisible);
@@ -1266,6 +1285,12 @@ namespace Menu
                 CFG_READ_FLOAT(key, p.silentFovColor[c]);
             }
             WO_READ_BOOL("trig_on", p.triggerEnabled);
+            {
+                int keyValue = p.triggerKey;
+                sprintf_s(key, "aim_wpn_%u_trig_key", hash);
+                CFG_READ_INT(key, keyValue);
+                p.triggerKey = keyValue;
+            }
             WO_READ_FLOAT("trig_delay", p.triggerDelayMs);
             WO_READ_FLOAT("trig_cooldown", p.triggerCooldownMs);
             WO_READ_BOOL("trig_vis", p.triggerVisible);
@@ -1330,6 +1355,11 @@ namespace Menu
             PROFILE_READ("faction", CFG_READ_BOOL, profile.factionTag);
             PROFILE_READ("family", CFG_READ_BOOL, profile.familyTag);
             PROFILE_READ("skeleton", CFG_READ_BOOL, profile.skeleton);
+            PROFILE_READ("snapline", CFG_READ_BOOL, profile.snapLine);
+            PROFILE_READ(
+                "snapline_origin",
+                CFG_READ_INT,
+                profile.snapLineOrigin);
             PROFILE_READ("distance", CFG_READ_BOOL, profile.distance);
             PROFILE_READ("weapon", CFG_READ_BOOL, profile.weaponTag);
             PROFILE_READ("dyn_id", CFG_READ_BOOL, profile.dynamicIdTag);
@@ -1410,6 +1440,8 @@ namespace Menu
                 CFG_READ_FLOAT(key, profile.armorColor[c]);
                 sprintf_s(key, "esp%d_skeleton_color%d", p, c);
                 CFG_READ_FLOAT(key, profile.skeletonColor[c]);
+                sprintf_s(key, "esp%d_snapline_color%d", p, c);
+                CFG_READ_FLOAT(key, profile.snapLineColor[c]);
                 sprintf_s(key, "esp%d_distance_color%d", p, c);
                 CFG_READ_FLOAT(key, profile.distanceColor[c]);
                 sprintf_s(key, "esp%d_weapon_color%d", p, c);
@@ -1495,6 +1527,12 @@ namespace Menu
         CFG_READ_BOOL("vehicle_vis_boats", s_VehicleVisualSettings.showBoats);
         CFG_READ_BOOL("vehicle_vis_aircraft", s_VehicleVisualSettings.showAircraft);
         CFG_READ_BOOL("vehicle_vis_other", s_VehicleVisualSettings.showOther);
+        CFG_READ_BOOL(
+            "vehicle_vis_snapline",
+            s_VehicleVisualSettings.snapLine);
+        CFG_READ_INT(
+            "vehicle_vis_snapline_origin",
+            s_VehicleVisualSettings.snapLineOrigin);
         CFG_READ_FLOAT("vehicle_vis_range", s_VehicleVisualSettings.maxDistance);
         CFG_READ_INT(
             "vehicle_vis_include_count",
@@ -1510,6 +1548,12 @@ namespace Menu
         CFG_READ_BOOL("object_vis_remote_id", s_ObjectVisualSettings.remoteId);
         CFG_READ_BOOL("object_vis_objects", s_ObjectVisualSettings.showObjects);
         CFG_READ_BOOL("object_vis_pickups", s_ObjectVisualSettings.showPickups);
+        CFG_READ_BOOL(
+            "object_vis_snapline",
+            s_ObjectVisualSettings.snapLine);
+        CFG_READ_INT(
+            "object_vis_snapline_origin",
+            s_ObjectVisualSettings.snapLineOrigin);
         CFG_READ_FLOAT("object_vis_range", s_ObjectVisualSettings.maxDistance);
         CFG_READ_INT(
             "object_vis_include_count",
@@ -1539,6 +1583,10 @@ namespace Menu
             CFG_READ_FLOAT(key, s_ObjectVisualSettings.pickupColor[c]);
             sprintf_s(key, "object_vis_text_color%d", c);
             CFG_READ_FLOAT(key, s_ObjectVisualSettings.textColor[c]);
+            sprintf_s(key, "vehicle_vis_snapline_color%d", c);
+            CFG_READ_FLOAT(key, s_VehicleVisualSettings.snapLineColor[c]);
+            sprintf_s(key, "object_vis_snapline_color%d", c);
+            CFG_READ_FLOAT(key, s_ObjectVisualSettings.snapLineColor[c]);
         }
         for (int i = 0; i < kMaxVisualModelFilters; ++i)
         {

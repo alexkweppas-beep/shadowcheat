@@ -89,6 +89,11 @@ namespace MiscFeatures
     // Queue an asynchronous ground-resolved GPS waypoint teleport.
     bool RequestTeleportWaypoint() noexcept;
 
+    // Assert INPUT_ATTACK on the RAGE script thread for a short window.
+    // Control values submitted from the D3D Present hook are never consumed,
+    // so the triggerbot routes its shot through here instead.
+    bool RequestAttackBurst(int milliseconds) noexcept;
+
     bool Export(
         char* output,
         std::size_t capacity,

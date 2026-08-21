@@ -72,6 +72,15 @@ namespace Menu
             : (s_Language == Language::Ukrainian ? kUk : kEn);
     }
 
+    static const char* const* SnapOriginNames() noexcept
+    {
+        static const char* kEn[] = { "Bottom", "Top", "Crosshair" };
+        static const char* kRu[] = { "Снизу", "Сверху", "Перекрестие" };
+        static const char* kUk[] = { "Знизу", "Згори", "Перехрестя" };
+        return s_Language == Language::Russian ? kRu
+            : (s_Language == Language::Ukrainian ? kUk : kEn);
+    }
+
     static const char* const* BarStyleNames() noexcept
     {
         static const char* kEn[] = {
@@ -462,6 +471,22 @@ namespace Menu
             T("Remote ID", "Remote ID", "Remote ID"), &visual.remoteId, visual.textColor, false);
         VisualsRow("vehicle_health", ICON_FA_HEART,
             T("Health", "Прочность", "Міцність"), &visual.health, visual.textColor, false);
+        VisualsRow("vehicle_snapline", ICON_FA_ARROWS_UP_DOWN,
+            T("Snap line", "Снеп-линия", "Снеп-лінія"),
+            &visual.snapLine, visual.snapLineColor, true);
+        if (MenuUi::BeginOverflowPopup("vehicle_snapline"))
+        {
+            gui->dropdown(
+                T("Origin", "Начало", "Початок"),
+                &visual.snapLineOrigin,
+                SnapOriginNames(),
+                static_cast<int>(EspSnapOrigin::Count));
+            if (visual.snapLineOrigin < 0 ||
+                visual.snapLineOrigin >=
+                    static_cast<int>(EspSnapOrigin::Count))
+                visual.snapLineOrigin = 0;
+            MenuUi::EndOverflowPopup();
+        }
         MenuUi::EndInspectorIsland();
 
         MenuUi::NextPageColumn();
@@ -545,6 +570,22 @@ namespace Menu
             T("Distance", "Дистанция", "Відстань"), &visual.distance, visual.textColor, false);
         VisualsRow("object_id", ICON_FA_HASHTAG,
             T("Remote ID", "Remote ID", "Remote ID"), &visual.remoteId, visual.textColor, false);
+        VisualsRow("object_snapline", ICON_FA_ARROWS_UP_DOWN,
+            T("Snap line", "Снеп-линия", "Снеп-лінія"),
+            &visual.snapLine, visual.snapLineColor, true);
+        if (MenuUi::BeginOverflowPopup("object_snapline"))
+        {
+            gui->dropdown(
+                T("Origin", "Начало", "Початок"),
+                &visual.snapLineOrigin,
+                SnapOriginNames(),
+                static_cast<int>(EspSnapOrigin::Count));
+            if (visual.snapLineOrigin < 0 ||
+                visual.snapLineOrigin >=
+                    static_cast<int>(EspSnapOrigin::Count))
+                visual.snapLineOrigin = 0;
+            MenuUi::EndOverflowPopup();
+        }
         MenuUi::EndInspectorIsland();
 
         MenuUi::NextPageColumn();
@@ -708,6 +749,23 @@ namespace Menu
         EspProfileSettings& profile =
             s_EspProfiles[s_VisualPedProfile];
 
+        // Animals are not players: they have no faction, no family, no armor,
+        // no weapon and no server ids. Those rows are hidden here instead of
+        // sitting in the list doing nothing, and the flags are forced off so a
+        // profile carried over from another scope cannot leave them enabled.
+        const bool isAnimal =
+            s_VisualPedProfile ==
+            static_cast<int>(EspProfileId::Animal);
+        if (isAnimal)
+        {
+            profile.factionTag = false;
+            profile.familyTag = false;
+            profile.armorBar = false;
+            profile.weaponTag = false;
+            profile.dynamicIdTag = false;
+            profile.staticIdTag = false;
+        }
+
         const char* const* boxStyles = BoxStyleNames();
         const char* const* barStyles = BarStyleNames();
         const char* const* barPos = BarPosNames();
@@ -774,6 +832,26 @@ namespace Menu
             &profile.skeleton,
             profile.skeletonColor,
             false);
+        VisualsRow(
+            "snapline",
+            ICON_FA_ARROWS_UP_DOWN,
+            T("Snap line", "Снеп-линия", "Снеп-лінія"),
+            &profile.snapLine,
+            profile.snapLineColor,
+            true);
+        if (MenuUi::BeginOverflowPopup("snapline"))
+        {
+            gui->dropdown(
+                T("Origin", "Начало", "Початок"),
+                &profile.snapLineOrigin,
+                SnapOriginNames(),
+                static_cast<int>(EspSnapOrigin::Count));
+            if (profile.snapLineOrigin < 0 ||
+                profile.snapLineOrigin >=
+                    static_cast<int>(EspSnapOrigin::Count))
+                profile.snapLineOrigin = 0;
+            MenuUi::EndOverflowPopup();
+        }
         MenuUi::EndInspectorIsland();
 
         MenuUi::BeginInspectorIsland(
@@ -801,6 +879,8 @@ namespace Menu
                 &profile.healthShowValue);
             MenuUi::EndOverflowPopup();
         }
+        if (!isAnimal)
+        {
         VisualsRow(
             "armor",
             ICON_FA_SHIELD,
@@ -830,6 +910,7 @@ namespace Menu
                 &profile.armorShowValue);
             MenuUi::EndOverflowPopup();
         }
+        }
         MenuUi::EndInspectorIsland();
 
         MenuUi::BeginInspectorIsland(
@@ -842,20 +923,23 @@ namespace Menu
             &profile.nameTag,
             profile.nameColor,
             false);
-        VisualsRow(
-            "faction_tag",
-            ICON_FA_FLAG,
-            T("Faction", "Фракция", "Фракція"),
-            &profile.factionTag,
-            profile.factionColor,
-            false);
-        VisualsRow(
-            "family_tag",
-            ICON_FA_HOUSE,
-            T("Family", "Семья", "Сім'я"),
-            &profile.familyTag,
-            profile.familyColor,
-            false);
+        if (!isAnimal)
+        {
+            VisualsRow(
+                "faction_tag",
+                ICON_FA_FLAG,
+                T("Faction", "Фракция", "Фракція"),
+                &profile.factionTag,
+                profile.factionColor,
+                false);
+            VisualsRow(
+                "family_tag",
+                ICON_FA_HOUSE,
+                T("Family", "Семья", "Сім'я"),
+                &profile.familyTag,
+                profile.familyColor,
+                false);
+        }
         VisualsRow(
             "distance",
             ICON_FA_RULER,
@@ -863,39 +947,44 @@ namespace Menu
                     &profile.distance,
                     profile.distanceColor,
             false);
-        VisualsRow(
-            "weapon",
-            ICON_FA_GUN,
-            T("Weapon", "Оружие", "Зброя"),
-            &profile.weaponTag,
-            profile.weaponColor,
-            true);
-        if (MenuUi::BeginOverflowPopup("weapon"))
+        if (!isAnimal)
         {
-            gui->dropdown(
-                T("Weapon Display", "Отображение оружия", "Відображення зброї"),
-                &profile.weaponDisplay,
-                weaponDisp,
-                EspWeaponDisplayCount);
-            if (profile.weaponDisplay < 0 ||
-                profile.weaponDisplay >= EspWeaponDisplayCount)
-                profile.weaponDisplay = EspWeaponText;
-            MenuUi::EndOverflowPopup();
+            VisualsRow(
+                "weapon",
+                ICON_FA_GUN,
+                T("Weapon", "Оружие", "Зброя"),
+                &profile.weaponTag,
+                profile.weaponColor,
+                true);
+            if (MenuUi::BeginOverflowPopup("weapon"))
+            {
+                gui->dropdown(
+                    T("Weapon Display",
+                      "Отображение оружия",
+                      "Відображення зброї"),
+                    &profile.weaponDisplay,
+                    weaponDisp,
+                    EspWeaponDisplayCount);
+                if (profile.weaponDisplay < 0 ||
+                    profile.weaponDisplay >= EspWeaponDisplayCount)
+                    profile.weaponDisplay = EspWeaponText;
+                MenuUi::EndOverflowPopup();
+            }
+            VisualsRow(
+                "dyn_id",
+                ICON_FA_HASHTAG,
+                T("Dynamic ID", "Динамический ID", "Динамічний ID"),
+                &profile.dynamicIdTag,
+                profile.dynamicIdColor,
+                false);
+            VisualsRow(
+                "stat_id",
+                ICON_FA_ID_CARD,
+                T("Static ID", "Статический ID", "Статичний ID"),
+                &profile.staticIdTag,
+                profile.staticIdColor,
+                false);
         }
-        VisualsRow(
-            "dyn_id",
-            ICON_FA_HASHTAG,
-            T("Dynamic ID", "Динамический ID", "Динамічний ID"),
-            &profile.dynamicIdTag,
-            profile.dynamicIdColor,
-            false);
-        VisualsRow(
-            "stat_id",
-            ICON_FA_ID_CARD,
-            T("Static ID", "Статический ID", "Статичний ID"),
-            &profile.staticIdTag,
-            profile.staticIdColor,
-            false);
         ImGui::Dummy(
             ImVec2(0.f, MenuTheme::Sizes().space1 * UIScale()));
         MenuUi::EndInspectorIsland();

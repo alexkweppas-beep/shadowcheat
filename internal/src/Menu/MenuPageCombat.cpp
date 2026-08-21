@@ -1246,6 +1246,13 @@ namespace Menu
             ICON_FA_POWER_OFF,
             T("Enabled", "Включено", "Увімкнено"),
             &profile.triggerEnabled);
+        // Unbound means always armed while enabled.
+        gui->keybind(
+            T("Hold key###aim_trigger_key",
+              "Клавиша удержания###aim_trigger_key",
+              "Клавіша утримання###aim_trigger_key"),
+            &profile.triggerKey,
+            ICON_FA_KEY);
         gui->slider_float_icon(
             ICON_FA_CLOCK,
             T("Reaction delay###aim_trigger_delay",

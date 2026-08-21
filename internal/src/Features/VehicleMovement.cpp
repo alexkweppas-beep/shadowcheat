@@ -40,6 +40,8 @@ namespace
         return value;
     }
 
+    LocalVehicleState g_LocalVehicle{};
+
     bool ResolveDriverVehicle(int& outPed, int& outVehicle) noexcept
     {
         outPed = 0;
@@ -47,7 +49,19 @@ namespace
         if (!NativeInvoke::Init())
             return false;
         const int ped = NativeInvoke::PlayerPedId();
-        if (!ped || !NativeInvoke::DoesEntityExist(ped))
+        if (!ped)
+            return false;
+        // Script-thread answer first. Only fall back to the Present natives
+        // when V8 has not published a state yet.
+        if (g_LocalVehicle.valid)
+        {
+            if (!g_LocalVehicle.isDriver || !g_LocalVehicle.handle)
+                return false;
+            outPed = ped;
+            outVehicle = g_LocalVehicle.handle;
+            return true;
+        }
+        if (!NativeInvoke::DoesEntityExist(ped))
             return false;
         const int vehicle = NativeInvoke::GetVehiclePedIsIn(ped, false);
         if (!vehicle || !NativeInvoke::DoesEntityExist(vehicle))
@@ -340,8 +354,24 @@ void Update() noexcept
         return;
     }
 
+    // While the script thread owns the per-frame natives, applying them from
+    // Present as well would only fight that path.
+    const bool scriptOwnsFrame = g_LocalVehicle.valid;
+
+    // Hand back anything the Present path had applied before V8 came up, so
+    // the two never both think they own the multipliers.
+    if (scriptOwnsFrame)
+    {
+        if (g_SpeedApplied)
+            RestoreSpeed();
+        if (g_FlyHeld)
+            RestoreFly(g_FlyVehicle);
+    }
+
     const int localPed = NativeInvoke::PlayerPedId();
-    if (localPed && NativeInvoke::DoesEntityExist(localPed))
+    if (!scriptOwnsFrame &&
+        localPed &&
+        NativeInvoke::DoesEntityExist(localPed))
     {
         ApplySeatbelt(localPed);
         ApplySkipAnim(localPed);
@@ -362,7 +392,11 @@ void Update() noexcept
         g_PendingCrash = false;
         g_PendingEngine = false;
         g_Status = any ? Status::NoVehicle : Status::Off;
-        if (localPed && NativeInvoke::GetVehiclePedIsIn(localPed, false))
+        const bool seated = g_LocalVehicle.valid
+            ? g_LocalVehicle.inVehicle
+            : (localPed != 0 &&
+               NativeInvoke::GetVehiclePedIsIn(localPed, false) != 0);
+        if (seated)
             g_Status = Status::Passenger;
         if (!any)
             g_Status = Status::Off;
@@ -370,56 +404,85 @@ void Update() noexcept
     }
 
     ConsumeOneShots(ped, vehicle);
-    ApplyFly(vehicle);
-    ApplyAutopilot(ped, vehicle);
 
-    if (g_Settings.speedEnable)
+    if (!scriptOwnsFrame)
     {
-        if (g_SpeedApplied && g_SpeedVehicle != vehicle)
-            RestoreSpeed();
-        NativeInvoke::SetVehicleEnginePowerMultiplier(
-            vehicle,
-            g_Settings.speedMult);
-        NativeInvoke::SetVehicleEngineTorqueMultiplier(
-            vehicle,
-            g_Settings.speedMult);
-        g_SpeedVehicle = vehicle;
-        g_SpeedApplied = true;
-    }
-    else
-    {
-        RestoreSpeed();
-    }
+        ApplyFly(vehicle);
 
-    if (g_Settings.gravityEnable && !g_Settings.fly)
-    {
-        const float downforce =
-            (g_Settings.gravityMult - 1.f) * 3.f;
-        if (downforce > 0.f)
+        if (g_Settings.speedEnable)
         {
-            NativeInvoke::ApplyForceToEntity(
+            if (g_SpeedApplied && g_SpeedVehicle != vehicle)
+                RestoreSpeed();
+            NativeInvoke::SetVehicleEnginePowerMultiplier(
                 vehicle,
-                1,
-                0.f,
-                0.f,
-                -downforce,
-                0.f,
-                0.f,
-                0.f,
-                0,
-                false,
-                false,
-                true,
-                false,
-                true);
+                g_Settings.speedMult);
+            NativeInvoke::SetVehicleEngineTorqueMultiplier(
+                vehicle,
+                g_Settings.speedMult);
+            g_SpeedVehicle = vehicle;
+            g_SpeedApplied = true;
+        }
+        else
+        {
+            RestoreSpeed();
+        }
+
+        if (g_Settings.gravityEnable && !g_Settings.fly)
+        {
+            const float downforce =
+                (g_Settings.gravityMult - 1.f) * 3.f;
+            if (downforce > 0.f)
+            {
+                NativeInvoke::ApplyForceToEntity(
+                    vehicle,
+                    1,
+                    0.f,
+                    0.f,
+                    -downforce,
+                    0.f,
+                    0.f,
+                    0.f,
+                    0,
+                    false,
+                    false,
+                    true,
+                    false,
+                    true);
+            }
         }
     }
+
+    ApplyAutopilot(ped, vehicle);
 
     g_Status = Status::Active;
 }
 
+void SetLocalVehicleState(
+    bool inVehicle,
+    bool isDriver,
+    bool isEntering,
+    int handle) noexcept
+{
+    g_LocalVehicle.valid = true;
+    g_LocalVehicle.inVehicle = inVehicle;
+    g_LocalVehicle.isDriver = isDriver;
+    g_LocalVehicle.isEntering = isEntering;
+    g_LocalVehicle.handle = handle;
+}
+
+void ClearLocalVehicleState() noexcept
+{
+    g_LocalVehicle = {};
+}
+
+LocalVehicleState GetLocalVehicleState() noexcept
+{
+    return g_LocalVehicle;
+}
+
 void Shutdown() noexcept
 {
+    g_LocalVehicle = {};
     RestoreSpeed();
     if (g_FlyHeld)
         RestoreFly(g_FlyVehicle);

@@ -124,6 +124,46 @@ namespace Features {
             ModelFilterContains(include, includeCount, model);
     }
 
+    // Snap-line origin in screen space. Shared by ped, vehicle and object ESP
+    // so every category's lines converge on the same point.
+    ImVec2 SnapLineOrigin(int origin) noexcept
+    {
+        const ImVec2 display = ImGui::GetIO().DisplaySize;
+        switch (static_cast<Menu::EspSnapOrigin>(origin))
+        {
+        case Menu::EspSnapOrigin::TopCenter:
+            return ImVec2(display.x * 0.5f, 0.f);
+        case Menu::EspSnapOrigin::Crosshair:
+            return ImVec2(display.x * 0.5f, display.y * 0.5f);
+        case Menu::EspSnapOrigin::BottomCenter:
+        default:
+            return ImVec2(display.x * 0.5f, display.y);
+        }
+    }
+
+    void DrawSnapLine(
+        ImDrawList* draw,
+        int origin,
+        const ImVec2& target,
+        const float color[4]) noexcept
+    {
+        if (!draw || !color)
+            return;
+        const ImVec2 from = SnapLineOrigin(origin);
+        const float alpha = color[3] < 0.f
+            ? 0.f
+            : (color[3] > 1.f ? 1.f : color[3]);
+        draw->AddLine(
+            from,
+            target,
+            IM_COL32(
+                static_cast<int>(color[0] * 255.f),
+                static_cast<int>(color[1] * 255.f),
+                static_cast<int>(color[2] * 255.f),
+                static_cast<int>(alpha * 255.f + 0.5f)),
+            1.4f);
+    }
+
     bool VehicleClassEnabled(
         RageWorldEntities::VehicleClass vehicleClass,
         const Menu::VehicleVisualSettings& settings) noexcept
@@ -309,8 +349,11 @@ namespace Features {
             bool drawDistance = false;
             bool drawRemoteId = false;
             bool drawHealth = false;
+            bool drawSnapLine = false;
+            int snapOrigin = 0;
             const float* boxColor = nullptr;
             const float* textColor = nullptr;
+            const float* snapColor = nullptr;
 
             if (entry.kind ==
                 RageWorldEntities::EntityKind::Vehicle)
@@ -334,8 +377,11 @@ namespace Features {
                 drawDistance = vehicles.distance;
                 drawRemoteId = vehicles.remoteId;
                 drawHealth = vehicles.health;
+                drawSnapLine = vehicles.snapLine;
+                snapOrigin = vehicles.snapLineOrigin;
                 boxColor = vehicles.boxColor;
                 textColor = vehicles.textColor;
+                snapColor = vehicles.snapLineColor;
             }
             else
             {
@@ -357,10 +403,13 @@ namespace Features {
                 drawName = objects.name;
                 drawDistance = objects.distance;
                 drawRemoteId = objects.remoteId;
+                drawSnapLine = objects.snapLine;
+                snapOrigin = objects.snapLineOrigin;
                 boxColor = pickup
                     ? objects.pickupColor
                     : objects.objectColor;
                 textColor = objects.textColor;
+                snapColor = objects.snapLineColor;
             }
 
             WorldBoxProjection projection{};
@@ -368,6 +417,17 @@ namespace Features {
                 continue;
             const ImU32 boxCol = WorldColor(boxColor);
             const ImU32 textCol = WorldColor(textColor);
+            if (drawSnapLine && snapColor)
+            {
+                DrawSnapLine(
+                    draw,
+                    snapOrigin,
+                    ImVec2(
+                        (projection.minimum.x +
+                         projection.maximum.x) * 0.5f,
+                        projection.maximum.y),
+                    snapColor);
+            }
             if (drawBox)
                 DrawProjectedWorldBox(draw, projection, boxCol);
 
@@ -1801,6 +1861,20 @@ namespace Features {
                 pdata.dead = isDeadOrKnock &&
                     !(hasVisual && visual.knock && !visual.dead);
                 pdata.knock = hasVisual && visual.knock;
+
+                // Drawn before the overlay so labels and bars stay on top.
+                if (profile.snapLine)
+                {
+                    DrawSnapLine(
+                        drawList,
+                        profile.snapLineOrigin,
+                        ImVec2(
+                            (boxMin.x + boxMax.x) * 0.5f,
+                            boxMax.y),
+                        hidden
+                            ? profile.hiddenColor
+                            : profile.snapLineColor);
+                }
 
                 EspProjected::DrawPlayerOverlay(
                     drawList,

@@ -1,5 +1,6 @@
 #include "Aimbot.h"
 #include "Friends.h"
+#include "MiscFeatures.h"
 #include "NativeInvoke.hpp"
 #include "RagePlayerNames.h"
 #include "VisualPolicy.h"
@@ -306,14 +307,30 @@ bool EvaluateHitboxCandidate(
 
     float bestRatio = 1.f;
     int bestHitbox = -1;
+    int bestAnchor = -1;
     for (int index = 0;
          index < static_cast<int>(Hitbox::Count);
          ++index)
     {
         if (!settings.bones[index])
             continue;
-        const HitboxCapsule& capsule =
-            kHitboxCapsules[index];
+        HitboxCapsule capsule = kHitboxCapsules[index];
+        // Neck and Chest both hang off Spine. When the engine hands back a rig
+        // without it, aiming at the torso used to match nothing at all, so both
+        // fall back to a span that only needs Neck and Pelvis.
+        const std::uint32_t spineBit =
+            1u << static_cast<int>(
+                RagePlayerNames::BoneSlot::Spine);
+        if ((capsule.from == 2 || capsule.to == 2) &&
+            !(entry.projectedBoneMask & spineBit))
+        {
+            const auto hitbox = static_cast<Hitbox>(index);
+            if (hitbox == Hitbox::Chest || hitbox == Hitbox::Neck)
+            {
+                capsule.from = 1;
+                capsule.to = 3;
+            }
+        }
         const std::uint32_t bits =
             (1u << capsule.from) | (1u << capsule.to);
         if ((entry.projectedBoneMask & bits) != bits)
@@ -334,10 +351,13 @@ bool EvaluateHitboxCandidate(
         {
             bestRatio = ratio;
             bestHitbox = index;
+            // Recorded here so a fallback span reports the bone it actually
+            // used; the table's own `from` may be the missing one.
+            bestAnchor = capsule.from;
         }
     }
 
-    if (bestHitbox < 0)
+    if (bestHitbox < 0 || bestAnchor < 0)
     {
         ++g_Diagnostics.fovRejects;
         return false;
@@ -345,7 +365,7 @@ bool EvaluateHitboxCandidate(
 
     // The aim point stays the bone itself, not the point on the capsule the
     // crosshair happened to be closest to.
-    const int anchor = kHitboxCapsules[bestHitbox].from;
+    const int anchor = bestAnchor;
     Vector3 world{};
     if (!TryGetHitboxWorld(
             entry.visual,
@@ -1383,7 +1403,13 @@ void RunAimbot()
     static ULONGLONG s_TriggerLastShotAt = 0;
     static ULONGLONG s_TriggerLastTickAt = 0;
 
-    if (profile.triggerEnabled)
+    const bool triggerKeyHeld =
+        profile.triggerKey <= 0 ||
+        (GetAsyncKeyState(profile.triggerKey) & 0x8000) != 0;
+    g_Diagnostics.triggerKeyHeld =
+        profile.triggerEnabled && triggerKeyHeld;
+
+    if (profile.triggerEnabled && triggerKeyHeld)
     {
         ModeSettings triggerSettings{};
         triggerSettings.enabled = true;
@@ -1451,11 +1477,23 @@ void RunAimbot()
                  now - s_TriggerLastShotAt >= cooldown);
             if (dwellReady && cooldownReady)
             {
-                // INPUT_ATTACK = 24. Native input is frame-scoped.
-                if (NativeInvoke::SetControlValueNextFrame(
+                // The shot goes through the RAGE script thread. RunAimbot runs
+                // in the D3D Present hook, and a control value submitted from
+                // there is never consumed by the game — which is why calling
+                // SET_CONTROL_VALUE_NEXT_FRAME straight from here fired
+                // nothing at all.
+                bool fired =
+                    MiscFeatures::RequestAttackBurst(60);
+                if (!fired)
+                {
+                    // Only reachable before V8 comes up. Kept so the feature
+                    // degrades instead of going silent.
+                    fired = NativeInvoke::SetControlValueNextFrame(
                         0,
                         24,
-                        1.f))
+                        1.f);
+                }
+                if (fired)
                 {
                     s_TriggerLastShotAt = now;
                     g_Diagnostics.triggerFired = true;

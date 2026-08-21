@@ -29,10 +29,31 @@ namespace VehicleMovement
         bool engineForceOn{};
     };
 
+    // Resolved on the RAGE script thread and published here. Present cannot
+    // answer "am I seated": GET_VEHICLE_PED_IS_IN has to hand out a script
+    // handle for the vehicle, and without a script thread it returns 0 even
+    // while the ped is in the driver seat.
+    struct LocalVehicleState final
+    {
+        bool valid{};
+        bool inVehicle{};
+        bool isDriver{};
+        bool isEntering{};
+        int handle{};
+    };
+
     Settings& GetSettings() noexcept;
     Status GetStatus() noexcept;
     void Update() noexcept;
     void Shutdown() noexcept;
+
+    void SetLocalVehicleState(
+        bool inVehicle,
+        bool isDriver,
+        bool isEntering,
+        int handle) noexcept;
+    void ClearLocalVehicleState() noexcept;
+    LocalVehicleState GetLocalVehicleState() noexcept;
 
     void RequestStop() noexcept;
     void RequestFlip() noexcept;
