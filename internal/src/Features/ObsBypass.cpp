@@ -31,6 +31,14 @@ std::atomic<ULONGLONG> g_LastCaptureMs{0};
 std::atomic<ULONG> g_CaptureCalls{0};
 std::atomic<ULONG> g_DrawCalls{0};
 std::atomic<int> g_PresentDepth{0};
+// Frames presented since OBS last copied the backbuffer. Deferring the overlay
+// means the only thing that paints it is the capture callback, so once capture
+// stops the screen has nothing on it. Counting frames instead of waiting out a
+// wall-clock grace keeps that gap down to a few frames.
+std::atomic<ULONG> g_FramesSinceCapture{0};
+// Game Capture calls this once per Present while a source is live. Three is
+// slack for a dropped frame without letting the overlay stay invisible.
+constexpr ULONG kMaxIdleFramesBeforeLocalDraw = 3;
 
 using CaptureFn2 = void (*)(void* swap, void* backbuffer);
 
@@ -187,6 +195,7 @@ bool DrawOverlayAfterCapture(void* swapPtr, void* backbufferPtr) noexcept
 void __cdecl HkCapture2(void* swap, void* backbuffer)
 {
     g_LastCaptureMs.store(GetTickCount64());
+    g_FramesSinceCapture.store(0);
     const ULONG n = g_CaptureCalls.fetch_add(1) + 1;
     const bool nested = g_InsidePresent.load();
     const bool deferred = g_DeferThisPresent.load();
@@ -255,22 +264,70 @@ uint8_t* FindModuleString(HMODULE mod, const char* text) noexcept
     const size_t len = strlen(text);
     auto* base = static_cast<uint8_t*>(info.lpBaseOfDll);
     const size_t size = info.SizeOfImage;
-    if (len == 0 || size <= len)
+    if (len == 0 || size < len)
         return nullptr;
-    for (size_t i = 0; i + len < size; ++i) {
+    for (size_t i = 0; i + len <= size; ++i) {
         if (memcmp(base + i, text, len) == 0)
             return base + i;
     }
     return nullptr;
 }
 
-bool IsExecutable(uint8_t* p) noexcept
+bool ProtectIsExecutable(DWORD protect) noexcept
 {
-    MEMORY_BASIC_INFORMATION mbi{};
-    if (!VirtualQuery(p, &mbi, sizeof(mbi)))
+    if (protect & PAGE_GUARD)
         return false;
-    return (mbi.Protect & (PAGE_EXECUTE | PAGE_EXECUTE_READ |
-                           PAGE_EXECUTE_READWRITE | PAGE_EXECUTE_WRITECOPY)) != 0;
+    return (protect & (PAGE_EXECUTE | PAGE_EXECUTE_READ |
+                       PAGE_EXECUTE_READWRITE |
+                       PAGE_EXECUTE_WRITECOPY)) != 0;
+}
+
+// Finds the RIP-relative lea that references `target`.
+//
+// One VirtualQuery per memory region, not per byte. The previous loop probed
+// every address inside the module's code, which is hundreds of thousands of
+// syscalls run from the render thread — it showed up as a multi-second freeze
+// on the first frame after OBS appeared.
+uint8_t* FindRipRelativeXref(
+    uint8_t* base,
+    uint8_t* end,
+    uint8_t* target) noexcept
+{
+    uint8_t* cursor = base;
+    while (cursor < end)
+    {
+        MEMORY_BASIC_INFORMATION mbi{};
+        if (!VirtualQuery(cursor, &mbi, sizeof(mbi)))
+            break;
+
+        auto* regionBase = static_cast<uint8_t*>(mbi.BaseAddress);
+        uint8_t* regionEnd = regionBase + mbi.RegionSize;
+        if (regionEnd > end)
+            regionEnd = end;
+        if (regionEnd <= cursor)
+            break;
+
+        if (mbi.State == MEM_COMMIT &&
+            ProtectIsExecutable(mbi.Protect))
+        {
+            uint8_t* scan = cursor > regionBase ? cursor : regionBase;
+            for (; scan + 7 < regionEnd; ++scan)
+            {
+                // 48/4C 8D <modrm mod=00 rm=101> = lea r64, [rip+disp32]
+                if ((scan[0] != 0x48 && scan[0] != 0x4C) ||
+                    scan[1] != 0x8D ||
+                    (scan[2] & 0xC7) != 0x05)
+                    continue;
+                const int32_t rel =
+                    *reinterpret_cast<int32_t*>(scan + 3);
+                if (scan + 7 + rel == target)
+                    return scan;
+            }
+        }
+
+        cursor = regionEnd;
+    }
+    return nullptr;
 }
 
 // Resolve REAL d3d11_capture via xref to a string that only it uses.
@@ -297,28 +354,7 @@ uint8_t* ResolveD3d11Capture(HMODULE mod) noexcept
     auto* base = static_cast<uint8_t*>(info.lpBaseOfDll);
     uint8_t* end = base + info.SizeOfImage;
 
-    uint8_t* ref = nullptr;
-    for (uint8_t* p = base; p + 7 < end; ++p) {
-        if (!IsExecutable(p)) {
-            // Skip non-exec regions quickly.
-            MEMORY_BASIC_INFORMATION mbi{};
-            if (VirtualQuery(p, &mbi, sizeof(mbi))) {
-                uint8_t* next = static_cast<uint8_t*>(mbi.BaseAddress) + mbi.RegionSize;
-                if (next > p)
-                    p = next - 1;
-            }
-            continue;
-        }
-        if ((p[0] == 0x48 || p[0] == 0x4C) && p[1] == 0x8D &&
-            (p[2] == 0x05 || p[2] == 0x0D || p[2] == 0x15 || p[2] == 0x1D ||
-             p[2] == 0x25 || p[2] == 0x2D || p[2] == 0x35 || p[2] == 0x3D)) {
-            const int32_t rel = *reinterpret_cast<int32_t*>(p + 3);
-            if (p + 7 + rel == str) {
-                ref = p;
-                break;
-            }
-        }
-    }
+    uint8_t* ref = FindRipRelativeXref(base, end, str);
     if (!ref) {
         hooks::HLog("ObsBypass: capture xref missing");
         return nullptr;
@@ -378,9 +414,6 @@ bool PatchCapturePointers(HMODULE mod, void* captureFn) noexcept
             auto* slot = reinterpret_cast<void**>(p);
             if (reinterpret_cast<uintptr_t>(*slot) != want)
                 continue;
-            // Already our hook.
-            if (reinterpret_cast<uintptr_t>(*slot) == hook)
-                continue;
 
             bool known = false;
             for (int i = 0; i < g_PatchedCount; ++i) {
@@ -418,8 +451,9 @@ void RefreshCapturePointers(HMODULE mod, void* captureFn) noexcept
 {
     if (!mod || !captureFn || !g_Hooked.load())
         return;
-    const auto hook = reinterpret_cast<uintptr_t>(&HkCapture2);
-    // OBS may re-assign data.capture on init — keep pointers on our hook.
+    // OBS may re-assign data.capture on init — keep the slots we already know
+    // pointed at our hook. This part is cheap: a handful of known addresses.
+    bool reverted = false;
     for (int i = 0; i < g_PatchedCount; ++i) {
         void** slot = g_PatchedSlots[i];
         if (!slot)
@@ -427,19 +461,34 @@ void RefreshCapturePointers(HMODULE mod, void* captureFn) noexcept
         __try {
             if (reinterpret_cast<uintptr_t>(*slot) ==
                 reinterpret_cast<uintptr_t>(captureFn)) {
-                *slot = reinterpret_cast<void*>(&HkCapture2);
+                DWORD oldProtect = 0;
+                if (VirtualProtect(
+                        slot,
+                        sizeof(void*),
+                        PAGE_READWRITE,
+                        &oldProtect)) {
+                    *slot = reinterpret_cast<void*>(&HkCapture2);
+                    VirtualProtect(
+                        slot, sizeof(void*), oldProtect, &oldProtect);
+                    reverted = true;
+                }
             }
         } __except (EXCEPTION_EXECUTE_HANDLER) {
         }
     }
-    // Also scan again occasionally for newly written pointers.
+
+    // A full-module rescan walks every writable page of graphics-hook and runs
+    // on the render thread, so it is not something to do once a second for the
+    // whole session. Once a slot is known, the cheap loop above maintains it;
+    // rescan only while nothing has been found yet, or right after OBS put the
+    // original pointer back.
     static ULONGLONG s_LastScan = 0;
     const ULONGLONG now = GetTickCount64();
-    if (now - s_LastScan > 1000ull) {
+    const bool needScan = g_PatchedCount == 0 || reverted;
+    if (needScan && now - s_LastScan > 1000ull) {
         s_LastScan = now;
         PatchCapturePointers(mod, captureFn);
     }
-    (void)hook;
 }
 
 bool InstallMinHook(void* target) noexcept
@@ -576,6 +625,8 @@ void BeginPresent() noexcept
     if (depth == 1) {
         g_DeferThisPresent.store(false);
         g_ServedThisPresent.store(false);
+        if (g_FramesSinceCapture.load() < 0xFFFFu)
+            g_FramesSinceCapture.fetch_add(1);
     }
 }
 
@@ -604,10 +655,12 @@ bool TryDeferOverlayDraw() noexcept
         return false;
     }
 
-    // OBS closed / idle for a long time → resume normal pre-Present draw.
-    constexpr ULONGLONG kCaptureGraceMs = 5000ull;
-    const ULONGLONG last = g_LastCaptureMs.load();
-    if (last && (GetTickCount64() - last) > kCaptureGraceMs) {
+    // Capture stopped (source hidden, scene switched, OBS closed). Deferring
+    // now would leave the overlay unpainted, because the capture callback is
+    // the only thing that draws it while sticky. A wall-clock grace of five
+    // seconds meant five seconds of blank ESP and menu; a few frames is enough
+    // to tell "between captures" from "capture is gone".
+    if (g_FramesSinceCapture.load() > kMaxIdleFramesBeforeLocalDraw) {
         g_StickyStreamProof.store(false);
         g_SeenNestedCapture.store(false);
         g_DrawPending.store(false);
@@ -654,12 +707,29 @@ void Shutdown() noexcept
     if (!obs)
         obs = GetModuleHandleW(L"graphics-hook.dll");
 
+    // The slots were written through VirtualProtect, so putting the original
+    // pointer back needs the same treatment. Without it the restore faults on a
+    // read-only page and OBS keeps calling HkCapture2 in an unloaded image,
+    // which crashes the game some frames after unload rather than at unload.
     for (int i = 0; i < g_PatchedCount; ++i) {
         void** slot = g_PatchedSlots[i];
-        if (slot && g_OrigCapture2 && g_ResolvedCapture) {
+        if (slot && g_ResolvedCapture) {
             __try {
-                if (*slot == reinterpret_cast<void*>(&HkCapture2))
-                    *slot = g_ResolvedCapture;
+                if (*slot == reinterpret_cast<void*>(&HkCapture2)) {
+                    DWORD oldProtect = 0;
+                    if (VirtualProtect(
+                            slot,
+                            sizeof(void*),
+                            PAGE_READWRITE,
+                            &oldProtect)) {
+                        *slot = g_ResolvedCapture;
+                        VirtualProtect(
+                            slot,
+                            sizeof(void*),
+                            oldProtect,
+                            &oldProtect);
+                    }
+                }
             } __except (EXCEPTION_EXECUTE_HANDLER) {
             }
         }
