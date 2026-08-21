@@ -1,5 +1,6 @@
 #include "Game.h"
 #include <cstdint>
+#include "RageBuildFlavor.h"
 #include "../imgui/imgui.h"
 #include "../Main/Hooks.h"
 #include "../Features/RagePlayerNames.h"
@@ -372,6 +373,30 @@ struct DirectBoneCacheEntry final {
     Vector3 rootPosition{};
     Vector3 bones[Game::kVisualBoneCount]{};
 };
+// How stale a cached rig may be before it is read again. This is a floor on
+// pose freshness, not a budget: the per-frame budget below still caps how many
+// peds can be refreshed, so lowering this only lets the budget be used more
+// fully when few peds are on screen. At 48 ms the pose advanced 21 times a
+// second no matter the frame rate, which is what made the skeleton look like it
+// ran at a fraction of the game.
+constexpr DWORD kBoneRefreshFloorMs = 16;
+
+// The smoothing needs sub-frame resolution. GetTickCount64 moves in ~15.6 ms
+// steps, so at 100 FPS several frames share a timestamp: the delta collapsed to
+// nothing on those frames and then jumped, which the eye reads as stepping.
+static double NowSeconds() noexcept
+{
+    static LARGE_INTEGER frequency{};
+    if (!frequency.QuadPart)
+        QueryPerformanceFrequency(&frequency);
+    LARGE_INTEGER counter{};
+    QueryPerformanceCounter(&counter);
+    return frequency.QuadPart
+        ? static_cast<double>(counter.QuadPart) /
+              static_cast<double>(frequency.QuadPart)
+        : 0.0;
+}
+
 static DirectBoneCacheEntry s_directBoneCache[256]{};
 static int s_directBoneCacheCount = 0;
 static int s_directBoneCacheWrite = 0;
@@ -397,7 +422,10 @@ struct WorldSmoothEntry final {
     // rate. Offsets are relative to the root, in metres.
     Vector3 poseOffset[Game::kVisualBoneCount]{};
     Vector3 poseVelocity[Game::kVisualBoneCount]{};
-    ULONGLONG poseAt{};
+    // Seconds from the performance counter, not milliseconds from the tick
+    // count: everything here is sub-frame timing.
+    double updatedAtSec{};
+    double poseAtSec{};
 };
 
 static WorldSmoothEntry s_worldSmooth[Game::kMaxFramePeds]{};
@@ -2051,7 +2079,7 @@ namespace Game {
         if (cacheSlot >= 0)
         {
             auto& cache = s_directBoneCache[cacheSlot];
-            if (now - cache.tick <= 48)
+            if (now - cache.tick <= kBoneRefreshFloorMs)
             {
             if (!cache.boneMask)
                 return false;
@@ -2722,6 +2750,13 @@ namespace Game {
             return &s_worldSmooth[chosen];
         }
 
+#if RAGEMP_DEV_BUILD
+        std::uint64_t g_PoseDiagSamples = 0;
+        std::uint64_t g_PoseDiagFrames = 0;
+        double g_PoseDiagSpeed = 0.0;
+        std::uint64_t g_PoseDiagSpeedCount = 0;
+#endif
+
         void SmoothFrameEntry(
             FramePedEntry& entry,
             LONG epoch,
@@ -2742,14 +2777,14 @@ namespace Game {
                     entry.visual.rageHandle ||
                 slot->remoteId !=
                     entry.visual.remoteId;
-            float dt = slot->updatedAt &&
-                now > slot->updatedAt
+            const double nowSec = NowSeconds();
+            float dt = slot->updatedAtSec > 0.0 &&
+                nowSec > slot->updatedAtSec
                 ? static_cast<float>(
-                    now - slot->updatedAt) /
-                    1000.f
+                    nowSec - slot->updatedAtSec)
                 : 1.f / 60.f;
-            if (dt < 0.001f)
-                dt = 0.001f;
+            if (dt < 0.0005f)
+                dt = 0.0005f;
             if (dt > 0.1f)
                 dt = 0.1f;
             const float rootDx =
@@ -2779,7 +2814,7 @@ namespace Game {
                     processBones
                         ? entry.visual.boneMask
                         : 0u;
-                slot->poseAt = now;
+                slot->poseAtSec = nowSec;
                 if (processBones)
                 {
                     for (int bone = 0;
@@ -2847,15 +2882,39 @@ namespace Game {
                     }
                     const bool freshPose = poseDelta > 1e-8f;
 
+#if RAGEMP_DEV_BUILD
+                    // The rig is only re-read every 48 ms, so the pose is meant
+                    // to be carried forward in between. If it still steps, then
+                    // either these samples are not being recognised as new or
+                    // the velocity they produce is useless: count both.
+                    g_PoseDiagSamples += freshPose ? 1 : 0;
+                    ++g_PoseDiagFrames;
                     if (freshPose)
                     {
-                        float sampleDt = slot->poseAt &&
-                            now > slot->poseAt
+                        const int head = static_cast<int>(
+                            RagePlayerNames::BoneSlot::Head);
+                        if ((slot->boneMask & (1u << head)) &&
+                            (entry.visual.boneMask & (1u << head)))
+                        {
+                            const Vector3& v =
+                                slot->poseVelocity[head];
+                            g_PoseDiagSpeed += std::sqrt(
+                                v.x * v.x + v.y * v.y + v.z * v.z);
+                            ++g_PoseDiagSpeedCount;
+                        }
+                    }
+#endif
+
+                    if (freshPose)
+                    {
+                        float sampleDt =
+                            slot->poseAtSec > 0.0 &&
+                            nowSec > slot->poseAtSec
                             ? static_cast<float>(
-                                now - slot->poseAt) / 1000.f
+                                nowSec - slot->poseAtSec)
                             : dt;
                         sampleDt =
-                            sampleDt < 0.008f ? 0.008f
+                            sampleDt < 0.004f ? 0.004f
                             : (sampleDt > 0.4f ? 0.4f : sampleDt);
                         const float inverse = 1.f / sampleDt;
                         for (int bone = 0;
@@ -2921,15 +2980,16 @@ namespace Game {
                                 velocity.z * 0.5f;
                             slot->poseOffset[bone] = offset;
                         }
-                        slot->poseAt = now;
+                        slot->poseAtSec = nowSec;
                     }
 
                     // Carrying the pose forward is capped: with a ped that
                     // stopped animating, an uncapped prediction would walk the
                     // rig away from the body.
-                    float age = slot->poseAt && now > slot->poseAt
+                    float age = slot->poseAtSec > 0.0 &&
+                        nowSec > slot->poseAtSec
                         ? static_cast<float>(
-                            now - slot->poseAt) / 1000.f
+                            nowSec - slot->poseAtSec)
                         : 0.f;
                     if (age > 0.12f)
                         age = 0.12f;
@@ -2978,6 +3038,7 @@ namespace Game {
                 }
             }
             slot->updatedAt = now;
+            slot->updatedAtSec = nowSec;
             entry.smoothedPosition = slot->root;
             entry.visual.position = slot->root;
             entry.visual.boneMask =
@@ -3366,6 +3427,38 @@ namespace Game {
             priority[insert] = value;
         }
 
+#if RAGEMP_DEV_BUILD
+        {
+            static ULONGLONG s_LastPoseLog = 0;
+            const ULONGLONG nowPose = GetTickCount64();
+            if (nowPose - s_LastPoseLog > 500 &&
+                g_PoseDiagFrames > 0)
+            {
+                s_LastPoseLog = nowPose;
+                char msg[192]{};
+                sprintf_s(
+                    msg,
+                    "Pose: entries=%llu fresh=%llu (%.0f%%) "
+                    "headSpeed=%.3f demand=%d",
+                    g_PoseDiagFrames,
+                    g_PoseDiagSamples,
+                    100.0 *
+                        static_cast<double>(g_PoseDiagSamples) /
+                        static_cast<double>(g_PoseDiagFrames),
+                    g_PoseDiagSpeedCount
+                        ? g_PoseDiagSpeed /
+                              static_cast<double>(g_PoseDiagSpeedCount)
+                        : 0.0,
+                    boneDemandCount);
+                hooks::HLog(msg);
+                g_PoseDiagFrames = 0;
+                g_PoseDiagSamples = 0;
+                g_PoseDiagSpeed = 0.0;
+                g_PoseDiagSpeedCount = 0;
+            }
+        }
+#endif
+
         int boneBudget = 0;
         if (boneDemandCount > 0)
         {
@@ -3386,12 +3479,12 @@ namespace Game {
                 BoneCacheAge(
                     entry.ped,
                     next.sessionEpoch);
-            if (age <= 48 &&
+            if (age <= kBoneRefreshFloorMs &&
                 TryGetCachedPedBones(
                     entry.ped,
                     entry.livePosition,
                     entry.visual,
-                    48))
+                    kBoneRefreshFloorMs))
             {
                 ++next.boneCacheHits;
                 continue;

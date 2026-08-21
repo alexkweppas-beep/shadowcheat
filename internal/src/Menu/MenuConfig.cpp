@@ -380,6 +380,13 @@ namespace Menu
         CFG_WRITE("aim_draw_fov", s_Aim_DrawFov);
         CFG_WRITE("aim_fov", s_Aim_FOV);
         CFG_WRITE("aim_mark", s_Aim_MarkTarget);
+        // Saved now that the colour has a picker: it used to be a constant
+        // nobody could reach, so nothing carried it between sessions.
+        for (int c = 0; c < 3; ++c) {
+            char key[32]{};
+            sprintf_s(key, "aim_mark_color%d", c);
+            CFG_WRITE(key, s_Aim_MarkColor[c]);
+        }
         CFG_WRITE("aim_lock", s_Aim_LockOnLast);
         CFG_WRITE("aim_hitchance_enabled", s_Aim_EnableHitchance);
         CFG_WRITE("aim_hitchance", s_Aim_Hitchance);
@@ -969,6 +976,11 @@ namespace Menu
         CFG_READ_BOOL("aim_draw_fov", s_Aim_DrawFov);
         CFG_READ_FLOAT("aim_fov", s_Aim_FOV);
         CFG_READ_BOOL("aim_mark", s_Aim_MarkTarget);
+        for (int c = 0; c < 3; ++c) {
+            char key[32]{};
+            sprintf_s(key, "aim_mark_color%d", c);
+            CFG_READ_FLOAT(key, s_Aim_MarkColor[c]);
+        }
         CFG_READ_BOOL("aim_lock", s_Aim_LockOnLast);
         CFG_READ_BOOL("aim_hitchance_enabled", s_Aim_EnableHitchance);
         CFG_READ_FLOAT("aim_hitchance", s_Aim_Hitchance);

@@ -1172,6 +1172,14 @@ namespace Menu
             1.f,
             300.f,
             "%.0f px");
+        // One dot marks whichever target the aim is on, silent or vector, so
+        // the label avoids naming a mode even though the flag lives here.
+        DrawAimColorToggleRow(
+            "silent_mark_target",
+            ICON_FA_CIRCLE_DOT,
+            T("Target dot", "Точка цели", "Точка цілі"),
+            &profile.silentMark,
+            s_Aim_MarkColor);
         DrawAimBooleanRow(
             "silent_lock",
             ICON_FA_LINK,

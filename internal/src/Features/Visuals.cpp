@@ -556,11 +556,10 @@ namespace Features {
         }
     }
 
-    // Aim target reticle. The old marker was a 3.5 px dot inside an 8 px ring
-    // at a fixed size, so it was a speck on a distant target and a smudge on a
-    // close one, and nothing told you when the lock changed. This draws an open
-    // ring that scales with the target, snaps inward when a new target is
-    // acquired, and turns grey while the target is behind cover.
+    // Aim target marker: one glowing dot that breathes. A ring or a reticle
+    // covers the part of the ped you are aiming at, which is the one place you
+    // are looking; a dot marks the spot and stays out of the way. The pulse is
+    // what makes it readable against a moving background.
     void DrawAimTargetReticle(
         ImDrawList* draw,
         const Features::AimTargetSnapshot& mark,
@@ -571,10 +570,10 @@ namespace Features {
 
         const ImVec2 at(mark.screen.x, mark.screen.y);
 
-        // A fixed world height projected next to the target, so the reticle
-        // shrinks with distance exactly like the ped does instead of needing a
-        // distance curve of its own.
-        float radius = 14.f;
+        // Sized from a fixed world height projected at the target, so the dot
+        // shrinks with distance like the ped instead of sitting at a constant
+        // pixel size that is a speck up close and a blob far away.
+        float scale = 1.f;
         {
             Vector3 above = mark.world;
             above.z += 0.30f;
@@ -585,109 +584,42 @@ namespace Features {
                 const float span =
                     fabsf(aboveScreen->y - atScreen->y);
                 if (std::isfinite(span))
-                    radius = ImClamp(span, 7.f, 90.f);
+                    scale = ImClamp(span / 22.f, 0.55f, 2.2f);
             }
         }
 
-        // Lock animation, restarted whenever the aim moves to another ped.
-        static const CPed* s_LockedPed = nullptr;
-        static float s_LockProgress = 0.f;
-        static float s_Spin = 0.f;
-        const float dt =
-            ImClamp(ImGui::GetIO().DeltaTime, 0.f, 0.05f);
-        if (mark.ped != s_LockedPed)
-        {
-            s_LockedPed = mark.ped;
-            s_LockProgress = 0.f;
-        }
-        s_LockProgress =
-            ImMin(1.f, s_LockProgress + dt * 6.5f);
-        s_Spin += dt * 0.35f;
-        if (s_Spin > 6.28318f)
-            s_Spin -= 6.28318f;
+        // A sine, not a sawtooth: the brightness has to arrive and leave at the
+        // same rate or the pulse reads as a flicker.
+        static float s_Phase = 0.f;
+        s_Phase += ImClamp(ImGui::GetIO().DeltaTime, 0.f, 0.05f) * 3.4f;
+        if (s_Phase > 6.28318f)
+            s_Phase -= 6.28318f;
+        const float pulse = 0.5f + 0.5f * sinf(s_Phase);
 
-        // Ease out, so the collapse arrives softly instead of stopping dead.
-        const float eased =
-            1.f - (1.f - s_LockProgress) *
-                      (1.f - s_LockProgress);
-        const float ringRadius =
-            radius * (1.f + 1.4f * (1.f - eased));
-        const float alpha = 0.25f + 0.75f * eased;
-
-        const float dim = mark.visible ? 1.f : 0.45f;
+        const float dim = mark.visible ? 1.f : 0.5f;
         const auto rgba =
-            [&](float scale, float opacity) noexcept {
-                const float mix = dim * scale;
+            [&](float tint, float opacity) noexcept {
                 return IM_COL32(
-                    (int)(ImClamp(color[0] * mix, 0.f, 1.f) * 255.f),
-                    (int)(ImClamp(color[1] * mix, 0.f, 1.f) * 255.f),
-                    (int)(ImClamp(color[2] * mix, 0.f, 1.f) * 255.f),
-                    (int)(ImClamp(opacity * alpha, 0.f, 1.f) * 255.f));
+                    (int)(ImClamp(color[0] * tint, 0.f, 1.f) * 255.f),
+                    (int)(ImClamp(color[1] * tint, 0.f, 1.f) * 255.f),
+                    (int)(ImClamp(color[2] * tint, 0.f, 1.f) * 255.f),
+                    (int)(ImClamp(opacity * dim, 0.f, 1.f) * 255.f));
             };
 
-        // Four arcs with gaps on the diagonals: an unbroken circle reads as a
-        // scope overlay and hides the target, the gaps keep the ped visible.
-        constexpr float kQuarter = 1.5708f;
-        constexpr float kGap = 0.42f;
-        for (int quadrant = 0; quadrant < 4; ++quadrant)
-        {
-            const float start =
-                s_Spin + quadrant * kQuarter + kGap * 0.5f;
-            const float end =
-                s_Spin + (quadrant + 1) * kQuarter - kGap * 0.5f;
-            draw->PathArcTo(at, ringRadius, start, end, 10);
-            draw->PathStroke(rgba(1.f, 0.95f), 0, 1.6f);
-            // One soft pass outside the stroke carries the shape over bright
-            // ground without the cost of a real blur.
-            draw->PathArcTo(at, ringRadius, start, end, 10);
-            draw->PathStroke(rgba(1.f, 0.18f), 0, 3.6f);
-        }
-
-        // Inward ticks on the axes: they point at the hitbox and read as a
-        // reticle rather than decoration.
-        const float tickOuter = ringRadius * 0.62f;
-        const float tickInner = ringRadius * 0.34f;
-        const ImVec2 axis[4] = {
-            ImVec2(1.f, 0.f),
-            ImVec2(-1.f, 0.f),
-            ImVec2(0.f, 1.f),
-            ImVec2(0.f, -1.f)
-        };
-        for (const ImVec2& dir : axis)
-        {
-            draw->AddLine(
-                ImVec2(
-                    at.x + dir.x * tickOuter,
-                    at.y + dir.y * tickOuter),
-                ImVec2(
-                    at.x + dir.x * tickInner,
-                    at.y + dir.y * tickInner),
-                rgba(1.f, 0.85f),
-                1.3f);
-        }
-
-        // Centre: a small bright core over a wider soft halo.
+        const float core = 2.3f * scale;
+        // Three widening passes at low alpha: cheap, and it reads as a glow
+        // because the falloff is what the eye picks up, not the blur itself.
+        const float halo = core * (3.4f + 1.1f * pulse);
         draw->AddCircleFilled(
-            at, ImMax(2.6f, radius * 0.16f), rgba(1.f, 0.30f), 12);
+            at, halo, rgba(1.f, 0.10f + 0.10f * pulse), 20);
         draw->AddCircleFilled(
-            at, ImMax(1.3f, radius * 0.07f), rgba(1.6f, 1.f), 8);
-
-        // Hit chance as a filled fraction of the ring, only when the feature is
-        // actually in use, so the reticle stays quiet by default.
-        if (mark.hitchanceEnabled &&
-            mark.hitchance < 99.5f)
-        {
-            const float fraction =
-                ImClamp(mark.hitchance / 100.f, 0.f, 1.f);
-            const float sweep = 6.28318f * fraction;
-            draw->PathArcTo(
-                at,
-                ringRadius + 3.2f,
-                -1.5708f,
-                -1.5708f + sweep,
-                24);
-            draw->PathStroke(rgba(1.f, 0.55f), 0, 1.8f);
-        }
+            at, halo * 0.62f, rgba(1.f, 0.16f + 0.16f * pulse), 16);
+        draw->AddCircleFilled(
+            at, core, rgba(1.f, 0.75f + 0.25f * pulse), 14);
+        // The centre stays near white so the dot keeps its position when the
+        // glow around it is at its dimmest.
+        draw->AddCircleFilled(
+            at, core * 0.45f, rgba(1.8f, 0.85f + 0.15f * pulse), 10);
     }
 
     void SmoothScreenBox(

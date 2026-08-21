@@ -279,10 +279,7 @@ namespace Menu
             MenuUi::BeginInspectorIsland(
                 "flyout_keys_island",
                 T("Keys", "Клавиши", "Клавіші"),
-                10.f,
-                T("Menu and unload",
-                  "Меню и выгрузка",
-                  "Меню та вивантаження"));
+                0.f);
 
             gui->keybind(
                 T("Open menu", "Открыть меню", "Відкрити меню"),
@@ -336,40 +333,42 @@ namespace Menu
             2.f);
         SetRenderPhase("flyout:account");
         DrawSubscriptionCard(scale);
-        SetRenderPhase("flyout:keys");
-        DrawGlobalKeysCard();
-        SetRenderPhase("flyout:scale");
-        // Scale is a slider but only the five rasterised font variants are
-        // valid, so the value snaps to the nearest 25%.
+
+        // Two columns are what keep every setting above the fold. The shared
+        // BeginPageColumns() cannot be used here: it sizes its children from
+        // the available height, and this panel's height comes from its content.
+        const MenuTheme::Metrics& metrics = MenuTheme::Sizes();
+        const float columnGap = metrics.space3 * scale;
+        const float columnWidth =
+            (ImMax(ImGui::GetContentRegionAvail().x, 1.f) - columnGap) * 0.5f;
+
+        ImGui::BeginChild(
+            "##flyout_column_look",
+            ImVec2(columnWidth, 0.f),
+            ImGuiChildFlags_AutoResizeY,
+            ImGuiWindowFlags_NoSavedSettings);
+
+        SetRenderPhase("flyout:appearance");
         MenuUi::BeginInspectorIsland(
-            "flyout_scale_island",
-            T("Menu size", "Размер меню", "Розмір меню"),
-            10.f,
-            T("Interface scale",
-              "Масштаб интерфейса",
-              "Масштаб інтерфейсу"));
+            "flyout_look_island",
+            T("Appearance", "Внешний вид", "Зовнішній вигляд"),
+            0.f);
+
+        // Only the five rasterised font variants are valid, so the value snaps
+        // to the nearest 25%.
         int scalePercent = s_UIScalePercent;
-        // Label hidden: the card title already says what this is, and the
-        // panel is too narrow to spend width on repeating it.
         if (gui->slider_int(
-                "##flyout_scale",
+                T("Size###flyout_scale",
+                  "Размер###flyout_scale",
+                  "Розмір###flyout_scale"),
                 &scalePercent,
                 100,
-                200))
+                200,
+                "%d%%"))
         {
             s_UIScalePercent =
                 100 + ImClamp((scalePercent - 100 + 12) / 25, 0, 4) * 25;
         }
-        MenuUi::EndInspectorIsland();
-
-        SetRenderPhase("flyout:colors");
-        MenuUi::BeginInspectorIsland(
-            "flyout_color_island",
-            T("Colors", "Цвета", "Кольори"),
-            10.f,
-            T("Accent and theme",
-              "Акцент и тема",
-              "Акцент і тема"));
         gui->color_edit(
             T("Accent###flyout_accent",
               "Акцент###flyout_accent",
@@ -515,15 +514,27 @@ namespace Menu
             s_CanvasEdit[3] = 1.f;
         }
         MenuUi::EndInspectorIsland();
+        ImGui::EndChild();
 
+        ImGui::SameLine(0.f, columnGap);
+
+        ImGui::BeginChild(
+            "##flyout_column_input",
+            ImVec2(columnWidth, 0.f),
+            ImGuiChildFlags_AutoResizeY,
+            ImGuiWindowFlags_NoSavedSettings);
+
+        SetRenderPhase("flyout:keys");
+        DrawGlobalKeysCard();
+        ImGui::EndChild();
+
+        // Full width: the three chips fit on one row here, and it leaves the
+        // two columns above ending at the same height.
         SetRenderPhase("flyout:language");
         MenuUi::BeginInspectorIsland(
             "flyout_language_island",
             T("Language", "Язык", "Мова"),
-            10.f,
-            T("Interface language",
-              "Язык интерфейса",
-              "Мова інтерфейсу"));
+            10.f);
         const MenuUi::ChipDesc langChips[] = {
             {"en", "English"},
             {"ru", "Русский"},
@@ -542,6 +553,7 @@ namespace Menu
                 ImClamp(selectedLang, 0, 2));
         }
         MenuUi::EndInspectorIsland();
+
         ApplyRawImGuiTheme(ImGui::GetStyle());
     }
 

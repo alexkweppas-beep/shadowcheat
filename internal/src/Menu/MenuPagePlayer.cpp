@@ -10,6 +10,7 @@
 #include "IconsFontAwesome6.h"
 #include "MenuUiHelpers.h"
 #include "MenuState.h"
+#include "../Features/AntiCheatShield.h"
 #include "../Features/MiscFeatures.h"
 
 namespace Menu
@@ -80,6 +81,11 @@ namespace Menu
             ICON_FA_LEAF,
             T("Greenzone bypass", "Обход зелёнки", "Обхід зеленки"),
             &s.greenzoneBypass);
+        MiscRow(
+            "player_ac_shield",
+            ICON_FA_SHIELD_HALVED,
+            T("Disable anti-cheat", "Отключение античита", "Відключення античиту"),
+            &AntiCheatShield::Enabled());
         MenuUi::EndInspectorIsland();
 
         MenuUi::NextPageColumn();

@@ -27,6 +27,10 @@ namespace Menu
     // runs can reach every sub-page without synthesising clicks.
     extern int s_PreviewForcedTab;
 
+    // MenuPreview sets it from --flyout so the settings panel can be captured
+    // without synthesising a click on the gear.
+    extern bool s_PreviewOpenSettings;
+
     // Aim page selection.
     extern AimPresetKind s_AimPresetKind;
     extern int s_AimPresetGroup;

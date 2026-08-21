@@ -14,10 +14,6 @@ if(NOT PROJECT_NAME)
     project(shadow_internal LANGUAGES CXX C)
 endif()
 
-# MinHook is C. The repository root declares CXX only, so building from there
-# would otherwise fail to find a C compiler.
-enable_language(C)
-
 file(GLOB_RECURSE SHADOW_INTERNAL_SOURCES CONFIGURE_DEPENDS
     "${CMAKE_CURRENT_SOURCE_DIR}/src/*.cpp")
 
@@ -100,4 +96,18 @@ set_target_properties(internal PROPERTIES
     CXX_STANDARD_REQUIRED ON
     # Manual mapping bypasses the Windows loader, so nothing guarantees a CRT
     # DLL is resolvable in the target process: the runtime is linked in.
+    MSVC_RUNTIME_LIBRARY "MultiThreaded")
+
+# The no-driver delivery path: a usermode manual-map injector that loads
+# shadow_internal.dll into GTA5.exe without touching the kernel.
+add_executable(shadow_injector
+    "${CMAKE_CURRENT_SOURCE_DIR}/injector/main.cpp")
+
+target_compile_features(shadow_injector PRIVATE cxx_std_17)
+
+target_compile_definitions(shadow_injector PRIVATE UNICODE _UNICODE)
+
+target_link_libraries(shadow_injector PRIVATE advapi32)
+
+set_target_properties(shadow_injector PROPERTIES
     MSVC_RUNTIME_LIBRARY "MultiThreaded")

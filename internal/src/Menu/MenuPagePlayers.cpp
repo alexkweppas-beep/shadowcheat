@@ -170,95 +170,10 @@ namespace Menu
         return free;
     }
 
-    void RenderFriendVisuals()
-    {
-        const float scale = UIScale();
-        EspProfileSettings& friendProfile =
-            s_EspProfiles[static_cast<int>(EspProfileId::Friends)];
-
-        MenuUi::BeginInspectorIsland(
-            "island_friend_esp",
-            T("FRIEND ESP", "ESP ДРУЗЕЙ", "ESP ДРУЗІВ"));
-        MenuUi::CheckWithHelp(
-            T("Separate ESP for friends##friend_esp_on",
-              "Отдельный ESP для друзей##friend_esp_on",
-              "Окремий ESP для друзів##friend_esp_on"),
-            &friendProfile.enabled,
-            "Players on the friend list leave the Players scope and use "
-            "these settings instead. Admins still outrank friends.",
-            "Игроки из списка друзей выходят из области Players и "
-            "используют эти настройки. Админы важнее друзей.",
-            "Гравці зі списку друзів виходять із області Players і "
-            "використовують ці налаштування. Адміни важливіші за друзів.");
-        ImGui::Dummy(ImVec2(0.f, 4.f * scale));
-        gui->checkbox(
-            T("Box##friend_box", "Бокс##friend_box", "Бокс##friend_box"),
-            &friendProfile.box);
-        gui->checkbox(
-            T("Name##friend_name", "Ник##friend_name", "Нік##friend_name"),
-            &friendProfile.nameTag);
-        gui->checkbox(
-            T("Skeleton##friend_skel",
-              "Скелет##friend_skel",
-              "Скелет##friend_skel"),
-            &friendProfile.skeleton);
-        gui->checkbox(
-            T("Health##friend_hp", "ХП##friend_hp", "ХП##friend_hp"),
-            &friendProfile.healthBar);
-        gui->checkbox(
-            T("Distance##friend_dist",
-              "Дистанция##friend_dist",
-              "Дистанція##friend_dist"),
-            &friendProfile.distance);
-        ImGui::Dummy(ImVec2(0.f, 4.f * scale));
-        gui->color_edit(
-            T("Box colour##friend_box_col",
-              "Цвет бокса##friend_box_col",
-              "Колір боксу##friend_box_col"),
-            friendProfile.boxColor);
-        gui->color_edit(
-            T("Name colour##friend_name_col",
-              "Цвет ника##friend_name_col",
-              "Колір ніка##friend_name_col"),
-            friendProfile.nameColor);
-        gui->color_edit(
-            T("Skeleton colour##friend_skel_col",
-              "Цвет скелета##friend_skel_col",
-              "Колір скелета##friend_skel_col"),
-            friendProfile.skeletonColor);
-        MenuUi::EndInspectorIsland();
-
-        ImGui::Dummy(ImVec2(0.f, 6.f * scale));
-
-        MenuUi::BeginInspectorIsland(
-            "island_friend_misc",
-            T("RADAR AND AIM", "РАДАР И АИМ", "РАДАР І АИМ"));
-        gui->checkbox(
-            T("Show friends on radar##friend_radar",
-              "Друзья на радаре##friend_radar",
-              "Друзі на радарі##friend_radar"),
-            &s_RadarSettings.showFriends);
-        gui->color_edit(
-            T("Radar colour##friend_radar_col",
-              "Цвет на радаре##friend_radar_col",
-              "Колір на радарі##friend_radar_col"),
-            s_RadarSettings.friendColor);
-        ImGui::Dummy(ImVec2(0.f, 4.f * scale));
-        AimWeaponProfile& general = GetAimProfile(0);
-        if (gui->checkbox(
-                T("Never aim at friends##friend_ignore",
-                  "Не наводиться на друзей##friend_ignore",
-                  "Не наводитися на друзів##friend_ignore"),
-                &general.ignoreFriends))
-            s_Aim_IgnoreFriends = general.ignoreFriends;
-        MenuUi::EndInspectorIsland();
-    }
-
     void RenderPlayersPage()
     {
         static char s_FriendInput[48]{};
         static float s_AddRadius = 50.f;
-        static int s_FriendsSubTab = 0;
         EnsureAimProfilesInitialized();
 
         const float availY = ImGui::GetContentRegionAvail().y;
@@ -388,34 +303,6 @@ namespace Menu
             ImGuiWindowFlags_None,
             false);
         {
-            const MenuUi::IconTabDesc friendTabs[] = {
-                { "friends_list_tab",
-                  ICON_FA_ADDRESS_BOOK,
-                  T("List", "Список", "Список") },
-                { "friends_visuals_tab",
-                  ICON_FA_EYE,
-                  T("Visuals", "Визуалы", "Візуали") }
-            };
-            MenuUi::ChipTabs(
-                "##friends_subtabs",
-                friendTabs,
-                IM_ARRAYSIZE(friendTabs),
-                &s_FriendsSubTab);
-            ImGui::Dummy(ImVec2(0.f, 4.f * scale));
-
-            if (s_FriendsSubTab == 1)
-            {
-                ImGui::BeginChild(
-                    "##friends_visuals_scroll",
-                    ImVec2(0.f, ImGui::GetContentRegionAvail().y),
-                    ImGuiChildFlags_None,
-                    ImGuiWindowFlags_NoSavedSettings);
-                RenderFriendVisuals();
-                ImGui::EndChild();
-                MenuUi::EndGlassPanel();
-                return;
-            }
-
             if (Friends::Count() > 0)
             {
                 const float deleteW = 108.f * scale;
