@@ -2022,7 +2022,12 @@ namespace
             return;
         }
 
-        constexpr int kNodeBudget = 8;
+        // 8 nodes per tick made the first exposure take minutes on a full
+        // heap, and until it lands no name resolver works (the overlay falls
+        // back to placeholders). The scan is read-only and stops at the first
+        // exposure, so a large budget only shortens the pre-exposure phase:
+        // one whole block per tick pins the api within the first seconds.
+        constexpr int kNodeBudget = 256;
         int processed = 0;
         while (g_FiveRpPlayersProbe.block &&
                g_FiveRpPlayersProbe.block !=
