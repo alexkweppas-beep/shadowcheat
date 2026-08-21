@@ -66,6 +66,39 @@ const PRODUCT_INFO = {
     hasSilentOption: true,
     video: null,
     screenshots: ['/ragemp-screen.png']
+  },
+  ragemp: {
+    name: 'RAGE:MP',
+    logo: '/external.png',
+    status: 'Undetected',
+    description: 'Внутренняя модификация для GTA V (RAGE:MP). Функционирует внутри игрового процесса, обеспечивая стабильную работу и широкие возможности. Обходит античит системы на уровне ядра через kernel driver.',
+    price: '499',
+    currency: '₽',
+    usdtPrice: '4.20',
+    releaseDate: 'Скоро',
+    updateDate: '21.08.2026',
+    comingSoon: true,
+    systemRequirements: {
+      os: 'Windows 10-11',
+      version: 'GTA V Legacy (RAGE:MP)',
+      support: 'x64, only origin, 20H2+'
+    },
+    anticheats: [
+      { name: 'Easy Anti-Cheat', status: 'Undetected' },
+      { name: 'Majestic Anti-Cheat', status: 'Undetected' },
+      { name: 'GTA5RP Anti Cheat', status: 'Undetected' }
+    ],
+    featuresGrid: {
+      'AIMBOT': ['Enable Aimbot', 'Aim Type', 'Draw FOV', 'Hit Chance', 'Aim Bone', 'Smoothing', 'Ignore Friends'],
+      'TRIGGER': ['Enable Triggerbot', 'Trigger Key', 'Trigger Delay', 'Ignore Friends'],
+      'VISUALS': ['ESP Box', 'Skeleton', 'Distance', 'Weapon', 'Health Bar', 'Player Name', 'Aim Line', 'Custom Colors'],
+      'OBJECTS': ['Objects ESP', 'Objects Distance'],
+      'WEAPONS': ['No Recoil', 'No Spread', 'Wallshot', 'Double Tap'],
+      'OTHER': ['Bypass OBS', 'Config System', 'Script System', 'Cheat Language', 'Suicide Key']
+    },
+    hasSilentOption: false,
+    video: null,
+    screenshots: ['/obzor1.png', '/obzor2.png', '/obzor3.png', '/obzor4.png']
   }
 };
 
@@ -488,3 +521,4 @@ export default function ProductsPage() {
     </div>
   );
 }
+
