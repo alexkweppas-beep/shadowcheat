@@ -422,6 +422,32 @@ try {
     console.error('[MIGRATION] Subscription merge error:', e.message);
 }
 
+
+// ─── MIGRATION: add product_id to user_configs ───
+try { db.exec("ALTER TABLE user_configs ADD COLUMN product_id TEXT DEFAULT 'external'"); } catch (e) { }
+try { db.exec("UPDATE user_configs SET product_id = 'external' WHERE product_id IS NULL OR product_id = ''"); } catch (e) { }
+
+// ─── MIGRATION: drop old UNIQUE(user_id, name) and recreate with product_id ───
+// SQLite не поддерживает DROP CONSTRAINT, поэтому пересоздаём таблицу если нет нового индекса
+try {
+    const configIdxInfo = db.prepare("SELECT name FROM sqlite_master WHERE type='index' AND tbl_name='user_configs' AND name='idx_user_configs_user_product_name'").get();
+    if (!configIdxInfo) {
+        db.exec("CREATE UNIQUE INDEX IF NOT EXISTS idx_user_configs_user_product_name ON user_configs(user_id, product_id, name)");
+    }
+} catch (e) { console.warn('[MIGRATION] user_configs index:', e.message); }
+
+// ─── CREATE TABLE: user_scripts (cloud scripts for ragemp) ───
+try {
+    db.exec(\CREATE TABLE IF NOT EXISTS user_scripts (
+        id         INTEGER PRIMARY KEY AUTOINCREMENT,
+        user_id    INTEGER NOT NULL REFERENCES users(id),
+        name       TEXT    NOT NULL,
+        data       TEXT    NOT NULL,
+        created_at TEXT    DEFAULT (datetime('now')),
+        updated_at TEXT    DEFAULT (datetime('now')),
+        UNIQUE(user_id, name)
+    )\);
+} catch (e) { }
 // ─── INIT ADMIN USER ───
 const ADMIN_USERNAME = process.env.ADMIN_USERNAME;
 const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD;
@@ -581,6 +607,7 @@ const ALLOWED_PRODUCTS = {
     'external':       { 7: 500,  14: 800,  30: 1200 },
     'trigger':        { 7: 300,  14: 400,  30: 500  },
     'trigger_silent': { 7: 600,  14: 700,  30: 800  },
+    'ragemp':         { 7: 499,  30: 999,  90: 1999 },
 };
 
 function requireAdmin(req, res, next) {
@@ -1766,7 +1793,16 @@ app.all('/api/configs/list', express.text({ type: '*/*' }), (req, res) => {
         const user = resolveConfigUser(req);
         if (!user) return res.send('');
 
-        const configs = db.prepare('SELECT name FROM user_configs WHERE user_id=? ORDER BY updated_at DESC').all(user.id);
+        // product обязателен — без него ошибка
+        let product = null;
+        try {
+            const bodyObj = req.body && typeof req.body === 'string' ? JSON.parse(req.body) : req.body;
+            product = (bodyObj && bodyObj.product) || req.query.product || null;
+        } catch (e) { product = req.query.product || null; }
+        if (!product) return res.status(400).send('Missing product');
+        product = product.toLowerCase();
+
+        const configs = db.prepare('SELECT name FROM user_configs WHERE user_id=? AND product_id=? ORDER BY updated_at DESC').all(user.id, product);
         res.send(configs.map(c => c.name).join(','));
     } catch (e) {
         res.status(500).send('Error');
@@ -1785,14 +1821,16 @@ app.post('/api/configs/save', express.text({ type: '*/*' }), (req, res) => {
 
         const name = payload.name;
         const data = payload.data;
+        const product = (payload.product || '').toLowerCase();
 
         if (!name || !data) return res.status(400).send('Missing name or data');
+        if (!product) return res.status(400).send('Missing product');
 
-        const existing = db.prepare('SELECT id FROM user_configs WHERE user_id=? AND name=?').get(user.id, name);
+        const existing = db.prepare('SELECT id FROM user_configs WHERE user_id=? AND product_id=? AND name=?').get(user.id, product, name);
         if (existing) {
             db.prepare('UPDATE user_configs SET data=?, updated_at=datetime("now") WHERE id=?').run(data, existing.id);
         } else {
-            db.prepare('INSERT INTO user_configs (user_id, name, data) VALUES (?,?,?)').run(user.id, name, data);
+            db.prepare('INSERT INTO user_configs (user_id, product_id, name, data) VALUES (?,?,?,?)').run(user.id, product, name, data);
         }
         res.send('OK');
     } catch (e) {
@@ -1811,9 +1849,11 @@ app.post('/api/configs/load', express.text({ type: '*/*' }), (req, res) => {
         }
 
         const name = payload.name;
+        const product = (payload.product || '').toLowerCase();
         if (!name) return res.status(400).send('Missing name');
+        if (!product) return res.status(400).send('Missing product');
 
-        const config = db.prepare('SELECT data FROM user_configs WHERE user_id=? AND name=?').get(user.id, name);
+        const config = db.prepare('SELECT data FROM user_configs WHERE user_id=? AND product_id=? AND name=?').get(user.id, product, name);
         if (!config) return res.status(404).send('Not found');
 
         res.send(JSON.stringify({ data: config.data }));
@@ -1833,9 +1873,117 @@ app.post('/api/configs/delete', express.text({ type: '*/*' }), (req, res) => {
         }
 
         const name = payload.name;
+        const product = (payload.product || '').toLowerCase();
+        if (!name) return res.status(400).send('Missing name');
+        if (!product) return res.status(400).send('Missing product');
+
+        db.prepare('DELETE FROM user_configs WHERE user_id=? AND product_id=? AND name=?').run(user.id, product, name);
+        res.send('OK');
+    } catch (e) {
+        res.status(500).send('Error');
+    }
+});
+
+// ─────────────────────────────────────────────────────────
+//  CLOUD SCRIPTS (RAGE:MP internal)
+//  Используют ту же resolveConfigUser авторизацию (HWID/JWT)
+// ─────────────────────────────────────────────────────────
+
+app.all('/api/scripts/list', express.text({ type: '*/*' }), (req, res) => {
+    try {
+        const user = resolveConfigUser(req);
+        if (!user) return res.send('');
+        const scripts = db.prepare('SELECT name FROM user_scripts WHERE user_id=? ORDER BY updated_at DESC').all(user.id);
+        res.send(scripts.map(s => s.name).join(','));
+    } catch (e) {
+        res.status(500).send('Error');
+    }
+});
+
+app.post('/api/scripts/save', express.text({ type: '*/*' }), (req, res) => {
+    try {
+        const user = resolveConfigUser(req);
+        if (!user) return res.status(401).send('Unauthorized');
+
+        let payload = req.body;
+        if (typeof payload === 'string') {
+            try { payload = JSON.parse(payload); } catch (e) { return res.status(400).send('Invalid JSON'); }
+        }
+
+        const name = payload.name;
+        const data = payload.data;
+        if (!name || !data) return res.status(400).send('Missing name or data');
+
+        const existing = db.prepare('SELECT id FROM user_scripts WHERE user_id=? AND name=?').get(user.id, name);
+        if (existing) {
+            db.prepare('UPDATE user_scripts SET data=?, updated_at=datetime("now") WHERE id=?').run(data, existing.id);
+        } else {
+            db.prepare('INSERT INTO user_scripts (user_id, name, data) VALUES (?,?,?)').run(user.id, name, data);
+        }
+        res.send('OK');
+    } catch (e) {
+        res.status(500).send('Error');
+    }
+});
+
+app.post('/api/scripts/load', express.text({ type: '*/*' }), (req, res) => {
+    try {
+        const user = resolveConfigUser(req);
+        if (!user) return res.status(401).send('Unauthorized');
+
+        let payload = req.body;
+        if (typeof payload === 'string') {
+            try { payload = JSON.parse(payload); } catch (e) { return res.status(400).send('Invalid JSON'); }
+        }
+
+        const name = payload.name;
         if (!name) return res.status(400).send('Missing name');
 
-        db.prepare('DELETE FROM user_configs WHERE user_id=? AND name=?').run(user.id, name);
+        const script = db.prepare('SELECT data FROM user_scripts WHERE user_id=? AND name=?').get(user.id, name);
+        if (!script) return res.status(404).send('Not found');
+
+        res.send(JSON.stringify({ data: script.data }));
+    } catch (e) {
+        res.status(500).send('Error');
+    }
+});
+
+app.post('/api/scripts/delete', express.text({ type: '*/*' }), (req, res) => {
+    try {
+        const user = resolveConfigUser(req);
+        if (!user) return res.status(401).send('Unauthorized');
+
+        let payload = req.body;
+        if (typeof payload === 'string') {
+            try { payload = JSON.parse(payload); } catch (e) { return res.status(400).send('Invalid JSON'); }
+        }
+
+        const name = payload.name;
+        if (!name) return res.status(400).send('Missing name');
+
+        db.prepare('DELETE FROM user_scripts WHERE user_id=? AND name=?').run(user.id, name);
+        res.send('OK');
+    } catch (e) {
+        res.status(500).send('Error');
+    }
+});
+
+app.post('/api/configs/delete', express.text({ type: '*/*' }), (req, res) => {
+    try {
+        const user = resolveConfigUser(req);
+        if (!user) return res.status(401).send('Unauthorized');
+
+        let payload = req.body;
+        if (typeof payload === 'string') {
+            try { payload = JSON.parse(payload); } catch (e) { return res.status(400).send('Invalid JSON'); }
+        }
+
+        const name = payload.name;
+        const product = (payload.product || '').toLowerCase();
+        if (!name) return res.status(400).send('Missing name');
+        if (!product) return res.status(400).send('Missing product');
+
+        db.prepare('DELETE FROM user_configs WHERE user_id=? AND product_id=? AND name=?').run(user.id, product, name);
         res.send('OK');
     } catch (e) {
         res.status(500).send('Error');
@@ -2635,3 +2783,6 @@ app.put('/api/admin/users/:id', authenticateToken, requireAdmin, (req, res) => {
 // End of admin block
 
 // ─── Session ban check in checkLoaderVersion ─────────────────────────────────
+
+
+
