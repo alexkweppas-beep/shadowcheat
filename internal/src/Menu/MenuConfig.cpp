@@ -494,14 +494,9 @@ namespace Menu
                 CFG_WRITE(key, p.silentFovColor[c]);
             }
             WG_WRITE("trig_on", p.triggerEnabled);
-            WG_WRITE("trig_key", p.triggerKey);
-            WG_WRITE("trig_fov", p.triggerFov);
             WG_WRITE("trig_delay", p.triggerDelayMs);
             WG_WRITE("trig_cooldown", p.triggerCooldownMs);
-            WG_WRITE("trig_sticky", p.triggerSticky);
-            WG_WRITE("trig_near", p.triggerNearest);
             WG_WRITE("trig_vis", p.triggerVisible);
-            WG_WRITE("trig_bone_any", p.triggerBoneNearestAny);
             {
                 char key[64]{};
                 sprintf_s(key, "aim_wg%d_trig_bones", g);
@@ -628,14 +623,9 @@ namespace Menu
                 CFG_WRITE(key, p.silentFovColor[c]);
             }
             WO_WRITE("trig_on", p.triggerEnabled);
-            WO_WRITE("trig_key", p.triggerKey);
-            WO_WRITE("trig_fov", p.triggerFov);
             WO_WRITE("trig_delay", p.triggerDelayMs);
             WO_WRITE("trig_cooldown", p.triggerCooldownMs);
-            WO_WRITE("trig_sticky", p.triggerSticky);
-            WO_WRITE("trig_near", p.triggerNearest);
             WO_WRITE("trig_vis", p.triggerVisible);
-            WO_WRITE("trig_bone_any", p.triggerBoneNearestAny);
             {
                 sprintf_s(key, "aim_wpn_%u_trig_bones", slot.hash);
                 CFG_WRITE(
@@ -1112,14 +1102,9 @@ namespace Menu
                 CFG_READ_FLOAT(key, p.silentFovColor[c]);
             }
             WG_READ_BOOL("trig_on", p.triggerEnabled);
-            WG_READ_INT("trig_key", p.triggerKey);
-            WG_READ_FLOAT("trig_fov", p.triggerFov);
             WG_READ_FLOAT("trig_delay", p.triggerDelayMs);
             WG_READ_FLOAT("trig_cooldown", p.triggerCooldownMs);
-            WG_READ_BOOL("trig_sticky", p.triggerSticky);
-            WG_READ_BOOL("trig_near", p.triggerNearest);
             WG_READ_BOOL("trig_vis", p.triggerVisible);
-            WG_READ_BOOL("trig_bone_any", p.triggerBoneNearestAny);
             {
                 int mask = static_cast<int>(
                     BonesToMask(p.triggerBones));
@@ -1281,19 +1266,9 @@ namespace Menu
                 CFG_READ_FLOAT(key, p.silentFovColor[c]);
             }
             WO_READ_BOOL("trig_on", p.triggerEnabled);
-            {
-                int keyValue = p.triggerKey;
-                sprintf_s(key, "aim_wpn_%u_trig_key", hash);
-                CFG_READ_INT(key, keyValue);
-                p.triggerKey = keyValue;
-            }
-            WO_READ_FLOAT("trig_fov", p.triggerFov);
             WO_READ_FLOAT("trig_delay", p.triggerDelayMs);
             WO_READ_FLOAT("trig_cooldown", p.triggerCooldownMs);
-            WO_READ_BOOL("trig_sticky", p.triggerSticky);
-            WO_READ_BOOL("trig_near", p.triggerNearest);
             WO_READ_BOOL("trig_vis", p.triggerVisible);
-            WO_READ_BOOL("trig_bone_any", p.triggerBoneNearestAny);
             {
                 int mask = static_cast<int>(
                     BonesToMask(p.triggerBones));

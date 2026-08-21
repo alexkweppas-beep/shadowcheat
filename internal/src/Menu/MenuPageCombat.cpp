@@ -1228,17 +1228,6 @@ namespace Menu
         EndAimColumn();
     }
 
-    static void RenderAimTriggerAdvanced(
-        AimWeaponProfile& profile) noexcept
-    {
-        AimPlainCheck(
-            ICON_FA_LOCATION_CROSSHAIRS,
-            T("Nearest target###aim_adv_trigger_nearest",
-              "Ближайшая цель###aim_adv_trigger_nearest",
-              "Найближча ціль###aim_adv_trigger_nearest"),
-            &profile.triggerNearest);
-    }
-
     static void RenderAimTrigger(
         AimWeaponProfile& profile,
         bool layerEnabled) noexcept
@@ -1257,11 +1246,6 @@ namespace Menu
             ICON_FA_POWER_OFF,
             T("Enabled", "Включено", "Увімкнено"),
             &profile.triggerEnabled);
-        DrawAimBooleanRow(
-            "trigger_sticky",
-            ICON_FA_LINK,
-            T("Sticky target", "Удерживать цель", "Утримувати ціль"),
-            &profile.triggerSticky);
         gui->slider_float_icon(
             ICON_FA_CLOCK,
             T("Reaction delay###aim_trigger_delay",
@@ -1280,20 +1264,9 @@ namespace Menu
             20.f,
             500.f,
             "%.0f ms");
-        gui->slider_float_icon(
-            ICON_FA_CROSSHAIRS,
-            T("Trigger radius###aim_trigger_fov",
-              "Радиус Trigger###aim_trigger_fov",
-              "Радіус Trigger###aim_trigger_fov"),
-            &profile.triggerFov,
-            1.f,
-            40.f,
-            "%.0f px");
         MenuUi::DrawBoneDropdown(
             profile.triggerBones,
-            "aim_trigger",
-            &profile.triggerBoneNearestAny);
-        RenderAimTriggerAdvanced(profile);
+            "aim_trigger");
         MenuUi::EndInspectorIsland();
         if (!layerEnabled)
             ImGui::EndDisabled();

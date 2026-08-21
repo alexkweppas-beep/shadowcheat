@@ -16,7 +16,13 @@
 namespace SilentAim {
 namespace {
 
-constexpr std::uint64_t kTargetMaxAgeMs = 350;
+// How stale a published target may be and still be shot at. The aim point is
+// carried forward over this gap along the tracked velocity, so the two have to
+// agree: anything older than the compensation clamp would be aimed at a
+// position nothing corrects. 350 ms used to be accepted with no compensation at
+// all, which is over two metres of error on a sprinting target.
+constexpr float kTargetMaxAgeSeconds = 0.2f;
+constexpr std::uint64_t kTargetMaxAgeMs = 200;
 
 // sp¬ sBulletInstance signature.
 using BulletInstanceFn = std::int64_t(__fastcall*)(
@@ -175,7 +181,26 @@ std::int64_t __fastcall hkBulletInstance(
                 // Keep real muzzle; lead end by target velocity / bullet speed.
                 __try {
                     const Vector3 muzzle(start->x, start->y, start->z);
-                    Vector3 predicted = target.world;
+
+                    // The snapshot was taken on the render thread and this shot
+                    // leaves the barrel later, on the game thread. Carry the aim
+                    // point across that gap along the tracked velocity, or a
+                    // target that is merely walking is missed by however far it
+                    // moved since the frame the bone was read on. This is not
+                    // the ballistic lead below: it corrects our own latency,
+                    // which is always present, rather than bullet flight time.
+                    Vector3 aim = target.world;
+                    {
+                        float age = static_cast<float>(
+                            now - target.updatedAt) / 1000.f;
+                        if (age > kTargetMaxAgeSeconds)
+                            age = kTargetMaxAgeSeconds;
+                        aim.x += target.velocity.x * age;
+                        aim.y += target.velocity.y * age;
+                        aim.z += target.velocity.z * age;
+                    }
+
+                    Vector3 predicted = aim;
                     if (profile.silentPrediction)
                     {
                         const float leadScale =
@@ -190,13 +215,80 @@ std::int64_t __fastcall hkBulletInstance(
                             target.velocity.z * leadScale);
                         predicted = PredictAimPoint(
                             muzzle,
-                            target.world,
+                            aim,
                             scaledVelocity,
                             velocity);
                     }
-                    end->x = predicted.x;
-                    end->y = predicted.y;
-                    end->z = predicted.z;
+
+                    // The trace is pushed a little past the aim point instead of
+                    // terminating on it. A bone centre can sit centimetres from
+                    // the edge of the ped's collision, and a ray that ends right
+                    // there can fail to register at all. Overshooting costs
+                    // nothing: the game still reports the first thing the ray
+                    // meets, so this cannot change which entity is hit.
+                    Vector3 traceEnd = predicted;
+                    {
+                        const float dx = predicted.x - muzzle.x;
+                        const float dy = predicted.y - muzzle.y;
+                        const float dz = predicted.z - muzzle.z;
+                        const float length = std::sqrt(
+                            dx * dx + dy * dy + dz * dz);
+                        if (length > 0.05f && std::isfinite(length))
+                        {
+                            constexpr float kOvershootMetres = 0.6f;
+                            const float scale =
+                                (length + kOvershootMetres) / length;
+                            traceEnd.x = muzzle.x + dx * scale;
+                            traceEnd.y = muzzle.y + dy * scale;
+                            traceEnd.z = muzzle.z + dz * scale;
+                        }
+                    }
+                    end->x = traceEnd.x;
+                    end->y = traceEnd.y;
+                    end->z = traceEnd.z;
+
+                    // Moving the endpoint does not get a bullet through
+                    // geometry: the game still traces muzzle -> end and stops at
+                    // the first thing it meets, so the shot lands in the wall.
+                    // Wallshot was only bypassing this cheat's own visibility
+                    // filter, which let a covered ped be locked but never hit.
+                    //
+                    // Pull the origin forward to just short of the target along
+                    // the same ray. Direction and impact point are unchanged and
+                    // only the traced length shrinks, so everything between the
+                    // muzzle and the backoff point is skipped regardless of how
+                    // thick it is.
+                    //
+                    // Not gated on target.visible. That flag is a RAGE ray
+                    // refreshed a few times a second and aimed head to head, so
+                    // it reads "visible" for a ped whose head clears a low wall
+                    // while the chest being aimed at does not, and it lags a
+                    // quarter second behind someone stepping into cover. Gating
+                    // on it made the feature work only sometimes, which is worse
+                    // than a switch that always does what it says.
+                    if (profile.silentWallshot)
+                    {
+                        const float dx = predicted.x - muzzle.x;
+                        const float dy = predicted.y - muzzle.y;
+                        const float dz = predicted.z - muzzle.z;
+                        const float length = std::sqrt(
+                            dx * dx + dy * dy + dz * dz);
+                        // Point blank has no cover worth clearing, and backing
+                        // off past the muzzle would flip the ray.
+                        if (length > 1.2f && std::isfinite(length))
+                        {
+                            // Only cover within this distance of the target is
+                            // still in the way, so it does not need to be large.
+                            constexpr float kBackoffMetres = 0.75f;
+                            float backoff = length * 0.5f;
+                            if (backoff > kBackoffMetres)
+                                backoff = kBackoffMetres;
+                            const float scale = backoff / length;
+                            start->x = predicted.x - dx * scale;
+                            start->y = predicted.y - dy * scale;
+                            start->z = predicted.z - dz * scale;
+                        }
+                    }
                 } __except (EXCEPTION_EXECUTE_HANDLER) {
                 }
             }

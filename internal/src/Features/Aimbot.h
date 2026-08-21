@@ -38,7 +38,6 @@ namespace Features {
         bool silentKeyHeld{};
         bool silentTargetValid{};
         bool triggerEnabled{};
-        bool triggerKeyHeld{};
         bool triggerTargetValid{};
         bool triggerFired{};
     };
