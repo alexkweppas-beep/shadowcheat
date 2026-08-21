@@ -1,0 +1,157 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Project ToolsVersion="4.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <ItemGroup>
+    <Filter Include="src">
+      <UniqueIdentifier>{4FC737F1-C7A5-4376-A066-2A32D752A2FF}</UniqueIdentifier>
+      <Extensions>cpp;c;cc;cxx;c++;cppm;ixx;def;odl;idl;hpj;bat;asm;asmx</Extensions>
+    </Filter>
+    <Filter Include="src\imgui">
+      <UniqueIdentifier>{f3b499df-e298-4c8d-afaf-9204cd15f1e9}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="src\mapper">
+      <UniqueIdentifier>{9c7f66de-fcf8-4d54-8c87-84e1b54a6db0}</UniqueIdentifier>
+    </Filter>
+  </ItemGroup>
+  <ItemGroup>
+    <ClCompile Include="src\main.cpp">
+      <Filter>src</Filter>
+    </ClCompile>
+    <ClCompile Include="src\imgui\imgui.cpp">
+      <Filter>src\imgui</Filter>
+    </ClCompile>
+    <ClCompile Include="src\imgui\imgui_draw.cpp">
+      <Filter>src\imgui</Filter>
+    </ClCompile>
+    <ClCompile Include="src\imgui\imgui_tables.cpp">
+      <Filter>src\imgui</Filter>
+    </ClCompile>
+    <ClCompile Include="src\imgui\imgui_widgets.cpp">
+      <Filter>src\imgui</Filter>
+    </ClCompile>
+    <ClCompile Include="src\mapper\intel_driver.cpp">
+      <Filter>src\mapper</Filter>
+    </ClCompile>
+    <ClCompile Include="src\mapper\kdmapper.cpp">
+      <Filter>src\mapper</Filter>
+    </ClCompile>
+    <ClCompile Include="src\mapper\portable_executable.cpp">
+      <Filter>src\mapper</Filter>
+    </ClCompile>
+    <ClCompile Include="src\mapper\service.cpp">
+      <Filter>src\mapper</Filter>
+    </ClCompile>
+    <ClCompile Include="src\mapper\utils.cpp">
+      <Filter>src\mapper</Filter>
+    </ClCompile>
+    <ClCompile Include="src\imgui\imgui_impl_win32.cpp">
+      <Filter>src</Filter>
+    </ClCompile>
+    <ClCompile Include="src\imgui\imgui_impl_dx11.cpp">
+      <Filter>src</Filter>
+    </ClCompile>
+    <ClCompile Include="src\mapper\KDSymbolsHandler.cpp">
+      <Filter>src</Filter>
+    </ClCompile>
+  </ItemGroup>
+  <ItemGroup>
+    <ClInclude Include="src\antidebug.hpp">
+      <Filter>src</Filter>
+    </ClInclude>
+    <ClInclude Include="src\ban_reporter.hpp">
+      <Filter>src</Filter>
+    </ClInclude>
+    <ClInclude Include="src\cleanup.hpp">
+      <Filter>src</Filter>
+    </ClInclude>
+    <ClInclude Include="src\driver_ctl.hpp">
+      <Filter>src</Filter>
+    </ClInclude>
+    <ClInclude Include="src\hwid.hpp">
+      <Filter>src</Filter>
+    </ClInclude>
+    <ClInclude Include="src\inter_font.hpp">
+      <Filter>src</Filter>
+    </ClInclude>
+    <ClInclude Include="src\network.hpp">
+      <Filter>src</Filter>
+    </ClInclude>
+    <ClInclude Include="src\obfuscation.hpp">
+      <Filter>src</Filter>
+    </ClInclude>
+    <ClInclude Include="src\resource.h">
+      <Filter>src</Filter>
+    </ClInclude>
+    <ClInclude Include="src\skCrypter.h">
+      <Filter>src</Filter>
+    </ClInclude>
+    <ClInclude Include="src\syscalls.hpp">
+      <Filter>src</Filter>
+    </ClInclude>
+    <ClInclude Include="src\ui_embedded.hpp">
+      <Filter>src</Filter>
+    </ClInclude>
+    <ClInclude Include="src\ui_imgui.hpp">
+      <Filter>src</Filter>
+    </ClInclude>
+    <ClInclude Include="src\vmp_markers.hpp">
+      <Filter>src</Filter>
+    </ClInclude>
+    <ClInclude Include="src\protection_config.hpp">
+      <Filter>src</Filter>
+    </ClInclude>
+    <ClInclude Include="src\VMProtectSDK.h">
+      <Filter>src</Filter>
+    </ClInclude>
+    <ClInclude Include="src\imgui\imconfig.h">
+      <Filter>src\imgui</Filter>
+    </ClInclude>
+    <ClInclude Include="src\imgui\imgui.h">
+      <Filter>src\imgui</Filter>
+    </ClInclude>
+    <ClInclude Include="src\imgui\imgui_internal.h">
+      <Filter>src\imgui</Filter>
+    </ClInclude>
+    <ClInclude Include="src\imgui\imstb_rectpack.h">
+      <Filter>src\imgui</Filter>
+    </ClInclude>
+    <ClInclude Include="src\imgui\imstb_textedit.h">
+      <Filter>src\imgui</Filter>
+    </ClInclude>
+    <ClInclude Include="src\imgui\imstb_truetype.h">
+      <Filter>src\imgui</Filter>
+    </ClInclude>
+    <ClInclude Include="src\mapper\intel_driver.hpp">
+      <Filter>src\mapper</Filter>
+    </ClInclude>
+    <ClInclude Include="src\mapper\intel_driver_resource.hpp">
+      <Filter>src\mapper</Filter>
+    </ClInclude>
+    <ClInclude Include="src\mapper\kdmapper.hpp">
+      <Filter>src\mapper</Filter>
+    </ClInclude>
+    <ClInclude Include="src\mapper\launcher.hpp">
+      <Filter>src\mapper</Filter>
+    </ClInclude>
+    <ClInclude Include="src\mapper\nt.hpp">
+      <Filter>src\mapper</Filter>
+    </ClInclude>
+    <ClInclude Include="src\mapper\portable_executable.hpp">
+      <Filter>src\mapper</Filter>
+    </ClInclude>
+    <ClInclude Include="src\mapper\service.hpp">
+      <Filter>src\mapper</Filter>
+    </ClInclude>
+    <ClInclude Include="src\mapper\utils.hpp">
+      <Filter>src\mapper</Filter>
+    </ClInclude>
+    <ClInclude Include="src\imgui\imgui_impl_win32.h" />
+    <ClInclude Include="src\imgui\imgui_impl_dx11.h" />
+    <ClInclude Include="src\mapper\KDSymbolsHandler.h" />
+    <ClInclude Include="src\xorstr.hpp">
+      <Filter>src</Filter>
+    </ClInclude>
+  </ItemGroup>
+  <ItemGroup>
+    <ResourceCompile Include="loader.rc" />
+  </ItemGroup>
+</Project>
