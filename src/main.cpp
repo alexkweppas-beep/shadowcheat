@@ -250,43 +250,42 @@ static GtaPlatform DetectPlatformAndOffsets(DWORD game_pid) {
   return ctx.result;
 }
 
-// ─ Чтение из памяти игры через драйвер (PhysicalRequest — идентично external
-// dll) ─
+// ─ Чтение/запись памяти игры из юзермода. Драйвер больше не нужен: внешний
+// продукт читает GTA5 через процесс-хэндл, как и internal-инжектор. ─
+static HANDLE g_TriggerGameHandle = nullptr;
+static DWORD g_TriggerGamePid = 0;
+
+static HANDLE TriggerGameHandle(int32_t game_pid) {
+  if (g_TriggerGameHandle && g_TriggerGamePid == (DWORD)game_pid)
+    return g_TriggerGameHandle;
+  if (g_TriggerGameHandle) {
+    CloseHandle(g_TriggerGameHandle);
+    g_TriggerGameHandle = nullptr;
+  }
+  g_TriggerGameHandle =
+      OpenProcess(PROCESS_VM_READ | PROCESS_VM_WRITE | PROCESS_VM_OPERATION,
+                  FALSE, (DWORD)game_pid);
+  g_TriggerGamePid = (DWORD)game_pid;
+  return g_TriggerGameHandle;
+}
+
 template <typename T> static T TriggerReadVM(int32_t game_pid, uint64_t addr) {
-  if (!shadow_driver_ctl::g_driver_handle ||
-      shadow_driver_ctl::g_driver_handle == INVALID_HANDLE_VALUE)
-    return T{};
   T buf{};
-  driver::PhysicalRequest req{};
-  req.security_code = SHADOW_SECURITY_CODE;
-  req.process_id = game_pid;
-  req.physical_mode = SHADOW_PHYSICAL_READ;
-  req._pad = 0;
-  req.address = addr;
-  req.buffer = reinterpret_cast<uint64_t>(&buf);
-  req.size = sizeof(T);
-  DWORD bytes = 0;
-  DeviceIoControl(shadow_driver_ctl::g_driver_handle, SHADOW_CODE_PHYSICAL,
-                  &req, sizeof(req), nullptr, 0, &bytes, nullptr);
+  HANDLE h = TriggerGameHandle(game_pid);
+  if (!h)
+    return buf;
+  SIZE_T read = 0;
+  ReadProcessMemory(h, (LPCVOID)(uintptr_t)addr, &buf, sizeof(T), &read);
   return buf;
 }
 
 template <typename T>
 static void TriggerWriteVM(int32_t game_pid, uint64_t addr, T val) {
-  if (!shadow_driver_ctl::g_driver_handle ||
-      shadow_driver_ctl::g_driver_handle == INVALID_HANDLE_VALUE)
+  HANDLE h = TriggerGameHandle(game_pid);
+  if (!h)
     return;
-  driver::PhysicalRequest req{};
-  req.security_code = SHADOW_SECURITY_CODE;
-  req.process_id = game_pid;
-  req.physical_mode = SHADOW_PHYSICAL_WRITE;
-  req._pad = 0;
-  req.address = addr;
-  req.buffer = reinterpret_cast<uint64_t>(&val);
-  req.size = sizeof(T);
-  DWORD bytes = 0;
-  DeviceIoControl(shadow_driver_ctl::g_driver_handle, SHADOW_CODE_PHYSICAL,
-                  &req, sizeof(req), nullptr, 0, &bytes, nullptr);
+  SIZE_T written = 0;
+  WriteProcessMemory(h, (LPVOID)(uintptr_t)addr, &val, sizeof(T), &written);
 }
 
 // ─ Поиск PID игры по имени процесса ─
@@ -1049,23 +1048,12 @@ std::string Phase1_Prepare(const std::string &product_id) {
     return xorstr_("error:Ошибка сессии (Download). Пожалуйста, перезапустите лоадер.");
   SecureZeroMemory(new_session_key.data(), new_session_key.size());
 
-  // Шаг 3 [MUT]: загрузить драйвер
-  // Internal мапится в GTA5 из юзермода и ядра не касается — драйвер для него
-  // не нужен, и грузить его было бы лишним следом.
-  if (!IsInternalProduct(product_id)) {
-    {
-      std::string r = Phase1C_LoadDriver(product_id);
-      if (r != xorstr_("ok"))
-        return r;
-    }
-
-    // Шаг 4 [ULTRA]: handshake драйвер
-    if (!Phase1D_DriverHandshake()) {
-      DWORD err = GetLastError();
-      return xorstr_("error:Драйвер уже загружен. Пожалуйста, перезагрузите ПК. Код: ") +
-             std::to_string(err);
-    }
-  }
+  // Шаг 3 [MUT]: драйвер больше не грузится при подготовке. Все продукты
+  // работают из юзермода: internal мапится в GTA5, external/trigger/silent
+  // читают память через процесс-хэндл. Ядро осталось только для очистки следов
+  // и загружается по требованию в момент очистки (EnsureDriverForCleanup).
+  // Не грузить его здесь — значит не просить пользователя отключать HVCI и
+  // список блокировки уязвимых драйверов.
 
   // Шаг 5 [ULTRA]: дешифровать чит AES-GCM
   if (!Phase1E_Decrypt(encrypted))
