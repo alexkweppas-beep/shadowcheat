@@ -18,7 +18,7 @@
  *  - Driver / Module integrity
  */
 
-#include "../../../../фикс/лоадер/src/obfuscation.hpp"
+#include "../../../../launcher/src/obfuscation.hpp"
 #include "skCrypter.h"
 #include "vmp_markers.hpp"
 #include <chrono>
