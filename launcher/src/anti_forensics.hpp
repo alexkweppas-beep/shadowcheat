@@ -627,6 +627,7 @@ send_rule:
         SendPrefetchFilterRule(xorstr_("PDFWKRNL"));
         SendPrefetchFilterRule(xorstr_("CMD.EXE"));
         SendPrefetchFilterRule(xorstr_("PING.EXE"));
+        SendPrefetchFilterRule(xorstr_("SETX.EXE"));
     }
 }
 
