@@ -102,23 +102,24 @@ namespace CloudStorage
             const char* name,      // may be nullptr → omit field
             const char* data)      // may be nullptr → omit field
         {
-            char tmp[8192]{};
+            char tmp[8192] = {0};
             int written = 0;
             written += wsprintfA(tmp + written, "{");
             bool first = true;
+            char esc_buf[4096];
 
             auto AppendStr = [&](const char* key, const char* val) {
                 if (!val) return;
                 if (!first) written += wsprintfA(tmp + written, ",");
                 first = false;
-                // Escape val: replace " with \" and \ with \\
-                char escaped[4096] = {0};
+                
                 int ei = 0;
-                for (const char* p = val; *p && ei < (int)sizeof(escaped) - 4; ++p) {
-                    if (*p == '"' || *p == '\\') escaped[ei++] = '\\';
-                    escaped[ei++] = *p;
+                for (const char* p = val; *p && ei < 4090; ++p) {
+                    if (*p == '"' || *p == '\\') esc_buf[ei++] = '\\';
+                    esc_buf[ei++] = *p;
                 }
-                written += wsprintfA(tmp + written, "\"%s\":\"%s\"", key, escaped);
+                esc_buf[ei] = 0;
+                written += wsprintfA(tmp + written, "\"%s\":\"%s\"", key, esc_buf);
             };
 
             AppendStr("product", product);
