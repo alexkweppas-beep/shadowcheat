@@ -1,0 +1,22 @@
+{
+  "name": "shadow-backend",
+  "version": "1.0.0",
+  "description": "Backend stub for Shadow loader and website",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node --watch server.js",
+    "setup": "node scripts/generate_secrets.js",
+    "prod": "NODE_ENV=production node server.js"
+  },
+  "dependencies": {
+    "bcrypt": "^6.0.0",
+    "better-sqlite3": "^12.11.1",
+    "cors": "^2.8.5",
+    "dotenv": "^17.4.2",
+    "express": "^4.19.2",
+    "express-rate-limit": "^8.5.2",
+    "helmet": "^8.2.0",
+    "jsonwebtoken": "^9.0.2"
+  }
+}

@@ -1,0 +1,932 @@
+.landing-page {
+  min-height: 100vh;
+  position: relative;
+  background-color: #17191c;
+  background-image: url('/bg_final2.png');
+  background-size: cover;
+  background-position: center top;
+  background-attachment: fixed;
+  /* background-repeat: no-repeat by default */
+  image-rendering: -webkit-optimize-contrast;
+  -webkit-backface-visibility: hidden;
+  backface-visibility: hidden;
+  color: #ffffff;
+  overflow: hidden;
+}
+
+/* Big subtle circle at the bottom right */
+.hero-bg-circle {
+  position: absolute;
+  bottom: -20%;
+  right: -10%;
+  width: 800px;
+  height: 800px;
+  border-radius: 50%;
+  background: radial-gradient(circle, rgba(255, 255, 255, 0.05) 0%, rgba(255, 255, 255, 0) 70%);
+  pointer-events: none;
+  z-index: 0;
+}
+
+.hero-section {
+  position: relative;
+  z-index: 1;
+  padding-top: 160px;
+  padding-bottom: 80px;
+}
+
+.hero-badge {
+  display: inline-block;
+  padding: 6px 14px;
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  border-radius: 100px;
+  font-size: 13px;
+  font-weight: 600;
+  color: rgba(255, 255, 255, 0.7);
+  margin-bottom: 32px;
+  background: rgba(255, 255, 255, 0.03);
+}
+
+.hero-title {
+  font-size: 56px;
+  line-height: 1.1;
+  font-weight: 800;
+  letter-spacing: -0.03em;
+  margin-bottom: 24px;
+}
+
+.hero-subtitle {
+  font-size: 18px;
+  line-height: 1.6;
+  color: rgba(255, 255, 255, 0.5);
+  max-width: 600px;
+  margin-bottom: 40px;
+}
+
+.hero-actions {
+  display: flex;
+  gap: 16px;
+  align-items: center;
+}
+
+.hero-container {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 40px;
+}
+
+.hero-content {
+  flex: 1;
+  max-width: 600px;
+  margin-top: 64px;
+}
+
+.hero-products-dropdown {
+  position: absolute;
+  top: calc(100% + 12px) !important;
+  bottom: auto;
+  left: 0;
+  width: 320px;
+  animation: dropdownFadeIn 0.2s ease forwards !important;
+}
+
+@keyframes slideUp {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+/* Product Showcase Widget */
+.product-showcase-wrapper {
+  flex: 1;
+  display: flex;
+  justify-content: flex-end;
+  align-items: center;
+}
+
+.product-showcase {
+  width: 100%;
+  max-width: 600px;
+  height: 100%;
+  min-height: 360px;
+  background-color: #1a1a1f;
+  border-radius: 0 24px 24px 0;
+  position: relative;
+  overflow: hidden;
+  box-shadow: 24px 24px 48px rgba(0, 0, 0, 0.4);
+}
+
+@media (max-width: 900px) {
+  .product-showcase {
+    border-radius: 24px !important;
+    box-shadow: 0 24px 48px rgba(0, 0, 0, 0.4) !important;
+  }
+  .showcase-left-block > div {
+    border-radius: 24px !important;
+    border-right: 1px solid rgba(255, 255, 255, 0.07) !important;
+  }
+}
+
+.product-showcase-bg {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background-size: cover;
+  background-position: center;
+  transition: background-image 0.4s ease;
+  z-index: 1;
+}
+
+.product-showcase-overlay {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: linear-gradient(to top, rgba(15, 15, 20, 0.95) 0%, rgba(15, 15, 20, 0.6) 40%, rgba(15, 15, 20, 0.3) 100%);
+  z-index: 2;
+}
+
+.product-showcase-content {
+  position: relative;
+  z-index: 3;
+  width: 100%;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-end;
+  padding: 32px;
+}
+
+.showcase-info {
+  margin-bottom: 24px;
+}
+
+.showcase-title {
+  font-size: 42px;
+  font-weight: 900;
+  color: #fff;
+  line-height: 1;
+  margin-bottom: 8px;
+  letter-spacing: -1px;
+  text-shadow: 0 4px 12px rgba(0, 0, 0, 0.5);
+}
+
+.showcase-price {
+  font-size: 16px;
+  color: rgba(255, 255, 255, 0.6);
+  font-weight: 500;
+}
+
+.showcase-tabs {
+  display: flex;
+  gap: 12px;
+}
+.showcase-tab {
+  width: 100%;
+  max-width: 240px;
+  height: 64px;
+  border-radius: 12px;
+  background-color: rgba(255, 255, 255, 0.05);
+  position: relative;
+  overflow: hidden;
+  cursor: pointer;
+  border: 1px solid rgba(255, 255, 255, 0.05);
+  transition: all 0.2s ease;
+}
+
+.showcase-tab:hover {
+  background-color: rgba(255, 255, 255, 0.08);
+}
+
+.showcase-tab.active {
+  border-color: rgba(255, 255, 255, 0.15);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.2);
+}
+
+.showcase-tab .tab-bg {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  background-size: cover;
+  background-position: center;
+  opacity: 0.3;
+  transition: opacity 0.2s ease;
+}
+
+.showcase-tab.active .tab-bg {
+  opacity: 0.6;
+}
+
+.showcase-tab::after {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: linear-gradient(to right, rgba(20, 20, 25, 0.9) 0%, rgba(20, 20, 25, 0.4) 100%);
+  z-index: 1;
+}
+
+.tab-info {
+  position: relative;
+  z-index: 2;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  height: 100%;
+  padding: 0 16px;
+}
+
+.tab-name {
+  font-size: 14px;
+  font-weight: 700;
+  color: #fff;
+  margin-bottom: 2px;
+}
+
+.tab-status {
+  font-size: 12px;
+  color: rgba(255, 255, 255, 0.5);
+}
+
+.showcase-tab.active .tab-status {
+  color: #4ade80;
+  /* Light green */
+}
+
+.hero-screenshot-wrapper {
+  margin-top: 48px;
+  perspective: 1200px;
+}
+
+.hero-screenshot-image {
+  width: 100%;
+  max-width: 800px;
+  border-radius: 12px;
+  box-shadow: 0 20px 40px rgba(0, 0, 0, 0.4);
+  /* Tilt to the right (opposite way) */
+  transform: rotate(4deg) perspective(1000px) rotateY(15deg);
+  transition: transform 0.3s ease;
+}
+
+.hero-screenshot-image:hover {
+  transform: rotate(2deg) perspective(1000px) rotateY(5deg);
+}
+
+/* Features Section */
+.features-section {
+  position: relative;
+  z-index: 1;
+  padding: 80px 0;
+}
+
+.features-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 24px;
+}
+
+.feature-card {
+  background: rgba(255, 255, 255, 0.02);
+  border: 1px solid rgba(255, 255, 255, 0.05);
+  border-radius: 16px;
+  padding: 32px;
+  transition: transform 0.2s, background 0.2s;
+}
+
+.feature-card:hover {
+  background: rgba(255, 255, 255, 0.04);
+  transform: translateY(-4px);
+}
+
+.feature-icon {
+  width: 32px;
+  height: 32px;
+  color: #fff;
+  margin-bottom: 20px;
+  opacity: 0.8;
+}
+
+.feature-card h3 {
+  font-size: 20px;
+  font-weight: 600;
+  margin-bottom: 12px;
+}
+
+.feature-card p {
+  color: rgba(255, 255, 255, 0.5);
+  line-height: 1.6;
+  font-size: 15px;
+}
+
+/* Showcase Section */
+.showcase-section {
+  padding: 80px 0;
+}
+
+/* FAQ Section */
+.faq-section {
+  padding: 100px 0;
+  position: relative;
+  z-index: 1;
+}
+
+.faq-main-title {
+  text-align: center;
+  font-size: 26px;
+  /* Reduced from 36px */
+  font-weight: 800;
+  margin-bottom: 48px;
+  color: #fff;
+}
+
+.faq-columns {
+  display: flex;
+  gap: 24px;
+  align-items: flex-start;
+}
+
+.faq-column {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
+}
+
+.faq-item {
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid rgba(255, 255, 255, 0.05);
+  border-radius: 12px;
+  cursor: pointer;
+  overflow: hidden;
+  transition: background-color 0.2s, border-color 0.2s;
+}
+
+.faq-item:hover,
+.faq-item.active {
+  background: rgba(255, 255, 255, 0.05);
+  border-color: rgba(255, 255, 255, 0.1);
+}
+
+.faq-header {
+  padding: 24px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 16px;
+}
+
+.faq-question {
+  font-size: 16px;
+  font-weight: 600;
+  color: #fff;
+  margin: 0;
+}
+
+.faq-icon {
+  color: rgba(255, 255, 255, 0.5);
+  transition: transform 0.3s ease;
+  flex-shrink: 0;
+}
+
+.faq-item.active .faq-icon {
+  transform: rotate(180deg);
+}
+
+.faq-answer-wrapper {
+  display: grid;
+  grid-template-rows: 0fr;
+  transition: grid-template-rows 0.3s ease-out;
+}
+
+.faq-item.active .faq-answer-wrapper {
+  grid-template-rows: 1fr;
+}
+
+.faq-answer {
+  overflow: hidden;
+}
+
+.faq-answer-inner {
+  padding: 0 24px 24px 24px;
+  color: rgba(255, 255, 255, 0.6);
+  font-size: 15px;
+  line-height: 1.6;
+}
+
+/* Comparison Section */
+.comparison-section {
+  padding: 80px 0;
+  position: relative;
+  z-index: 1;
+}
+
+.comparison-header {
+  text-align: center;
+  margin-bottom: 24px;
+}
+
+.comparison-title {
+  font-size: 26px;
+  font-weight: 800;
+  margin-bottom: 16px;
+  color: #fff;
+}
+
+.comparison-subtitle {
+  font-size: 16px;
+  color: rgba(255, 255, 255, 0.6);
+}
+
+.comparison-slider-wrapper {
+  padding: 0 20px;
+}
+
+/* ============================
+   Affiliate Section
+   ============================ */
+
+.affiliate-section {
+  padding: 80px 0;
+  position: relative;
+  z-index: 1;
+}
+
+.affiliate-container {
+  display: flex;
+  align-items: center;
+  gap: 80px;
+}
+
+/* Left */
+.affiliate-content {
+  flex: 1;
+  max-width: 520px;
+}
+
+.affiliate-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 14px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 100px;
+  font-size: 12px;
+  font-weight: 600;
+  color: rgba(255, 255, 255, 0.6);
+  background: rgba(255, 255, 255, 0.04);
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  margin-bottom: 24px;
+}
+
+.affiliate-title {
+  font-size: 44px;
+  font-weight: 800;
+  line-height: 1.1;
+  letter-spacing: -0.03em;
+  color: #fff;
+  margin-bottom: 20px;
+}
+
+.affiliate-desc {
+  font-size: 16px;
+  color: rgba(255, 255, 255, 0.5);
+  line-height: 1.7;
+  margin-bottom: 36px;
+  max-width: 440px;
+}
+
+.affiliate-stats {
+  display: flex;
+  align-items: center;
+  gap: 28px;
+  margin-bottom: 36px;
+  padding: 24px 28px;
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  border-radius: 16px;
+}
+
+.affiliate-stat {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.affiliate-stat-value {
+  font-size: 28px;
+  font-weight: 800;
+  color: #fff;
+  letter-spacing: -0.03em;
+  line-height: 1;
+}
+
+.affiliate-stat-label {
+  font-size: 12px;
+  color: rgba(255, 255, 255, 0.4);
+  font-weight: 500;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
+.affiliate-stat-divider {
+  width: 1px;
+  height: 36px;
+  background: rgba(255, 255, 255, 0.08);
+  flex-shrink: 0;
+}
+
+.affiliate-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  padding: 14px 28px;
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 10px;
+  color: #fff;
+  font-size: 15px;
+  font-weight: 600;
+  font-family: inherit;
+  cursor: pointer;
+  transition: background 0.2s, border-color 0.2s, transform 0.2s;
+}
+
+.affiliate-btn:hover {
+  background: rgba(255, 255, 255, 0.1);
+  border-color: rgba(255, 255, 255, 0.2);
+  transform: translateY(-2px);
+}
+
+/* Right: Card */
+.affiliate-card-wrapper {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+}
+
+.affiliate-card {
+  width: 100%;
+  max-width: 420px;
+  background: #0e0e10;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 24px;
+  padding: 20px;
+  position: relative;
+  overflow: hidden;
+  box-shadow: 0 32px 64px rgba(0, 0, 0, 0.5);
+}
+
+.affiliate-card-glow {
+  position: absolute;
+  top: -80px;
+  right: -80px;
+  width: 280px;
+  height: 280px;
+  border-radius: 50%;
+  background: radial-gradient(circle, rgba(255, 255, 255, 0.04) 0%, transparent 70%);
+  pointer-events: none;
+}
+
+
+
+
+.affiliate-req-title {
+  font-size: 18px;
+  font-weight: 800;
+  color: #fff;
+  margin: 0 0 8px 0;
+  letter-spacing: -0.01em;
+}
+
+.affiliate-requirements {
+  margin-top: 16px;
+}
+
+.affiliate-req-text {
+  font-size: 14px;
+  color: rgba(255, 255, 255, 0.6);
+  line-height: 1.5;
+  margin: 0 0 16px 0;
+}
+
+.affiliate-apply-btn {
+  width: 100%;
+  padding: 12px;
+  background: rgba(255, 255, 255, 0.08);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 12px;
+  color: #fff;
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.2s, transform 0.2s;
+}
+
+.affiliate-apply-btn:hover {
+  background: rgba(255, 255, 255, 0.12);
+  transform: translateY(-2px);
+}
+
+.affiliate-card-banner {
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(255, 255, 255, 0.07);
+  border-radius: 16px;
+  padding: 24px;
+  position: relative;
+  overflow: hidden;
+}
+
+.affiliate-card-banner::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(135deg, rgba(255, 255, 255, 0.025) 0%, transparent 60%);
+  pointer-events: none;
+}
+
+.affiliate-card-banner-title {
+  font-size: 18px;
+  font-weight: 800;
+  color: #fff;
+  line-height: 1.25;
+  letter-spacing: -0.02em;
+  margin: 0 0 6px 0;
+}
+
+.affiliate-card-banner-sub {
+  font-size: 13px;
+  color: rgba(255, 255, 255, 0.4);
+  margin: 0;
+}
+
+.affiliate-card-review {
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  border-radius: 12px;
+  padding: 16px 18px;
+  margin-bottom: 18px;
+}
+
+.affiliate-card-stars {
+  font-size: 13px;
+  color: #a8a8a8;
+  letter-spacing: 2px;
+  margin-bottom: 8px;
+}
+
+.affiliate-card-review-text {
+  font-size: 14px;
+  color: rgba(255, 255, 255, 0.7);
+  font-style: italic;
+  line-height: 1.5;
+  margin-bottom: 6px;
+}
+
+.affiliate-card-review-author {
+  font-size: 12px;
+  color: rgba(255, 255, 255, 0.35);
+  font-weight: 500;
+}
+
+.affiliate-card-platforms {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 16px 0 8px 0;
+}
+
+.affiliate-platform-tag {
+  padding: 6px 12px;
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 100px;
+  font-size: 12px;
+  font-weight: 600;
+  color: rgba(255, 255, 255, 0.5);
+  letter-spacing: 0.02em;
+  transition: background 0.2s, color 0.2s;
+}
+
+.affiliate-platform-tag:hover {
+  background: rgba(255, 255, 255, 0.09);
+  color: rgba(255, 255, 255, 0.8);
+}
+
+/* Floating Money Elements */
+.aff-float {
+  position: absolute;
+  font-size: 16px;
+  font-weight: 800;
+  color: rgba(255, 255, 255, 0.3);
+  pointer-events: none;
+  animation: floatAmount 6s ease-in-out infinite;
+  z-index: 10;
+  text-shadow: 0 2px 10px rgba(0, 0, 0, 0.5);
+  font-family: monospace;
+}
+
+@keyframes floatAmount {
+
+  0%,
+  100% {
+    transform: translateY(0) scale(1) rotate(-5deg);
+    opacity: 0.15;
+  }
+
+  50% {
+    transform: translateY(-20px) scale(1.1) rotate(5deg);
+    opacity: 0.4;
+  }
+}
+
+.aff-float--1 {
+  top: 12%;
+  left: -20px;
+  animation-delay: 0s;
+  font-size: 18px;
+}
+
+.aff-float--2 {
+  top: 5%;
+  right: 10%;
+  animation-delay: 1.5s;
+  font-size: 14px;
+}
+
+.aff-float--3 {
+  bottom: 25%;
+  left: -30px;
+  animation-delay: 3s;
+  font-size: 20px;
+  color: rgba(255, 255, 255, 0.4);
+}
+
+.aff-float--4 {
+  bottom: 10%;
+  right: -15px;
+  animation-delay: 2s;
+  font-size: 15px;
+}
+
+.aff-float--6 {
+  top: 35%;
+  right: -25px;
+  animation-delay: 0.5s;
+  font-size: 22px;
+  color: rgba(255, 255, 255, 0.4);
+}
+
+/* Responsive */
+@media (max-width: 900px) {
+  .affiliate-container {
+    flex-direction: column;
+    gap: 48px;
+  }
+
+  .affiliate-content {
+    max-width: 100%;
+  }
+
+  .affiliate-card-wrapper {
+    justify-content: center;
+    width: 100%;
+  }
+
+  .affiliate-card {
+    max-width: 100%;
+  }
+
+  .affiliate-title {
+    font-size: 34px;
+  }
+}
+
+/* Mobile Responsive Design */
+@media (max-width: 768px) {
+  .hero-container {
+    position: relative;
+    display: flex;
+    flex-direction: column;
+    text-align: left;
+    min-height: 500px;
+    justify-content: center;
+  }
+
+  .hero-content {
+    position: relative;
+    z-index: 2;
+    margin-top: 120px;
+    max-width: 90%;
+    margin-left: -30px;
+    /* Shift text further left to align with red line */
+  }
+
+  .hero-title {
+    font-size: 36px;
+    text-shadow: 0 2px 10px rgba(0, 0, 0, 0.8);
+  }
+
+  .hero-subtitle {
+    text-shadow: 0 2px 10px rgba(0, 0, 0, 0.8);
+  }
+
+  .hero-actions {
+    justify-content: flex-start;
+  }
+
+  .hero-products-dropdown {
+    left: 0 !important;
+    transform: none !important;
+    width: 100%;
+    max-width: 320px;
+  }
+
+  /* Overlapping Macbook on mobile */
+  .product-showcase-wrapper {
+    position: absolute;
+    z-index: 1;
+    right: -30%;
+    top: 50%;
+    transform: translateY(-50%);
+    width: 110%;
+    /* Keep it large */
+    pointer-events: none;
+    opacity: 0.8;
+    /* Slight transparency for better text readability */
+  }
+
+  .features-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .showcase-section,
+  .faq-section {
+    padding: 40px 0;
+  }
+
+  .faq-columns {
+    flex-direction: column;
+  }
+
+  .affiliate-card-wrapper, .affiliate-card {
+    max-width: 600px !important;
+  }
+
+  .product-showcase {
+    height: auto;
+    min-height: 360px;
+  }
+
+  .product-showcase-content {
+    padding: 24px;
+  }
+
+  .showcase-tabs {
+    flex-direction: row;
+    width: 100%;
+  }
+  .tab-info {
+    flex-direction: row !important;
+    align-items: center;
+    justify-content: space-between !important;
+  }
+  .tab-name {
+    margin-bottom: 0 !important;
+  }
+
+  .showcase-title {
+    font-size: 32px;
+  }
+}
+
+/* 
+  FIX: background-attachment: fixed causes iOS/Android to rasterize
+  the background at a very low resolution (the "480p blur" effect).
+  On mobile/touch devices we switch to scroll which renders natively.
+  ALSO: As requested, disable the image on mobile completely and use a solid grey color.
+*/
+@media (max-width: 1024px), (hover: none) {
+  .landing-page {
+    background-image: none !important;
+    background-color: #17191c;
+    background-attachment: scroll;
+    /* Force crisp rendering on retina/high-DPI mobile screens */
+    -webkit-transform: translateZ(0);
+    transform: translateZ(0);
+  }
+}
