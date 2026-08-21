@@ -1,0 +1,14 @@
+{
+  "name": "revolt-loader",
+  "version": "1.0.0",
+  "description": "REVOLT Loader",
+  "main": "main.js",
+  "scripts": {
+    "start": "electron ."
+  },
+  "author": "",
+  "license": "ISC",
+  "devDependencies": {
+    "electron": "^42.5.0"
+  }
+}
