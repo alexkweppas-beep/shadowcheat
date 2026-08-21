@@ -443,6 +443,7 @@ namespace Menu
         p.silentHitchance = true;
         p.silentHitchancePct = 100.f;
         p.triggerEnabled = false;
+        p.triggerKey = 0;
         p.triggerDelayMs = 35.f;
         p.triggerCooldownMs = 90.f;
         p.triggerVisible = true;

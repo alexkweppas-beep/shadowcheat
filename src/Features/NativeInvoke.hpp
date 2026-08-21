@@ -296,9 +296,17 @@ namespace NativeInvoke
     }
 
     // Blip sprite 8 = map waypoint (GPS mark).
+    //
+    // The hash here used to be 0x1BEDE295E52CAD49, which is neither the legacy
+    // nor the current GET_FIRST_BLIP_INFO_ID. The iterator's first call always
+    // failed, so the native blip walk below never started.
     inline int GetFirstBlipInfoId(int blipSprite) noexcept
     {
-        return Invoke<int>(0x1BEDE295E52CAD49ull, blipSprite);
+        if (const int first =
+                Invoke<int>(0x1BEDE233E52CFA47ull, blipSprite);
+            first != 0)
+            return first;
+        return Invoke<int>(0x1BEDE233E6CD2A1Full, blipSprite);
     }
 
     inline int GetNextBlipInfoId(int blipSprite) noexcept

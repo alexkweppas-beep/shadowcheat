@@ -120,6 +120,15 @@ namespace Menu
 
     static constexpr int kMaxVisualModelFilters = 24;
 
+    // Where a snap line starts. Shared by ped, vehicle and object ESP.
+    enum class EspSnapOrigin : int
+    {
+        BottomCenter = 0,
+        TopCenter,
+        Crosshair,
+        Count
+    };
+
     struct EspElementLayout final
     {
         int side{};   // EspProjected::Side (0 top .. 3 right)
@@ -144,6 +153,10 @@ namespace Menu
         bool showDead{true};
         bool visibleCheck{};
         bool radarOverlay{};
+        // Snap line from a screen edge to the target. Origin is shared by every
+        // category so the lines all converge on the same point.
+        bool snapLine{};
+        int  snapLineOrigin{}; // EspSnapOrigin
         // Legacy positions (kept for migrate / old UI paths).
         int healthBarPos{}; // EspHealthBarPosition
         int armorBarPos{};  // EspHealthBarPosition
@@ -174,6 +187,7 @@ namespace Menu
         float staticIdColor[4]{1.f, 0.9f, 0.45f, 1.f};
         float deadColor[4]{0.75f, 0.2f, 0.2f, 1.f};
         float hiddenColor[4]{0.f, 0.f, 0.f, 1.f};
+        float snapLineColor[4]{0.55f, 0.80f, 1.f, 0.85f};
         float radarColor[4]{0.95f, 0.25f, 0.25f, 1.f};
         float radarRange{150.f};
         float radarPosX{-1.f}; // -1 = use minimap default
@@ -216,9 +230,12 @@ namespace Menu
         bool showBoats{true};
         bool showAircraft{true};
         bool showOther{true};
+        bool snapLine{};
+        int  snapLineOrigin{}; // EspSnapOrigin
         float maxDistance{350.f};
         float boxColor[4]{0.30f, 0.72f, 1.f, 1.f};
         float textColor[4]{0.88f, 0.94f, 1.f, 1.f};
+        float snapLineColor[4]{0.30f, 0.72f, 1.f, 0.85f};
         std::uint32_t includeModels[kMaxVisualModelFilters]{};
         int includeModelCount{};
         std::uint32_t excludeModels[kMaxVisualModelFilters]{};
@@ -234,10 +251,13 @@ namespace Menu
         bool remoteId{};
         bool showObjects{true};
         bool showPickups{true};
+        bool snapLine{};
+        int  snapLineOrigin{}; // EspSnapOrigin
         float maxDistance{180.f};
         float objectColor[4]{0.82f, 0.62f, 1.f, 1.f};
         float pickupColor[4]{0.38f, 0.92f, 0.55f, 1.f};
         float textColor[4]{0.92f, 0.92f, 0.96f, 1.f};
+        float snapLineColor[4]{0.82f, 0.62f, 1.f, 0.85f};
         std::uint32_t includeModels[kMaxVisualModelFilters]{};
         int includeModelCount{};
         std::uint32_t excludeModels[kMaxVisualModelFilters]{};
@@ -318,6 +338,8 @@ namespace Menu
         // There is no radius: the test is against the ped's projected
         // silhouette, which already scales with distance.
         bool  triggerEnabled{};
+        // 0 = always armed while enabled. Anything else has to be held.
+        int   triggerKey{};
         float triggerDelayMs{35.f};
         float triggerCooldownMs{90.f};
         bool  triggerVisible{true};

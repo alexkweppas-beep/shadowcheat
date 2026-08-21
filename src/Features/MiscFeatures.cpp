@@ -59,6 +59,22 @@ namespace
     float g_CwHintX = 0.f;
     float g_CwHintY = 0.f;
     float g_CwHintZ = 0.f;
+    // Player / ammo / vehicle frame natives live on the RAGE script thread.
+    // Present returns empty for this whole class of natives, which is why the
+    // features below never applied while they were called from the render hook.
+    bool g_PlJsHooked = false;
+    bool g_PlJsPushed = false;
+    std::uint64_t g_PlJsGeneration = 0;
+    char g_PlJsLastState[512]{};
+    ULONGLONG g_PlVehQueryAt = 0;
+    std::uint64_t g_PlVehQueryId = 0;
+    ULONGLONG g_AntiAfkNextPokeAt = 0;
+    // Waypoint teleport handshake with the script hook: C++ bumps the request
+    // counter, JS runs the probe over several frames and reports back.
+    int g_TpSeq = 0;
+    int g_TpReportedSeq = 0;
+    std::uint64_t g_TpQueryId = 0;
+    ULONGLONG g_TpQueryAt = 0;
     int g_NoclipHandle = 0;
     uint8_t* g_NoclipEntity = nullptr;
     ULONGLONG g_NoclipLastTick = 0;
@@ -186,18 +202,31 @@ namespace
         lastValue = value;
     }
 
+    // Every field is captured and validated on its own. The old all-or-nothing
+    // capture rejected the whole patch when a single float looked wrong — a
+    // melee weapon with a zero reload time silently disabled spread and recoil
+    // too, with no log to say why.
+    struct WeaponField final
+    {
+        float original{};
+        bool captured{};
+        bool applied{};
+    };
+
     struct WeaponInfoBackup final
     {
         uint8_t* info{};
-        float accuracySpread{};
-        float batchSpread{};
-        float recoilAccuracyMax{};
-        float recoilErrorTime{};
-        float recoilShakeAmplitude{};
-        float reloadTimeMp{};
-        float reloadTimeSp{};
-        float vehicleReloadTime{};
-        float animReloadRate{};
+        std::uint32_t hash{};
+        WeaponField accuracySpread{};
+        WeaponField batchSpread{};
+        WeaponField recoilAccuracyMax{};
+        WeaponField recoilErrorTime{};
+        WeaponField recoilRecoveryRate{};
+        WeaponField recoilShakeAmplitude{};
+        WeaponField reloadTimeMp{};
+        WeaponField reloadTimeSp{};
+        WeaponField vehicleReloadTime{};
+        WeaponField animReloadRate{};
         bool valid{};
     };
 
@@ -223,66 +252,133 @@ namespace
         }
     }
 
-    uint8_t* GetLocalWeaponInfo() noexcept
+    bool ReadWeaponHash(uint8_t* info, std::uint32_t& out) noexcept
     {
+        __try {
+            out = *reinterpret_cast<std::uint32_t*>(
+                info + Offsets::WeaponInfo::Hash);
+            return out != 0;
+        } __except (EXCEPTION_EXECUTE_HANDLER) {
+            return false;
+        }
+    }
+
+    // The weapon manager holds the info pointer at a known slot, but a shifted
+    // layout would hand back an unrelated object, and writing floats into one
+    // is what produced the old renderer AVs. A candidate therefore has to carry
+    // a non-zero joaat at +0x10 before it is written to at all.
+    //
+    // Matching the equipped hash is preferred but not required: the hash source
+    // (weapon manager +0x18) can itself be wrong on a shifted build, and
+    // refusing to patch in that case would disable combat outright.
+    uint8_t* GetLocalWeaponInfo(
+        std::uint32_t expectedHash,
+        std::uint32_t& resolvedHash) noexcept
+    {
+        resolvedHash = 0;
         CPed* ped = Game::GetLocalPed();
         if (!ped)
             return nullptr;
-        uint8_t* info = nullptr;
+
+        uint8_t* wm = nullptr;
         __try {
-            uint8_t* wm = *reinterpret_cast<uint8_t**>(
+            wm = *reinterpret_cast<uint8_t**>(
                 reinterpret_cast<uint8_t*>(ped) +
                 Offsets::Ped::WeaponManager);
-            if (!IsValidPtr(wm))
-                return nullptr;
-            info = *reinterpret_cast<uint8_t**>(
-                wm + Offsets::WeaponManager::WeaponInfo);
         } __except (EXCEPTION_EXECUTE_HANDLER) {
             return nullptr;
         }
-        return IsValidPtr(info) ? info : nullptr;
+        if (!IsValidPtr(wm))
+            return nullptr;
+
+        static constexpr uint32_t kInfoSlots[] = {
+            Offsets::WeaponManager::WeaponInfo, 0x10, 0x28, 0x30
+        };
+        uint8_t* fallback = nullptr;
+        std::uint32_t fallbackHash = 0;
+        for (const uint32_t slot : kInfoSlots)
+        {
+            uint8_t* info = nullptr;
+            __try {
+                info = *reinterpret_cast<uint8_t**>(wm + slot);
+            } __except (EXCEPTION_EXECUTE_HANDLER) {
+                info = nullptr;
+            }
+            if (!IsValidPtr(info))
+                continue;
+            std::uint32_t hash = 0;
+            if (!ReadWeaponHash(info, hash))
+                continue;
+            if (expectedHash != 0 && hash == expectedHash)
+            {
+                resolvedHash = hash;
+                return info;
+            }
+            if (!fallback)
+            {
+                fallback = info;
+                fallbackHash = hash;
+            }
+        }
+        resolvedHash = fallbackHash;
+        return fallback;
+    }
+
+    void RestoreWeaponField(
+        uint8_t* info,
+        uint32_t offset,
+        WeaponField& field) noexcept
+    {
+        if (field.applied && field.captured && IsValidPtr(info))
+            WriteWeaponFloat(info, offset, field.original);
+        field = {};
     }
 
     void RestoreWeaponInfo() noexcept
     {
-        if (!g_WeaponBackup.valid || !IsValidPtr(g_WeaponBackup.info)) {
+        if (!g_WeaponBackup.valid) {
             g_WeaponBackup = {};
             return;
         }
-        WriteWeaponFloat(
-            g_WeaponBackup.info,
+        uint8_t* info = g_WeaponBackup.info;
+        RestoreWeaponField(
+            info,
             Offsets::WeaponInfo::AccuracySpread,
             g_WeaponBackup.accuracySpread);
-        WriteWeaponFloat(
-            g_WeaponBackup.info,
+        RestoreWeaponField(
+            info,
             Offsets::WeaponInfo::BatchSpread,
             g_WeaponBackup.batchSpread);
-        WriteWeaponFloat(
-            g_WeaponBackup.info,
+        RestoreWeaponField(
+            info,
             Offsets::WeaponInfo::RecoilAccuracyMax,
             g_WeaponBackup.recoilAccuracyMax);
-        WriteWeaponFloat(
-            g_WeaponBackup.info,
+        RestoreWeaponField(
+            info,
             Offsets::WeaponInfo::RecoilErrorTime,
             g_WeaponBackup.recoilErrorTime);
-        WriteWeaponFloat(
-            g_WeaponBackup.info,
+        RestoreWeaponField(
+            info,
+            Offsets::WeaponInfo::RecoilRecoveryRate,
+            g_WeaponBackup.recoilRecoveryRate);
+        RestoreWeaponField(
+            info,
             Offsets::WeaponInfo::RecoilShakeAmplitude,
             g_WeaponBackup.recoilShakeAmplitude);
-        WriteWeaponFloat(
-            g_WeaponBackup.info,
+        RestoreWeaponField(
+            info,
             Offsets::WeaponInfo::ReloadTimeMP,
             g_WeaponBackup.reloadTimeMp);
-        WriteWeaponFloat(
-            g_WeaponBackup.info,
+        RestoreWeaponField(
+            info,
             Offsets::WeaponInfo::ReloadTimeSP,
             g_WeaponBackup.reloadTimeSp);
-        WriteWeaponFloat(
-            g_WeaponBackup.info,
+        RestoreWeaponField(
+            info,
             Offsets::WeaponInfo::VehicleReloadTime,
             g_WeaponBackup.vehicleReloadTime);
-        WriteWeaponFloat(
-            g_WeaponBackup.info,
+        RestoreWeaponField(
+            info,
             Offsets::WeaponInfo::AnimReloadRate,
             g_WeaponBackup.animReloadRate);
         g_WeaponBackup = {};
@@ -293,64 +389,39 @@ namespace
         return std::isfinite(v) && v >= lo && v <= hi;
     }
 
-    bool CaptureWeaponInfo(uint8_t* info) noexcept
+    // Capture-on-demand: a field is only read the first time it is about to be
+    // written, and a field that fails its own range check just opts out.
+    bool EnsureWeaponField(
+        uint8_t* info,
+        uint32_t offset,
+        WeaponField& field,
+        float lo,
+        float hi) noexcept
     {
-        WeaponInfoBackup backup{};
-        backup.info = info;
-        if (!ReadWeaponFloat(
-                info,
-                Offsets::WeaponInfo::AccuracySpread,
-                backup.accuracySpread) ||
-            !ReadWeaponFloat(
-                info,
-                Offsets::WeaponInfo::BatchSpread,
-                backup.batchSpread) ||
-            !ReadWeaponFloat(
-                info,
-                Offsets::WeaponInfo::RecoilAccuracyMax,
-                backup.recoilAccuracyMax) ||
-            !ReadWeaponFloat(
-                info,
-                Offsets::WeaponInfo::RecoilErrorTime,
-                backup.recoilErrorTime) ||
-            !ReadWeaponFloat(
-                info,
-                Offsets::WeaponInfo::RecoilShakeAmplitude,
-                backup.recoilShakeAmplitude) ||
-            !ReadWeaponFloat(
-                info,
-                Offsets::WeaponInfo::ReloadTimeMP,
-                backup.reloadTimeMp) ||
-            !ReadWeaponFloat(
-                info,
-                Offsets::WeaponInfo::ReloadTimeSP,
-                backup.reloadTimeSp) ||
-            !ReadWeaponFloat(
-                info,
-                Offsets::WeaponInfo::VehicleReloadTime,
-                backup.vehicleReloadTime) ||
-            !ReadWeaponFloat(
-                info,
-                Offsets::WeaponInfo::AnimReloadRate,
-                backup.animReloadRate))
+        if (field.captured)
+            return true;
+        float value = 0.f;
+        if (!ReadWeaponFloat(info, offset, value))
             return false;
-
-        // Reject layouts that don't look like CWeaponInfo — wrong offsets
-        // previously corrupted memory and crashed the renderer.
-        if (!InRange(backup.accuracySpread, 0.f, 25.f) ||
-            !InRange(backup.batchSpread, 0.f, 25.f) ||
-            !InRange(backup.recoilAccuracyMax, 0.f, 25.f) ||
-            !InRange(backup.recoilErrorTime, 0.f, 10.f) ||
-            !InRange(backup.recoilShakeAmplitude, 0.f, 10.f) ||
-            !InRange(backup.reloadTimeMp, 0.05f, 15.f) ||
-            !InRange(backup.reloadTimeSp, 0.05f, 15.f) ||
-            !InRange(backup.vehicleReloadTime, 0.05f, 15.f) ||
-            !InRange(backup.animReloadRate, 0.05f, 10.f))
+        if (!InRange(value, lo, hi))
             return false;
-
-        backup.valid = true;
-        g_WeaponBackup = backup;
+        field.original = value;
+        field.captured = true;
         return true;
+    }
+
+    void ScaleWeaponField(
+        uint8_t* info,
+        uint32_t offset,
+        WeaponField& field,
+        float lo,
+        float hi,
+        float scale) noexcept
+    {
+        if (!EnsureWeaponField(info, offset, field, lo, hi))
+            return;
+        if (WriteWeaponFloat(info, offset, field.original * scale))
+            field.applied = true;
     }
 
     float Clamp01(float v) noexcept
@@ -364,7 +435,10 @@ namespace
 
     void ApplyWeaponCombatPatches() noexcept
     {
-        // Globals from Player; equipped weapon override wins when active.
+        // Player globals are the base. A per-weapon override can only add to
+        // them: it used to replace them outright, so adding a gun to the
+        // arsenal (which force-sets `active` with combat flags defaulted off)
+        // silently disabled the global toggles for that weapon.
         bool noSpread = g_Settings.noSpread;
         bool noRecoil = g_Settings.noRecoil;
         bool reloadSpeed = g_Settings.reloadSpeed;
@@ -376,12 +450,21 @@ namespace
         if (const Menu::WeaponOverrideSlot* ov = Menu::FindWeaponOverride(hash);
             ov && ov->active)
         {
-            noSpread = ov->profile.noSpread;
-            noRecoil = ov->profile.noRecoil;
-            reloadSpeed = ov->profile.reloadSpeed;
-            noSpreadPct = ov->profile.noSpreadPct;
-            noRecoilPct = ov->profile.noRecoilPct;
-            reloadSpeedPct = ov->profile.reloadSpeedPct;
+            if (ov->profile.noSpread)
+            {
+                noSpread = true;
+                noSpreadPct = ov->profile.noSpreadPct;
+            }
+            if (ov->profile.noRecoil)
+            {
+                noRecoil = true;
+                noRecoilPct = ov->profile.noRecoilPct;
+            }
+            if (ov->profile.reloadSpeed)
+            {
+                reloadSpeed = true;
+                reloadSpeedPct = ov->profile.reloadSpeedPct;
+            }
         }
 
         const bool any = noSpread || noRecoil || reloadSpeed;
@@ -402,17 +485,33 @@ namespace
             return;
         }
 
-        uint8_t* info = GetLocalWeaponInfo();
+        std::uint32_t resolvedHash = 0;
+        uint8_t* info = GetLocalWeaponInfo(hash, resolvedHash);
         if (!info) {
             RestoreWeaponInfo();
+#if RAGEMP_DEV_BUILD
+            static ULONGLONG s_lastLog = 0;
+            const ULONGLONG now = GetTickCount64();
+            if (now - s_lastLog > 5000) {
+                s_lastLog = now;
+                hooks::HLog(
+                    "[Misc] combat: no CWeaponInfo behind the weapon manager");
+            }
+#endif
             return;
         }
 
-        if (!g_WeaponBackup.valid || g_WeaponBackup.info != info) {
-            if (g_WeaponBackup.valid)
-                RestoreWeaponInfo();
-            if (!CaptureWeaponInfo(info))
-                return;
+        // Re-capture whenever the weapon (or its info block) changes, so the
+        // previous gun is handed back its own values. Keyed on the info's own
+        // hash, which is the value that actually identifies the block.
+        if (!g_WeaponBackup.valid ||
+            g_WeaponBackup.info != info ||
+            g_WeaponBackup.hash != resolvedHash)
+        {
+            RestoreWeaponInfo();
+            g_WeaponBackup.info = info;
+            g_WeaponBackup.hash = resolvedHash;
+            g_WeaponBackup.valid = true;
         }
 
         const float spreadT =
@@ -422,44 +521,83 @@ namespace
         const float reloadT =
             reloadSpeed ? Clamp01(reloadSpeedPct * 0.01f) : 0.f;
 
-        // Soft scales only — never zero critical timing fields hard.
-        WriteWeaponFloat(
-            info,
-            Offsets::WeaponInfo::AccuracySpread,
-            g_WeaponBackup.accuracySpread * (1.f - spreadT * 0.95f));
-        WriteWeaponFloat(
-            info,
-            Offsets::WeaponInfo::BatchSpread,
-            g_WeaponBackup.batchSpread * (1.f - spreadT * 0.95f));
-        WriteWeaponFloat(
-            info,
-            Offsets::WeaponInfo::RecoilShakeAmplitude,
-            g_WeaponBackup.recoilShakeAmplitude * (1.f - recoilT * 0.95f));
-        WriteWeaponFloat(
-            info,
-            Offsets::WeaponInfo::RecoilAccuracyMax,
-            g_WeaponBackup.recoilAccuracyMax * (1.f - recoilT * 0.9f));
-        WriteWeaponFloat(
-            info,
-            Offsets::WeaponInfo::RecoilErrorTime,
-            g_WeaponBackup.recoilErrorTime * (1.f - recoilT * 0.85f));
-        const float reloadTimeScale = 1.f - reloadT * 0.75f;
-        WriteWeaponFloat(
-            info,
-            Offsets::WeaponInfo::ReloadTimeMP,
-            g_WeaponBackup.reloadTimeMp * reloadTimeScale);
-        WriteWeaponFloat(
-            info,
-            Offsets::WeaponInfo::ReloadTimeSP,
-            g_WeaponBackup.reloadTimeSp * reloadTimeScale);
-        WriteWeaponFloat(
-            info,
-            Offsets::WeaponInfo::VehicleReloadTime,
-            g_WeaponBackup.vehicleReloadTime * reloadTimeScale);
-        WriteWeaponFloat(
-            info,
-            Offsets::WeaponInfo::AnimReloadRate,
-            g_WeaponBackup.animReloadRate * (1.f + reloadT * 1.5f));
+        if (noSpread)
+        {
+            // At 100% these really go to zero. Leaving 5% behind was the
+            // difference between "no spread" and "slightly less spread".
+            const float scale = 1.f - spreadT;
+            ScaleWeaponField(
+                info,
+                Offsets::WeaponInfo::AccuracySpread,
+                g_WeaponBackup.accuracySpread,
+                0.f, 25.f, scale);
+            ScaleWeaponField(
+                info,
+                Offsets::WeaponInfo::BatchSpread,
+                g_WeaponBackup.batchSpread,
+                0.f, 25.f, scale);
+            // Sustained-fire bloom. It was only ever touched by no-recoil, so
+            // enabling no-spread alone did nothing on automatic weapons.
+            ScaleWeaponField(
+                info,
+                Offsets::WeaponInfo::RecoilAccuracyMax,
+                g_WeaponBackup.recoilAccuracyMax,
+                0.f, 25.f, scale);
+        }
+
+        if (noRecoil)
+        {
+            const float scale = 1.f - recoilT;
+            ScaleWeaponField(
+                info,
+                Offsets::WeaponInfo::RecoilShakeAmplitude,
+                g_WeaponBackup.recoilShakeAmplitude,
+                0.f, 10.f, scale);
+            ScaleWeaponField(
+                info,
+                Offsets::WeaponInfo::RecoilErrorTime,
+                g_WeaponBackup.recoilErrorTime,
+                0.f, 10.f, scale);
+            ScaleWeaponField(
+                info,
+                Offsets::WeaponInfo::RecoilAccuracyMax,
+                g_WeaponBackup.recoilAccuracyMax,
+                0.f, 25.f, scale);
+            // Faster recovery, not a smaller value: this one is a rate.
+            ScaleWeaponField(
+                info,
+                Offsets::WeaponInfo::RecoilRecoveryRate,
+                g_WeaponBackup.recoilRecoveryRate,
+                0.01f, 50.f, 1.f + recoilT * 4.f);
+        }
+
+        if (reloadSpeed)
+        {
+            // Times shrink, the animation rate grows. Each field validates on
+            // its own, so a weapon with an odd vehicle reload time no longer
+            // cancels the whole patch.
+            const float timeScale = 1.f - reloadT * 0.9f;
+            ScaleWeaponField(
+                info,
+                Offsets::WeaponInfo::ReloadTimeMP,
+                g_WeaponBackup.reloadTimeMp,
+                0.05f, 15.f, timeScale);
+            ScaleWeaponField(
+                info,
+                Offsets::WeaponInfo::ReloadTimeSP,
+                g_WeaponBackup.reloadTimeSp,
+                0.05f, 15.f, timeScale);
+            ScaleWeaponField(
+                info,
+                Offsets::WeaponInfo::VehicleReloadTime,
+                g_WeaponBackup.vehicleReloadTime,
+                0.05f, 15.f, timeScale);
+            ScaleWeaponField(
+                info,
+                Offsets::WeaponInfo::AnimReloadRate,
+                g_WeaponBackup.animReloadRate,
+                0.05f, 10.f, 1.f + reloadT * 3.f);
+        }
     }
 
     void ApplyFixedStats() noexcept
@@ -487,116 +625,74 @@ namespace
     ULONGLONG g_LastAntiAfkTick = 0;
     ULONGLONG g_NextAntiAfkIntervalMs = 28000;
 
+    bool PlayerV8Ready() noexcept;
+    bool LocalIsInVehicle() noexcept;
+
+    // The poke itself lives in the V8 render hook, which is the only place the
+    // server's own activity function can be reached. This only re-rolls the
+    // interval so the pacing stays irregular.
+    //
+    // The old body poked INPUT_LOOK_LR/UD from Present with a ±0.002 amplitude
+    // and rotated the nav forward vector. Neither is an activity the server
+    // reads, and Present does not deliver control values anyway.
     void ApplyAntiAfk() noexcept
     {
         if (!g_Settings.antiAfk)
+        {
+            g_LastAntiAfkTick = 0;
             return;
+        }
 
         const ULONGLONG now = GetTickCount64();
-
-        if (g_LastAntiAfkTick != 0 && (now - g_LastAntiAfkTick) < g_NextAntiAfkIntervalMs)
+        if (g_LastAntiAfkTick != 0 &&
+            now - g_LastAntiAfkTick < g_NextAntiAfkIntervalMs)
             return;
-
         g_LastAntiAfkTick = now;
 
-        // Tuned 5RP safe pacing: 22s - 34s randomized human-like window
+        // 22 s - 34 s window.
         constexpr float kBaseSec = 28.f;
-        const float jitterFactor = 0.8f + static_cast<float>(rand() % 41) * 0.01f;
-        g_NextAntiAfkIntervalMs = static_cast<ULONGLONG>(kBaseSec * jitterFactor * 1000.f);
-
-        // 1. Reset GTA V native idle timer / camera state via subtle control impulse
-        if (NativeInvoke::Init())
-        {
-            // INPUT_LOOK_LR (1) & INPUT_LOOK_UD (2) — micro impulse to keep camera and pad active
-            const float jitterLR = static_cast<float>((rand() % 41) - 20) * 0.0001f;
-            const float jitterUD = static_cast<float>((rand() % 21) - 10) * 0.0001f;
-            NativeInvoke::SetControlValueNextFrame(0, 1, jitterLR);
-            NativeInvoke::SetControlValueNextFrame(0, 2, jitterUD);
-        }
-
-        // 2. Micro-nudge ped heading if local ped exists and is on foot
-        CPed* ped = Game::GetLocalPed();
-        if (ped)
-        {
-            auto* base = reinterpret_cast<uint8_t*>(ped);
-            uint8_t* nav = nullptr;
-            __try {
-                nav = *reinterpret_cast<uint8_t**>(base + 0x30);
-                if (IsValidPtr(nav))
-                {
-                    Vector3* forward = reinterpret_cast<Vector3*>(nav + 0x20);
-                    if (forward && std::isfinite(forward->x) && std::isfinite(forward->y))
-                    {
-                        const float angleDelta = static_cast<float>((rand() % 21) - 10) * 0.005f;
-                        const float cosA = std::cos(angleDelta);
-                        const float sinA = std::sin(angleDelta);
-                        const float nx = forward->x * cosA - forward->y * sinA;
-                        const float ny = forward->x * sinA + forward->y * cosA;
-                        forward->x = nx;
-                        forward->y = ny;
-                    }
-                }
-            } __except (EXCEPTION_EXECUTE_HANDLER) {}
-        }
-
-        // 3. V8 script engine: trigger server action resets for GTA5RP / RageMP
-        if (RageV8Runtime::GetStatus().state == RageV8Runtime::State::Ready)
-        {
-            static constexpr char kAntiAfkJs[] =
-                "try{"
-                "if(typeof global.antiAFK_sendAction==='function')global.antiAFK_sendAction();"
-                "if(typeof global.antiAFK_sendAFK==='function')global.antiAFK_sendAFK=function(){};"
-                "}catch(e){}";
-
-            RageV8Runtime::EnqueueFireAndForget(kAntiAfkJs);
-        }
+        const float jitterFactor =
+            0.8f + static_cast<float>(rand() % 41) * 0.01f;
+        g_NextAntiAfkIntervalMs = static_cast<ULONGLONG>(
+            kBaseSec * jitterFactor * 1000.f);
+        g_AntiAfkNextPokeAt = g_NextAntiAfkIntervalMs;
     }
 
+    // The script thread owns this while V8 is up: it drives the run/sprint
+    // multiplier and the move-rate override, both of which survive the task
+    // system. This memory path is only the fallback for when V8 is down.
+    //
+    // It writes CPed+Velocity (the field the aimbot reads), not nav+0x70 —
+    // that offset is not the velocity and multiplying it did nothing useful.
     void ApplySpeedhack() noexcept
     {
         if (!g_Settings.speedhack)
             return;
+        if (PlayerV8Ready() && g_PlJsHooked)
+            return;
+        if (LocalIsInVehicle())
+            return;
+
         CPed* ped = Game::GetLocalPed();
         if (!ped)
             return;
-
-        // Skip while in a vehicle — Gravity handles cars.
         auto* base = reinterpret_cast<uint8_t*>(ped);
-        for (const uint32_t off : {0xD10u, 0xD28u, 0xD30u, 0xC30u}) {
-            uint8_t* vehicle = nullptr;
-            __try {
-                vehicle = *reinterpret_cast<uint8_t**>(base + off);
-            } __except (EXCEPTION_EXECUTE_HANDLER) {
-                vehicle = nullptr;
-            }
-            if (IsValidPtr(vehicle) && vehicle != base)
-                return;
-        }
-
-        uint8_t* nav = nullptr;
-        __try {
-            nav = *reinterpret_cast<uint8_t**>(base + 0x30);
-        } __except (EXCEPTION_EXECUTE_HANDLER) {
-            return;
-        }
-        if (!IsValidPtr(nav))
-            return;
 
         Vector3 velocity{};
         __try {
-            velocity = *reinterpret_cast<Vector3*>(nav + 0x70);
+            velocity = *reinterpret_cast<Vector3*>(
+                base + Offsets::Ped::Velocity);
         } __except (EXCEPTION_EXECUTE_HANDLER) {
             return;
         }
+        if (!std::isfinite(velocity.x) || !std::isfinite(velocity.y))
+            return;
 
         const float speed2 =
             velocity.x * velocity.x + velocity.y * velocity.y;
+        // Boost whenever the player is actually moving. The old Shift-only gate
+        // meant walking, and any server that eats Shift, produced nothing.
         if (speed2 < 0.04f)
-            return;
-
-        // Only boost when sprinting (Shift) or always small boost when moving.
-        const bool sprinting = (GetAsyncKeyState(VK_SHIFT) & 0x8000) != 0;
-        if (!sprinting)
             return;
 
         float mul = g_Settings.speedhackValue;
@@ -606,7 +702,8 @@ namespace
             mul = 10.f;
 
         __try {
-            *reinterpret_cast<Vector3*>(nav + 0x70) = Vector3{
+            *reinterpret_cast<Vector3*>(
+                base + Offsets::Ped::Velocity) = Vector3{
                 velocity.x * mul,
                 velocity.y * mul,
                 velocity.z};
@@ -643,28 +740,132 @@ namespace
         g_TpWaypointKeyWasDown = tpWpDown;
     }
 
+    // A raw "is this pointer non-null and aligned" test accepted weapon,
+    // inventory and nav objects as vehicles, which is what made the on-foot
+    // speedhack think the player was seated. A candidate now has to carry a
+    // plausible handling blob before it counts as a vehicle.
+    struct VehicleHandlingLayout final
+    {
+        uint32_t driveForce;
+        uint32_t tractionMax;
+        uint32_t lowSpeedLoss;
+    };
+
+    constexpr VehicleHandlingLayout kHandlingLayouts[] = {
+        {0x4C, 0x78, 0x90},
+        {0x60, 0x88, 0xA8},
+        {0x54, 0x80, 0x98},
+        {0x48, 0x74, 0x8C},
+    };
+
+    constexpr uint32_t kPedVehicleCandidates[] = {
+        0xD10, 0xD28, 0xD30, 0xC30, 0xD00, 0xD08, 0xCE0, 0xCF0, 0xD18
+    };
+
+    constexpr uint32_t kVehicleHandlingCandidates[] = {
+        0x918, 0x938, 0x960, 0x908, 0x888, 0x900, 0x920, 0x980, 0x870
+    };
+
+    bool ReadFloatSafe(const uint8_t* base, uint32_t off, float& out) noexcept
+    {
+        __try {
+            out = *reinterpret_cast<const float*>(base + off);
+            return std::isfinite(out);
+        } __except (EXCEPTION_EXECUTE_HANDLER) {
+            return false;
+        }
+    }
+
+    bool LooksLikeHandling(const uint8_t* handling) noexcept
+    {
+        if (!IsValidPtr(handling))
+            return false;
+        float mass = 0.f;
+        if (!ReadFloatSafe(handling, 0x0C, mass) ||
+            !(mass > 20.f && mass < 200000.f))
+            return false;
+        for (const VehicleHandlingLayout& layout : kHandlingLayouts)
+        {
+            float drive = 0.f;
+            float traction = 0.f;
+            float loss = 0.f;
+            if (!ReadFloatSafe(handling, layout.driveForce, drive) ||
+                !ReadFloatSafe(handling, layout.tractionMax, traction) ||
+                !ReadFloatSafe(handling, layout.lowSpeedLoss, loss))
+                continue;
+            if (drive > 0.01f && drive < 80.f &&
+                traction > 0.05f && traction < 80.f &&
+                loss >= 0.f && loss < 40.f)
+                return true;
+        }
+        return false;
+    }
+
+    bool LooksLikeVehicle(uint8_t* candidate, uint8_t* pedBase) noexcept
+    {
+        if (!IsValidPtr(candidate) || candidate == pedBase)
+            return false;
+        uint8_t* nav = nullptr;
+        __try {
+            nav = *reinterpret_cast<uint8_t**>(candidate + 0x30);
+        } __except (EXCEPTION_EXECUTE_HANDLER) {
+            return false;
+        }
+        if (!IsValidPtr(nav))
+            return false;
+
+        for (const uint32_t off : kVehicleHandlingCandidates)
+        {
+            uint8_t* handling = nullptr;
+            __try {
+                handling = *reinterpret_cast<uint8_t**>(candidate + off);
+            } __except (EXCEPTION_EXECUTE_HANDLER) {
+                handling = nullptr;
+            }
+            if (LooksLikeHandling(handling))
+                return true;
+        }
+        return false;
+    }
+
+    uint8_t* LocalVehiclePtr() noexcept
+    {
+        CPed* ped = Game::GetLocalPed();
+        if (!ped || !IsValidPtr(ped))
+            return nullptr;
+        auto* base = reinterpret_cast<uint8_t*>(ped);
+        for (const uint32_t off : kPedVehicleCandidates)
+        {
+            uint8_t* vehicle = nullptr;
+            __try {
+                vehicle = *reinterpret_cast<uint8_t**>(base + off);
+            } __except (EXCEPTION_EXECUTE_HANDLER) {
+                vehicle = nullptr;
+            }
+            if (LooksLikeVehicle(vehicle, base))
+                return vehicle;
+        }
+        return nullptr;
+    }
+
+    // True only when we are actually seated. Prefers the script-thread answer
+    // and falls back to the validated memory scan.
+    bool LocalIsInVehicle() noexcept
+    {
+        const auto state = VehicleMovement::GetLocalVehicleState();
+        if (state.valid)
+            return state.inVehicle;
+        return LocalVehiclePtr() != nullptr;
+    }
+
     uint8_t* TpEntityPtr() noexcept
     {
         CPed* ped = Game::GetLocalPed();
         if (!ped || !IsValidPtr(ped))
             return nullptr;
-
-        auto* base = reinterpret_cast<uint8_t*>(ped);
-        for (const uint32_t off : {0xD10u, 0xD28u, 0xD30u, 0xC30u})
-        {
-            uint8_t* vehicle = nullptr;
-            __try
-            {
-                vehicle = *reinterpret_cast<uint8_t**>(base + off);
-            }
-            __except (EXCEPTION_EXECUTE_HANDLER)
-            {
-                vehicle = nullptr;
-            }
-            if (IsValidPtr(vehicle) && vehicle != base)
-                return vehicle;
-        }
-        return base;
+        if (uint8_t* vehicle = LocalVehiclePtr())
+            return vehicle;
+        return reinterpret_cast<uint8_t*>(ped);
     }
 
     bool SetEntityCoordsMemory(
@@ -1454,6 +1655,474 @@ s._was=down;
         return true;
     }
 
+    bool PlayerV8Ready() noexcept
+    {
+        const auto status = RageV8Runtime::GetStatus();
+        if (status.state != RageV8Runtime::State::Ready ||
+            !status.rootCaptured)
+            return false;
+        if (status.generation != g_PlJsGeneration)
+        {
+            // A new V8 generation means our hook is gone with the old context.
+            g_PlJsHooked = false;
+            g_PlJsPushed = false;
+            g_PlJsLastState[0] = '\0';
+            g_PlVehQueryId = 0;
+            g_PlJsGeneration = status.generation;
+        }
+        return true;
+    }
+
+    bool EnqueuePlayerScript(const char* script) noexcept
+    {
+        if (!script || !PlayerV8Ready())
+            return false;
+        return RageV8Runtime::EnqueueFireAndForget(script);
+    }
+
+    // One persistent render hook owns everything that has to run on the script
+    // thread every frame: on-foot speed, super jump, stamina, ammo and the
+    // vehicle frame natives. It also publishes the single vehicle state that
+    // C++ reads back, so speedhack, teleport and the Cars page stop disagreeing
+    // about whether the player is seated.
+    bool EnsurePlayerHook() noexcept
+    {
+        if (g_PlJsHooked)
+            return true;
+        static constexpr char kHook[] = R"JS((function(){try{
+var g=typeof globalThis!=='undefined'?globalThis:this;
+if(g.__bfPlH1)return;
+g.__bfPlH1=true;
+g.__bfPl=g.__bfPl||{};
+/* Left null until the first render tick, so C++ can tell "the hook is up and
+you are on foot" from "the hook never ran" and keep its own fallback. */
+g.__bfVeh=null;
+function nz(v,d){return (typeof v==='number'&&isFinite(v))?v:d;}
+function cl(v,lo,hi){v=nz(v,lo);return v<lo?lo:(v>hi?hi:v);}
+function inv(){try{return mp.game.invoke.apply(mp.game,arguments);}catch(e){return 0;}}
+g.__bfAfkPoke=function(){
+try{if(typeof g.antiAFK_sendAction==='function'){g.antiAFK_sendAction();return true;}}catch(e){}
+try{
+var api=g.__butterflyFiveRpApi||g.api;
+if(api&&typeof api.antiAFK_sendAction==='function'){api.antiAFK_sendAction();return true;}
+}catch(e){}
+return false;
+};
+mp.events.add('render',function(){
+var s=g.__bfPl;if(!s)return;
+var p=mp.players&&mp.players.local;if(!p)return;
+var h=0;try{h=p.handle;}catch(e){return;}
+if(!h)return;
+
+/* ---- vehicle state: the one answer everything else reads ---- */
+var v=null;try{v=p.vehicle||null;}catch(e){v=null;}
+var vh=0;try{vh=(v&&v.handle)?v.handle:0;}catch(e){vh=0;}
+var inVeh=!!vh;
+if(!inVeh){try{inVeh=!!p.isInAnyVehicle(false);}catch(e){}}
+var driver=false;
+if(vh){try{driver=(mp.game.vehicle.getPedInVehicleSeat(vh,-1)===h);}catch(e){}}
+var entering=false;try{entering=!!p.isGettingIntoVehicle();}catch(e){}
+g.__bfVeh={in:inVeh,driver:driver,entering:entering,handle:vh};
+
+/* ---- on-foot speed ---- */
+if(s.speed&&!inVeh){
+var mul=cl(s.speedMul,1,10);
+/* The sprint multiplier saturates around 1.49; the move-rate override is
+what actually carries values past that. */
+try{mp.game.player.setRunSprintMultiplierFor(mul>1.49?1.49:mul);}catch(e){}
+inv('0x085BF80FA50A39D1',h,mul);
+s._spd=true;
+}else if(s._spd){
+s._spd=false;
+try{mp.game.player.setRunSprintMultiplierFor(1);}catch(e){}
+inv('0x085BF80FA50A39D1',h,1);
+}
+
+/* ---- trigger shot ----
+INPUT_ATTACK is a this-frame control value, and Present never delivers it.
+C++ arms a short window and the assertion happens here, on the thread the
+game actually reads controls from. */
+if(g.__bfShoot&&Date.now()<g.__bfShoot){
+inv('0xE8A25867FBA3B05E',0,24,1.0);
+/* RAGE's wrapper for that native is setControlNormal; there is no
+setControlValueNextFrame on mp.game.controls. */
+try{mp.game.controls.setControlNormal(0,24,1.0);}catch(e){}
+}
+
+/* ---- super jump: a this-frame flag, so it needs every render ---- */
+if(s.jump){
+try{mp.game.gameplay.setSuperJumpThisFrame();}catch(e){
+inv('0x57FFF03E423A4C0B',mp.game.player.playerId());}
+}
+if(s.stamina){try{mp.game.player.restoreStamina(1);}catch(e){}}
+
+/* ---- ammo / clip / instant reload ---- */
+if(s.infAmmo||s.infClip||s.noReload){
+var w=0;try{w=p.weapon;}catch(e){w=0;}
+if(!w)w=inv('0x0A6DB4965674D243',h);
+if(w){
+if(s.infAmmo)inv('0x3EDCB0505123623B',h,true,w);
+if(s.infClip)inv('0x183DADC6AA953186',h,true);
+if(s.noReload){
+/* Refill the clip only while a reload is actually running, so the reload
+ends immediately instead of the magazine never draining. */
+var busy=false;
+try{busy=!!p.isReloading();}catch(e){}
+if(!busy)busy=!!inv('0x8B9F1FC6AE8166C0',h);
+if(busy){
+var mx=inv('0xA38DCFFCEA8962FA',h,w,true);
+if(mx>0){inv('0xDCD2A934D65CB497',h,w,mx);
+try{p.clearTasks();}catch(e){}}
+}
+}
+s._ammoW=w;
+}
+s._ammo=true;
+}else if(s._ammo){
+s._ammo=false;
+inv('0x183DADC6AA953186',h,false);
+if(s._ammoW)inv('0x3EDCB0505123623B',h,false,s._ammoW);
+s._ammoW=0;
+}
+
+/* ---- anti-AFK: server-side activity, not camera jitter ---- */
+if(s.afk){
+var now=Date.now();
+if(!s._afkAt||now-s._afkAt>s.afkMs){
+s._afkAt=now;
+try{g.__bfAfkPoke();}catch(e){}
+try{if(typeof g.antiAFK_sendAFK==='function')g.antiAFK_sendAFK=function(){};}catch(e){}
+}
+}else{s._afkAt=0;}
+
+/* ---- waypoint teleport: multi-frame, on the script thread ---- */
+var tp=s._tp;
+if(!tp)tp=s._tp={seq:0,phase:0,x:0,y:0,at:0};
+if((s.tpSeq|0)!==tp.seq){
+tp.seq=s.tpSeq|0;tp.phase=0;
+var wx=0,wy=0,got=false;
+try{
+var b=mp.game.ui.getFirstBlipInfoId(8);
+while(b&&mp.game.ui.doesBlipExist(b)){
+var c=null;
+try{c=mp.game.ui.getBlipInfoIdCoord(b);}catch(e){}
+if(c&&(c.x||c.y)){
+wx=c.x;wy=c.y;got=true;
+var ty=0;try{ty=mp.game.ui.getBlipInfoIdType(b);}catch(e){}
+if(ty===4)break;
+}
+b=mp.game.ui.getNextBlipInfoId(8);
+}
+}catch(e){}
+if(got){tp.x=wx;tp.y=wy;tp.at=Date.now();tp.phase=1;
+g.__bfTp={seq:tp.seq,state:'probing'};}
+else g.__bfTp={seq:tp.seq,state:'nomark'};
+}
+if(tp.phase===1){
+try{mp.game.streaming.requestCollisionAtCoord(tp.x,tp.y,0);}catch(e){}
+try{mp.game.streaming.requestCollisionAtCoord(tp.x,tp.y,300);}catch(e){}
+var gz=null;
+try{
+var hit=mp.raycasting.testPointToPoint(
+new mp.Vector3(tp.x,tp.y,1200),
+new mp.Vector3(tp.x,tp.y,-250),p,1|16);
+if(hit&&hit.position&&isFinite(hit.position.z))gz=hit.position.z;
+}catch(e){}
+if(gz===null){
+try{var r=mp.game.gameplay.getGroundZFor3dCoord(tp.x,tp.y,1200,false);
+if(typeof r==='number'&&isFinite(r)&&r>-200&&r<1000)gz=r;}catch(e){}
+}
+if(gz!==null&&gz>-200&&gz<1000){
+var ent=(vh&&driver&&v)?v:p;
+/* The server's own scripts announce a coming position jump before they
+move the player; a warp that skips this looks like what they hunt. */
+try{mp.events.call('c:ac:check',3000);}catch(e){}
+try{ent.setCoordsNoOffset(tp.x,tp.y,gz+1,false,false,false);}catch(e){}
+try{ent.setVelocity(0,0,0);}catch(e){}
+tp.phase=0;
+var moved=false;
+try{var np=ent.position;
+moved=(Math.abs(np.x-tp.x)<10&&Math.abs(np.y-tp.y)<10);}catch(e){}
+g.__bfTp={seq:tp.seq,state:moved?'ok':'blocked'};
+}else if(Date.now()-tp.at>6000){
+tp.phase=0;
+g.__bfTp={seq:tp.seq,state:'noground'};
+}
+}
+
+/* ---- vehicle frame natives (driver only) ---- */
+if(s.vSeatbelt&&inVeh){
+inv('0x7A653569DA385A54',h,1);
+inv('0x1913FE4CBF41C463',h,32,false);
+}
+if(s.vSkipAnim&&entering){
+/* p.vehicle is still null while the enter animation runs, so the target
+has to come from the "trying to enter" native, not from vh. */
+var tv=inv('0x814FA8BE84158326',h);
+if(tv)inv('0xF75B0D629E1C063D',h,tv,-1);
+}
+if(vh&&driver){
+if(s.vSpeed){
+var vm=cl(s.vSpeedMul,1,10);
+inv('0x93A3996368C94158',vh,vm);
+inv('0xB59E4BD37AE292DB',vh,vm);
+s._vs=vh;
+}else if(s._vs){
+inv('0x93A3996368C94158',s._vs,1);
+inv('0xB59E4BD37AE292DB',s._vs,1);
+s._vs=0;
+}
+if(s.vEngine)inv('0x2497C4717C8B881E',vh,true,false,false);
+if(s.vFly){
+inv('0x4A4722448F18EEF5',vh,false);
+inv('0x89F149B6131E57DA',vh,false);
+s._vf=vh;
+}else if(s._vf){
+inv('0x4A4722448F18EEF5',s._vf,true);
+inv('0x89F149B6131E57DA',s._vf,true);
+s._vf=0;
+}
+if(s.vGrav&&!s.vFly){
+var df=(cl(s.vGravMul,1,10)-1)*3;
+if(df>0)inv('0xC5F68BE9613E2D18',vh,1,0,0,-df,0,0,0,0,false,false,true,false,true);
+}
+}else if(s._vs||s._vf){
+if(s._vs){inv('0x93A3996368C94158',s._vs,1);inv('0xB59E4BD37AE292DB',s._vs,1);s._vs=0;}
+if(s._vf){inv('0x4A4722448F18EEF5',s._vf,true);inv('0x89F149B6131E57DA',s._vf,true);s._vf=0;}
+}
+});
+}catch(e){}})();)JS";
+        if (!EnqueuePlayerScript(kHook))
+            return false;
+        g_PlJsHooked = true;
+        return true;
+    }
+
+    bool PushPlayerState() noexcept
+    {
+        const auto& vm = VehicleMovement::GetSettings();
+
+        // Installed unconditionally: the hook is also what publishes vehicle
+        // state, and that answer is needed even when no toggle is on.
+        if (!EnsurePlayerHook())
+            return false;
+
+        if (g_AntiAfkNextPokeAt == 0)
+            g_AntiAfkNextPokeAt = 22000 +
+                static_cast<ULONGLONG>(rand() % 13000);
+
+        char state[512]{};
+        sprintf_s(
+            state,
+            "try{var g=typeof globalThis!=='undefined'?globalThis:this;"
+            "g.__bfPl=g.__bfPl||{};var s=g.__bfPl;"
+            "s.speed=%s;s.speedMul=%.2f;s.jump=%s;s.stamina=%s;"
+            "s.infAmmo=%s;s.infClip=%s;s.noReload=%s;"
+            "s.afk=%s;s.afkMs=%llu;s.tpSeq=%d;"
+            "s.vSeatbelt=%s;s.vSkipAnim=%s;s.vSpeed=%s;s.vSpeedMul=%.2f;"
+            "s.vGrav=%s;s.vGravMul=%.2f;s.vFly=%s;s.vEngine=%s;}catch(e){}",
+            g_Settings.speedhack ? "true" : "false",
+            g_Settings.speedhackValue,
+            g_Settings.superJump ? "true" : "false",
+            g_Settings.unlimitedStamina ? "true" : "false",
+            g_Settings.infiniteAmmo ? "true" : "false",
+            g_Settings.infiniteClip ? "true" : "false",
+            g_Settings.noReload ? "true" : "false",
+            g_Settings.antiAfk ? "true" : "false",
+            g_AntiAfkNextPokeAt,
+            g_TpSeq,
+            vm.seatbelt ? "true" : "false",
+            vm.skipEnterAnim ? "true" : "false",
+            vm.speedEnable ? "true" : "false",
+            vm.speedMult,
+            vm.gravityEnable ? "true" : "false",
+            vm.gravityMult,
+            vm.fly ? "true" : "false",
+            vm.engineForceOn ? "true" : "false");
+
+        if (g_PlJsPushed &&
+            std::strcmp(state, g_PlJsLastState) == 0)
+            return true;
+        if (!EnqueuePlayerScript(state))
+            return false;
+        strcpy_s(g_PlJsLastState, state);
+        g_PlJsPushed = true;
+        return true;
+    }
+
+    // Vehicle state is read back instead of being probed from Present, so the
+    // Cars page, the on-foot speed skip and teleport all answer from one place.
+    void PollVehicleState() noexcept
+    {
+        if (!PlayerV8Ready() || !g_PlJsHooked)
+        {
+            VehicleMovement::ClearLocalVehicleState();
+            return;
+        }
+
+        if (g_PlVehQueryId != 0)
+        {
+            RageV8Runtime::Result result{};
+            if (RageV8Runtime::PollResultFor(g_PlVehQueryId, result))
+            {
+                g_PlVehQueryId = 0;
+                int ready = 0;
+                int inVehicle = 0;
+                int driver = 0;
+                int entering = 0;
+                int handle = 0;
+                if (result.success &&
+                    sscanf_s(
+                        result.text,
+                        "%d %d %d %d %d",
+                        &ready,
+                        &inVehicle,
+                        &driver,
+                        &entering,
+                        &handle) == 5)
+                {
+                    if (ready != 0)
+                    {
+                        VehicleMovement::SetLocalVehicleState(
+                            inVehicle != 0,
+                            driver != 0,
+                            entering != 0,
+                            handle);
+                    }
+                    else
+                    {
+                        // Hook is queued but has not ticked yet: keep using the
+                        // memory/native fallback instead of claiming "on foot".
+                        VehicleMovement::ClearLocalVehicleState();
+                    }
+                }
+            }
+            return;
+        }
+
+        const ULONGLONG now = GetTickCount64();
+        if (g_PlVehQueryAt != 0 && now - g_PlVehQueryAt < 150)
+            return;
+        g_PlVehQueryAt = now;
+
+        static constexpr char kQuery[] =
+            "(function(){try{"
+            "var g=typeof globalThis!=='undefined'?globalThis:this;"
+            "var v=g.__bfVeh;if(!v)return '0 0 0 0 0';"
+            "return '1 '+(v.in?1:0)+' '+(v.driver?1:0)+' '+"
+            "(v.entering?1:0)+' '+(v.handle|0);"
+            "}catch(e){return '0 0 0 0 0';}})()";
+        std::uint64_t id = 0;
+        if (RageV8Runtime::Enqueue(kQuery, &id))
+            g_PlVehQueryId = id;
+    }
+
+    void PollWaypointTeleport() noexcept
+    {
+        if (g_TpReportedSeq == g_TpSeq)
+            return;
+
+        if (g_TpQueryId != 0)
+        {
+            RageV8Runtime::Result result{};
+            if (!RageV8Runtime::PollResultFor(g_TpQueryId, result))
+                return;
+            g_TpQueryId = 0;
+            if (!result.success)
+                return;
+            int seq = 0;
+            char state[32]{};
+            if (sscanf_s(
+                    result.text,
+                    "%d %31s",
+                    &seq,
+                    state,
+                    static_cast<unsigned>(sizeof(state))) != 2)
+                return;
+            if (seq != g_TpSeq || std::strcmp(state, "probing") == 0)
+                return;
+
+            g_TpReportedSeq = seq;
+            if (std::strcmp(state, "ok") == 0)
+            {
+                Menu::PushNotification(
+                    "TP Waypoint",
+                    "Teleported to ground",
+                    true,
+                    2000);
+            }
+            else if (std::strcmp(state, "nomark") == 0)
+            {
+                Menu::PushNotification(
+                    "TP Waypoint",
+                    "No GPS mark (open map, set waypoint)",
+                    false,
+                    3000);
+            }
+            else if (std::strcmp(state, "blocked") == 0)
+            {
+                Menu::PushNotification(
+                    "TP Waypoint",
+                    "Move was rejected at the destination",
+                    false,
+                    3000);
+            }
+            else
+            {
+                Menu::PushNotification(
+                    "TP Waypoint",
+                    "Ground not found; teleport cancelled",
+                    false,
+                    3000);
+            }
+            return;
+        }
+
+        const ULONGLONG now = GetTickCount64();
+        if (g_TpQueryAt != 0 && now - g_TpQueryAt < 200)
+            return;
+        g_TpQueryAt = now;
+
+        static constexpr char kQuery[] =
+            "(function(){try{"
+            "var g=typeof globalThis!=='undefined'?globalThis:this;"
+            "var t=g.__bfTp;if(!t)return '0 none';"
+            "return (t.seq|0)+' '+t.state;"
+            "}catch(e){return '0 none';}})()";
+        std::uint64_t id = 0;
+        if (RageV8Runtime::Enqueue(kQuery, &id))
+            g_TpQueryId = id;
+    }
+
+    void SyncPlayerScript() noexcept
+    {
+        if (!PlayerV8Ready())
+        {
+            g_PlJsPushed = false;
+            g_PlJsLastState[0] = '\0';
+            g_PlVehQueryId = 0;
+            g_TpQueryId = 0;
+            VehicleMovement::ClearLocalVehicleState();
+#if RAGEMP_DEV_BUILD
+            {
+                static ULONGLONG s_lastLog = 0;
+                const ULONGLONG now = GetTickCount64();
+                if (now - s_lastLog > 10000)
+                {
+                    s_lastLog = now;
+                    hooks::HLog(
+                        "[Misc] player bridge idle: V8 not ready "
+                        "(speed / jump / ammo / vehicle on fallback)");
+                }
+            }
+#endif
+            return;
+        }
+        PushPlayerState();
+        PollVehicleState();
+        PollWaypointTeleport();
+    }
+
     bool PushClickWarpState(bool on, bool paused, int key) noexcept
     {
         if (on && !EnsureClickWarpHook())
@@ -1503,11 +2172,25 @@ s._was=down;
         }
     }
 
+    // Only the fallback path keeps a hint. While the script hook is live it
+    // raycasts and draws the destination in the world itself, and the estimate
+    // below is not that point: it intersected the look ray with a horizontal
+    // plane at the ped's own Z, then slammed Z onto the ped. On foot that Z
+    // bobs and `look.z` chatters across the threshold every frame, so the
+    // projected pin flew around the screen while the real target sat still.
     void UpdateClickWarpHint() noexcept
     {
-        g_CwHaveHint = false;
         if (!g_Settings.clickWarp)
+        {
+            g_CwHaveHint = false;
             return;
+        }
+        if (g_CwJsOn)
+        {
+            // The world marker from the script hook is the destination.
+            g_CwHaveHint = false;
+            return;
+        }
 
         Vector3 cam{};
         Vector3 look{};
@@ -1520,22 +2203,16 @@ s._was=down;
         }
         else if (!ReadViewportLook(cam, look))
         {
+            g_CwHaveHint = false;
             return;
         }
 
-        Vector3 ped{};
-        const bool havePed =
-            ReadEntityPositionMemory(TpEntityPtr(), ped);
-        float t = 25.f;
-        if (havePed && std::fabs(look.z) > 0.045f)
-        {
-            t = (ped.z - cam.z) / look.z;
-            if (!(t >= 3.f && t <= 220.f))
-                t = 25.f;
-        }
-        g_CwHintX = cam.x + look.x * t;
-        g_CwHintY = cam.y + look.y * t;
-        g_CwHintZ = havePed ? ped.z : (cam.z + look.z * t);
+        // Stay on the look ray. A point on the ray is stable under projection;
+        // the previous ground estimate was not.
+        constexpr float kHintDistance = 25.f;
+        g_CwHintX = cam.x + look.x * kHintDistance;
+        g_CwHintY = cam.y + look.y * kHintDistance;
+        g_CwHintZ = cam.z + look.z * kHintDistance;
         g_CwHaveHint = true;
     }
 
@@ -1673,27 +2350,33 @@ s._was=down;
             }
         }
 
-        if (player)
+        // Stamina, super jump and the ammo natives are this-frame calls that
+        // only land on the script thread; the V8 hook owns them. What is left
+        // here is a fallback for a session where V8 never came up.
+        const bool scriptOwnsPlayer = PlayerV8Ready() && g_PlJsHooked;
+        if (!scriptOwnsPlayer)
         {
+            // PLAYER_ID() is 0 for the local player, so the old `if (player)`
+            // guard threw away every valid id and neither of these ever ran.
             if (g_Settings.unlimitedStamina)
                 NativeInvoke::RestorePlayerStamina(player, 1.f);
             if (g_Settings.superJump)
                 NativeInvoke::SetSuperJumpThisFrame(player);
-        }
 
-        if (ped && NativeInvoke::DoesEntityExist(ped))
-        {
-            const int weapon = NativeInvoke::GetSelectedPedWeapon(ped);
-            if (g_Settings.infiniteAmmo)
-                NativeInvoke::SetPedInfiniteAmmo(ped, true, weapon);
-            if (g_Settings.infiniteClip)
-                NativeInvoke::SetPedInfiniteAmmoClip(ped, true);
-            if (g_Settings.noReload && weapon)
+            if (ped && NativeInvoke::DoesEntityExist(ped))
             {
-                const int clip =
-                    NativeInvoke::GetMaxAmmoInClip(ped, weapon, true);
-                if (clip > 0)
-                    NativeInvoke::SetAmmoInClip(ped, weapon, clip);
+                const int weapon = NativeInvoke::GetSelectedPedWeapon(ped);
+                if (g_Settings.infiniteAmmo)
+                    NativeInvoke::SetPedInfiniteAmmo(ped, true, weapon);
+                if (g_Settings.infiniteClip)
+                    NativeInvoke::SetPedInfiniteAmmoClip(ped, true);
+                if (g_Settings.noReload && weapon)
+                {
+                    const int clip =
+                        NativeInvoke::GetMaxAmmoInClip(ped, weapon, true);
+                    if (clip > 0)
+                        NativeInvoke::SetAmmoInClip(ped, weapon, clip);
+                }
             }
         }
 
@@ -2661,45 +3344,87 @@ try{mp.game.invoke('0x0AE73D8DF3A762B2',false);}catch(e){}
         }
         if (g_PendingRepairVehicle) {
             g_PendingRepairVehicle = false;
-            Queue("misc_repair");
+            // Queue() only reaches Quant servers, so repair did nothing
+            // everywhere else. Go straight to the script thread instead.
+            static constexpr char kRepairJs[] =
+                "try{"
+                "var p=mp.players&&mp.players.local;"
+                "var v=p&&p.vehicle;"
+                "if(v&&v.handle){"
+                "try{v.repair();}catch(e){"
+                "try{mp.game.invoke('0x115722B1B9C14C1C',v.handle);}catch(e2){}"
+                "}"
+                "}"
+                "}catch(e){}";
+            if (!EnqueuePlayerScript(kRepairJs))
+                Queue("misc_repair");
         }
         if (g_PendingTpWaypoint) {
             g_PendingTpWaypoint = false;
-            const int start = BeginTeleportToWaypoint();
-            if (start == 1)
+            // Preferred path: the script thread, where the blip natives, the
+            // ground probe and setCoords all actually run. Present is only the
+            // fallback for a session where V8 never came up.
+            if (PlayerV8Ready() && g_PlJsHooked)
             {
-                startedWaypointProbe = true;
-                Menu::PushNotification(
-                    "TP Waypoint",
-                    "Resolving destination ground…",
-                    true,
-                    1500);
-            }
-            else if (start == 0)
-            {
-                const bool listOk = NativeInvoke::InitBlipList();
-                Menu::PushNotification(
-                    "TP Waypoint",
-                    listOk ? "No GPS mark (open map, set waypoint)"
-                           : "BlipList pattern missing",
-                    false,
-                    3000);
-            }
-            else if (start == -1)
-            {
-                Menu::PushNotification(
-                    "TP Waypoint",
-                    "No controllable ped or driver vehicle",
-                    false,
-                    2500);
+                ++g_TpSeq;
+                g_TpQueryId = 0;
+                g_TpQueryAt = 0;
+                if (PushPlayerState())
+                {
+                    Menu::PushNotification(
+                        "TP Waypoint",
+                        "Resolving destination ground…",
+                        true,
+                        1500);
+                }
+                else
+                {
+                    --g_TpSeq;
+                    Menu::PushNotification(
+                        "TP Waypoint",
+                        "Script bridge busy, try again",
+                        false,
+                        2500);
+                }
             }
             else
             {
-                Menu::PushNotification(
-                    "TP Waypoint",
-                    "Native waypoint runtime unavailable",
-                    false,
-                    3000);
+                const int start = BeginTeleportToWaypoint();
+                if (start == 1)
+                {
+                    startedWaypointProbe = true;
+                    Menu::PushNotification(
+                        "TP Waypoint",
+                        "Resolving destination ground…",
+                        true,
+                        1500);
+                }
+                else if (start == 0)
+                {
+                    const bool listOk = NativeInvoke::InitBlipList();
+                    Menu::PushNotification(
+                        "TP Waypoint",
+                        listOk ? "No GPS mark (open map, set waypoint)"
+                               : "BlipList pattern missing",
+                        false,
+                        3000);
+                }
+                else if (start == -1)
+                {
+                    Menu::PushNotification(
+                        "TP Waypoint",
+                        "No controllable ped or driver vehicle",
+                        false,
+                        2500);
+                }
+                else
+                {
+                    Menu::PushNotification(
+                        "TP Waypoint",
+                        "Native waypoint runtime unavailable",
+                        false,
+                        3000);
+                }
             }
         }
 
@@ -2746,6 +3471,17 @@ void Initialize() noexcept
     g_LastSynced = {};
     g_PendingRepairVehicle = false;
     g_LastAntiAfkTick = 0;
+    g_PlJsHooked = false;
+    g_PlJsPushed = false;
+    g_PlJsLastState[0] = '\0';
+    g_PlVehQueryId = 0;
+    g_PlVehQueryAt = 0;
+    g_AntiAfkNextPokeAt = 0;
+    g_TpSeq = 0;
+    g_TpReportedSeq = 0;
+    g_TpQueryId = 0;
+    g_TpQueryAt = 0;
+    VehicleMovement::ClearLocalVehicleState();
     ClearFovBackups();
     g_CameraWarmupFrames = 0;
     // Do not auto-arm camera writers from a previous session.
@@ -2776,8 +3512,34 @@ void Shutdown() noexcept
     if (g_CwJsHooked)
         PushClickWarpState(false, false, 2);
     g_CwJsOn = false;
+    // Clear every toggle the script hook holds so nothing is left applied
+    // (speed multiplier, infinite ammo, vehicle power) after unload.
+    if (g_PlJsHooked)
+    {
+        g_Settings.speedhack = false;
+        g_Settings.superJump = false;
+        g_Settings.unlimitedStamina = false;
+        g_Settings.infiniteAmmo = false;
+        g_Settings.infiniteClip = false;
+        g_Settings.noReload = false;
+        g_Settings.antiAfk = false;
+        auto& vm = VehicleMovement::GetSettings();
+        vm.speedEnable = false;
+        vm.gravityEnable = false;
+        vm.fly = false;
+        vm.seatbelt = false;
+        vm.skipEnterAnim = false;
+        vm.engineForceOn = false;
+        g_PlJsPushed = false;
+        PushPlayerState();
+    }
+    g_PlJsHooked = false;
+    g_PlJsPushed = false;
     g_PendingTpWaypoint = false;
     g_PendingRepairVehicle = false;
+    // Hand the weapon its own spread/recoil/reload values back before unload.
+    RestoreWeaponInfo();
+    VehicleMovement::ClearLocalVehicleState();
     VehicleMovement::Shutdown();
 }
 
@@ -2787,6 +3549,9 @@ void Update() noexcept
     ApplyNoclip();
     ApplyFreecam();
     SyncMoveScript();
+    // Publishes vehicle state and owns the script-thread player natives, so it
+    // has to run before anything that asks whether the player is seated.
+    SyncPlayerScript();
     ApplyPlayerNatives();
     ApplyClickWarp();
     ApplyWorldNatives();
@@ -2851,6 +3616,26 @@ bool RequestTeleportWaypoint() noexcept
 {
     g_PendingTpWaypoint = true;
     return true;
+}
+
+bool RequestAttackBurst(int milliseconds) noexcept
+{
+    if (!PlayerV8Ready() || !g_PlJsHooked)
+        return false;
+    if (milliseconds < 10)
+        milliseconds = 10;
+    if (milliseconds > 200)
+        milliseconds = 200;
+    // Arms a window rather than firing once: the render hook then asserts the
+    // control on every frame inside it, so a single missed frame cannot eat
+    // the shot.
+    char script[160]{};
+    sprintf_s(
+        script,
+        "try{var g=typeof globalThis!=='undefined'?globalThis:this;"
+        "g.__bfShoot=Date.now()+%d;}catch(e){}",
+        milliseconds);
+    return EnqueuePlayerScript(script);
 }
 
 void RenderPlayersOverlay() noexcept

@@ -818,15 +818,15 @@ namespace
             SectionTitle(T("Combat", "Бой", "Бій"));
             ImGui::TextDisabled(
                 "%s",
-                T("Memory writer quarantined — toggles save to profile only.",
-                  "Запись в память в карантине — тогглы только сохраняются в профиль.",
-                  "Запис у пам'ять у карантині — тогли лише зберігаються в профіль."));
+                T("Adds to the global weapon settings for this weapon.",
+                  "Дополняет глобальные настройки оружия для этого оружия.",
+                  "Додає до глобальних налаштувань зброї для цієї зброї."));
             CheckWithHelp(
                 T("No Spread", "Без разброса", "Без розкиду"),
                 &p.noSpread,
-                "Reduce weapon accuracy spread (applied when writer is enabled).",
-                "Уменьшает разброс оружия (когда writer включён).",
-                "Зменшує розкид зброї (коли writer увімкнено).");
+                "Reduce weapon accuracy spread and sustained-fire bloom.",
+                "Уменьшает разброс оружия и раскрытие при стрельбе.",
+                "Зменшує розкид зброї та розкриття при стрільбі.");
             if (p.noSpread)
             {
                 SliderWithHelp(
