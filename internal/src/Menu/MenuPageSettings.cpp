@@ -114,9 +114,12 @@ namespace Menu
             const float pillH = microSize + 8.f * scale;
             const float pillW =
                 statusSz.x + dot * 2.f + 16.f * scale;
+            // Whole pixels everywhere below: this card centres text against
+            // odd heights, and the half-pixel positions that fell out of that
+            // were what made the glyphs look soft.
             const ImVec2 pillMin(
-                headerMin.x + width - pillW,
-                headerMin.y + (avatar - pillH) * 0.5f);
+                IM_ROUND(headerMin.x + width - pillW),
+                IM_ROUND(headerMin.y + (avatar - pillH) * 0.5f));
             draw->AddRectFilled(
                 pillMin,
                 pillMin + ImVec2(pillW, pillH),
@@ -133,8 +136,8 @@ namespace Menu
                 microFont,
                 microSize,
                 ImVec2(
-                    pillMin.x + 8.f * scale + dot + 5.f * scale,
-                    pillMin.y + (pillH - microSize) * 0.5f),
+                    IM_ROUND(pillMin.x + 8.f * scale + dot + 5.f * scale),
+                    IM_ROUND(pillMin.y + (pillH - microSize) * 0.5f)),
                 gui->get_clr(statusColor, 1.f),
                 statusText);
 
@@ -142,7 +145,8 @@ namespace Menu
                 s_AccountName[0] ? s_AccountName : "User";
             ImFont* nickFont = MenuType::Title();
             const float nickSize = MenuType::TitleSize();
-            const float nickX = headerMin.x + avatar + 10.f * scale;
+            const float nickX =
+                IM_ROUND(headerMin.x + avatar + 10.f * scale);
             draw->PushClipRect(
                 ImVec2(nickX, headerMin.y),
                 ImVec2(pillMin.x - 8.f * scale, headerMin.y + avatar),
@@ -150,7 +154,9 @@ namespace Menu
             draw->AddText(
                 nickFont,
                 nickSize,
-                ImVec2(nickX, headerMin.y + (avatar - nickSize) * 0.5f),
+                ImVec2(
+                    nickX,
+                    IM_ROUND(headerMin.y + (avatar - nickSize) * 0.5f)),
                 gui->get_clr(tokens.textPrimary, 1.f),
                 nick);
             draw->PopClipRect();
@@ -177,11 +183,17 @@ namespace Menu
                 caption = T("left", "осталось", "залишилось");
             }
 
-            ImFont* valueFont = expired ? MenuType::Title() : MenuType::Mono();
+            // Display() is the only role rasterised at DisplaySize. Mono() is
+            // built at 14.5 px, so asking for 23 px upscaled its glyphs by
+            // 1.6x and that is what read as blur.
+            ImFont* valueFont =
+                expired ? MenuType::Title() : MenuType::Display();
             const float valueSize = expired
                 ? MenuType::TitleSize()
                 : MenuType::DisplaySize();
-            const ImVec2 valuePos = ImGui::GetCursorScreenPos();
+            const ImVec2 valueOrigin = ImGui::GetCursorScreenPos();
+            const ImVec2 valuePos(
+                IM_ROUND(valueOrigin.x), IM_ROUND(valueOrigin.y));
             const ImVec2 valueSz = valueFont->CalcTextSizeA(
                 valueSize, FLT_MAX, 0.f, value);
             draw->AddText(
@@ -197,8 +209,10 @@ namespace Menu
                     microFont,
                     microSize,
                     ImVec2(
-                        valuePos.x + valueSz.x + 6.f * scale,
-                        valuePos.y + valueSz.y - microSize - 1.f * scale),
+                        IM_ROUND(valuePos.x + valueSz.x + 6.f * scale),
+                        IM_ROUND(
+                            valuePos.y + valueSz.y - microSize -
+                            1.f * scale)),
                     gui->get_clr(tokens.textFaint, 1.f),
                     caption);
             }
@@ -206,28 +220,41 @@ namespace Menu
                 ImVec2(0.f, valueSz.y + metrics.space2 * scale));
 
             // --- Gauge ---------------------------------------------------
-            const float trackH = 5.f * scale;
-            const ImVec2 trackMin = ImGui::GetCursorScreenPos();
-            const ImVec2 trackMax = trackMin + ImVec2(width, trackH);
-            draw->AddRectFilled(
-                trackMin,
-                trackMax,
-                gui->get_clr(tokens.raised, 1.f),
-                trackH * 0.5f);
-            if (!expired)
+            // One tick per day of the span the gauge measures against, so a lit
+            // tick is a real remaining day and not a decorative notch.
+            constexpr int kGaugeTicks =
+                static_cast<int>(kSubscriptionGaugeSpan / 86400);
+            const float trackH = IM_ROUND(5.f * scale);
+            const ImVec2 trackOrigin = ImGui::GetCursorScreenPos();
+            const float trackLeft = IM_ROUND(trackOrigin.x);
+            const float trackTop = IM_ROUND(trackOrigin.y);
+            const float trackRight = IM_ROUND(trackOrigin.x + width);
+            const float tickGap = ImMax(IM_ROUND(2.f * scale), 1.f);
+            const float tickPitch =
+                (trackRight - trackLeft + tickGap) /
+                static_cast<float>(kGaugeTicks);
+            const float tickW = ImMax(IM_ROUND(tickPitch - tickGap), 1.f);
+            const float tickRadius = ImMin(trackH, tickW) * 0.5f;
+            // Round up: the hours left over past the last whole day still hold
+            // their tick, so the gauge only empties when the time really has.
+            const int litTicks = expired
+                ? 0
+                : ImClamp(
+                    static_cast<int>(
+                        ceilf(static_cast<float>(left) / 86400.f)),
+                    1,
+                    kGaugeTicks);
+            for (int tick = 0; tick < kGaugeTicks; ++tick)
             {
-                const float fraction = ImClamp(
-                    static_cast<float>(left) /
-                        static_cast<float>(kSubscriptionGaugeSpan),
-                    0.03f,
-                    1.f);
+                const float x = IM_ROUND(
+                    trackLeft + tickPitch * static_cast<float>(tick));
                 draw->AddRectFilled(
-                    trackMin,
-                    ImVec2(
-                        trackMin.x + width * fraction,
-                        trackMax.y),
-                    gui->get_clr(statusColor, 0.92f),
-                    trackH * 0.5f);
+                    ImVec2(x, trackTop),
+                    ImVec2(x + tickW, trackTop + trackH),
+                    gui->get_clr(
+                        tick < litTicks ? statusColor : tokens.raised,
+                        1.f),
+                    tickRadius);
             }
             ImGui::Dummy(
                 ImVec2(0.f, trackH + metrics.space2 * scale));
@@ -253,7 +280,9 @@ namespace Menu
                     T("Not activated", "Не активирована", "Не активована"),
                     static_cast<int>(sizeof(expiry)));
             }
-            const ImVec2 expiryPos = ImGui::GetCursorScreenPos();
+            const ImVec2 expiryOrigin = ImGui::GetCursorScreenPos();
+            const ImVec2 expiryPos(
+                IM_ROUND(expiryOrigin.x), IM_ROUND(expiryOrigin.y));
             ImFont* iconFont = set->icon ? set->icon : microFont;
             const float iconSize = microSize + 1.f * scale;
             draw->AddText(
@@ -266,7 +295,7 @@ namespace Menu
                 microFont,
                 microSize,
                 ImVec2(
-                    expiryPos.x + iconSize + 6.f * scale,
+                    IM_ROUND(expiryPos.x + iconSize + 6.f * scale),
                     expiryPos.y),
                 gui->get_clr(tokens.textMuted, 1.f),
                 expiry);
@@ -820,6 +849,35 @@ namespace Menu
         return action;
     }
 
+    // ── Cloud configs ────────────────────────────────────────────────
+    // The account library shares the Supabase backend with the rest of the
+    // cheat. The calls block, and this build cannot spawn a thread (the game's
+    // minifilter kills new threads), so they run on a deliberate click, never
+    // per frame.
+    static CloudStorage::Item s_CloudConfigs[CloudStorage::kMaxItems]{};
+    static int s_CloudConfigCount = 0;
+    static bool s_CloudFetched = false;
+    static char s_CloudStatus[96]{};
+    static char s_CloudUploadName[48]{};
+
+    static void RefreshCloudConfigs() noexcept
+    {
+        s_CloudConfigCount = 0;
+        if (!CloudStorage::List(
+                "config",
+                s_CloudConfigs,
+                CloudStorage::kMaxItems,
+                s_CloudConfigCount))
+        {
+            lstrcpynA(
+                s_CloudStatus,
+                CloudStorage::LastError(),
+                sizeof(s_CloudStatus));
+            return;
+        }
+        s_CloudStatus[0] = 0;
+    }
+
     static void RenderConfigSlotsPageRedesign(ImGuiStyle* style)
     {
         (void)style;
@@ -1018,6 +1076,134 @@ namespace Menu
                 150.f);
         }
         ImGui::EndChild();
+
+        // ── Cloud configs ────────────────────────────────────────────
+        ImGui::Dummy(ImVec2(0.f, 6.f * scale));
+        MenuUi::BeginInspectorIsland(
+            "config_cloud",
+            T("Cloud configs", "Облачные конфиги", "Хмарні конфіги"),
+            0.f,
+            T("Stored on the account",
+              "Хранятся в аккаунте",
+              "Зберігаються в акаунті"));
+
+        if (!CloudStorage::IsAvailable())
+        {
+            ImGui::TextDisabled(
+                "%s",
+                T("Sign in to sync configs",
+                  "Войди, чтобы синхронизировать конфиги",
+                  "Увійди, щоб синхронізувати конфіги"));
+        }
+        else
+        {
+            if (!s_CloudFetched)
+            {
+                s_CloudFetched = true;
+                RefreshCloudConfigs();
+            }
+
+            // Upload current settings under a fresh name.
+            gui->text_field(
+                "##cloud_upload_name",
+                T("Config name", "Название конфига", "Назва конфіга"),
+                ImVec2(
+                    ImMax(
+                        120.f * scale,
+                        ImGui::GetContentRegionAvail().x - 150.f * scale),
+                    32.f * scale),
+                s_CloudUploadName,
+                sizeof(s_CloudUploadName));
+            ImGui::SameLine(0.f, 7.f * scale);
+            if (MenuUi::ActionButton(
+                    "cloud_upload",
+                    T("Upload", "Выгрузить", "Вивантажити"),
+                    ImVec2(143.f * scale, 32.f * scale),
+                    true,
+                    ICON_FA_CLOUD_ARROW_UP) &&
+                s_CloudUploadName[0])
+            {
+                char payload[Menu::kConfigPayloadCapacity]{};
+                if (Menu::ExportCurrentConfig(payload, sizeof(payload)) &&
+                    CloudStorage::Upsert(
+                        "config", s_CloudUploadName, payload))
+                {
+                    s_CloudUploadName[0] = 0;
+                    RefreshCloudConfigs();
+                    lstrcpynA(
+                        s_CloudStatus,
+                        T("Uploaded", "Выгружено", "Вивантажено"),
+                        sizeof(s_CloudStatus));
+                }
+                else
+                {
+                    lstrcpynA(
+                        s_CloudStatus,
+                        CloudStorage::LastError(),
+                        sizeof(s_CloudStatus));
+                }
+            }
+
+            if (s_CloudStatus[0])
+            {
+                ImGui::TextColored(
+                    ImVec4(0.62f, 0.66f, 0.74f, 1.f), "%s", s_CloudStatus);
+            }
+
+            ImGui::Dummy(ImVec2(0.f, 2.f * scale));
+            if (s_CloudConfigCount == 0)
+            {
+                ImGui::TextDisabled(
+                    "%s",
+                    T("No cloud configs", "В облаке пусто", "У хмарі порожньо"));
+            }
+            for (int i = 0; i < s_CloudConfigCount; ++i)
+            {
+                ImGui::PushID(i);
+                ImGui::TextUnformatted(s_CloudConfigs[i].name);
+                ImGui::SameLine(0.f, 8.f * scale);
+                if (MenuUi::GhostIconButton(
+                        "cloud_dl", ICON_FA_DOWNLOAD,
+                        ImVec2(30.f * scale, 26.f * scale)))
+                {
+                    char content[Menu::kConfigPayloadCapacity]{};
+                    if (CloudStorage::Get(
+                            "config",
+                            s_CloudConfigs[i].id,
+                            content,
+                            sizeof(content)))
+                    {
+                        Menu::ImportCurrentConfig(content);
+                        lstrcpynA(
+                            s_CloudStatus,
+                            T("Loaded", "Загружено", "Завантажено"),
+                            sizeof(s_CloudStatus));
+                    }
+                    else
+                    {
+                        lstrcpynA(
+                            s_CloudStatus,
+                            CloudStorage::LastError(),
+                            sizeof(s_CloudStatus));
+                    }
+                }
+                ImGui::SameLine(0.f, 4.f * scale);
+                if (MenuUi::GhostIconButton(
+                        "cloud_del", ICON_FA_TRASH_CAN,
+                        ImVec2(30.f * scale, 26.f * scale), true))
+                {
+                    if (CloudStorage::Delete("config", s_CloudConfigs[i].id))
+                        RefreshCloudConfigs();
+                    else
+                        lstrcpynA(
+                            s_CloudStatus,
+                            CloudStorage::LastError(),
+                            sizeof(s_CloudStatus));
+                }
+                ImGui::PopID();
+            }
+        }
+        MenuUi::EndInspectorIsland();
     }
 
     // Session shows only authoritative account state; no invented status.
