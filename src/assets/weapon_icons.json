@@ -1,0 +1,22 @@
+{
+  "generatedAt": "2026-08-05T09:41:46.516Z",
+  "count": 2,
+  "weapons": [
+    {
+      "spawn": "dagger",
+      "name": "Antique Cavalry Dagger",
+      "hash": 2460120199,
+      "category": "Melee",
+      "iconUrl": "https://gtahash.ru/Image/164px-Baseball-bat-icon.33ced8c945ef758153f350c37c43acd6.png",
+      "icon": "dagger.png"
+    },
+    {
+      "spawn": "td",
+      "name": "td",
+      "hash": 3033968461,
+      "category": "Other",
+      "iconUrl": "https://gtahash.ru/Image/164px-Baseball-bat-icon.33ced8c945ef758153f350c37c43acd6.png",
+      "icon": "td.png"
+    }
+  ]
+}

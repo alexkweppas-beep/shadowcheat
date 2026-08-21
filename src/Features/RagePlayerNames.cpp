@@ -1,0 +1,1949 @@
+#include "RagePlayerNames.h"
+
+#include "Aimbot.h"
+#include "FiveRpMetadataResolver.h"
+#include "RageV8Runtime.h"
+#include "RuntimeProfiler.h"
+#include "Visuals.h"
+#include "../Menu/Menu.h"
+#include "../SDK/RageBuildFlavor.h"
+
+#include <Windows.h>
+#include <cmath>
+#include <cstdio>
+#include <cstdlib>
+#include <cstring>
+
+namespace hooks
+{
+    void HLog(const char* message);
+}
+
+namespace
+{
+    struct NameEntry final
+    {
+        RagePlayerNames::EntityKind kind{
+            RagePlayerNames::EntityKind::Player};
+        bool local{};
+        std::uint16_t remoteId{};
+        std::uint32_t handle{};
+        float x{};
+        float y{};
+        float z{};
+        float heading{};
+        int adminLevel{};
+        bool visible{};
+        int factionId{};
+        int factionType{};
+        int familyId{};
+        int sqlId{};
+        bool masked{};
+        bool displayAdmin{};
+        bool nametagDisabled{};
+        bool dead{};
+        bool knock{};
+        float hp{-1.f};
+        float hpSync{-1.f};
+        float hpRaw{-1.f};
+        int dyingFlag{-1};
+        std::uint32_t boneMask{};
+        RagePlayerNames::BonePosition bones[
+            static_cast<int>(
+                RagePlayerNames::BoneSlot::Count)]{};
+        char name[48]{};
+        char factionKey[48]{};
+        char factionTag[24]{};
+        char familyName[48]{};
+        char nickname[48]{};
+    };
+
+    struct ObservedPlayer final
+    {
+        bool valid{};
+        std::uint16_t remoteId{};
+        ULONGLONG updatedAt{};
+        char name[48]{};
+        char factionTag[24]{};
+    };
+
+    struct ObservedFamily final
+    {
+        bool valid{};
+        int familyId{};
+        ULONGLONG updatedAt{};
+        char name[48]{};
+    };
+
+    char g_SnapshotScript[16384]{};
+
+    // The script text only changes when one of these inputs changes, so the
+    // 16 KB format runs on a toggle instead of four times a second.
+    struct SnapshotScriptKey final
+    {
+        bool built{};
+        bool needsVisibility{};
+        bool includeNonPlayers{};
+        bool familyLookup{};
+        char adminKey[sizeof(Menu::s_AdminVariableKey) * 2]{};
+    };
+
+    SnapshotScriptKey g_ScriptKey{};
+
+    volatile LONG g_Lock = 0;
+    NameEntry g_Entries[256]{};
+    int g_Count = 0;
+    std::uint64_t g_Generation = 0;
+    std::uint64_t g_RuntimeGeneration = 0;
+    std::uint64_t g_PendingCommand = 0;
+    ULONGLONG g_LastRequest = 0;
+    bool g_HelperReady = false;
+    int g_CanonicalNames = 0;
+    int g_FallbackNames = 0;
+    int g_StringFactions = 0;
+    int g_FamilyCacheCount = 0;
+    int g_FamilyPendingCount = 0;
+    bool g_FamilyCanary = false;
+    bool g_FamilyRpcDisabled = false;
+    ULONGLONG g_NameGoodAt[256]{};
+    ObservedPlayer g_ObservedPlayers[256]{};
+    ObservedFamily g_ObservedFamilies[128]{};
+    int g_ObservedPlayerCount = 0;
+    int g_ObservedFamilyCount = 0;
+
+    void Lock() noexcept
+    {
+        while (InterlockedCompareExchange(&g_Lock, 1, 0) != 0)
+            Sleep(0);
+    }
+
+    void Unlock() noexcept
+    {
+        InterlockedExchange(&g_Lock, 0);
+    }
+
+    void ResetSessionState() noexcept
+    {
+        g_ScriptKey = {};
+        g_PendingCommand = 0;
+        g_LastRequest = 0;
+        Lock();
+        g_HelperReady = false;
+        g_CanonicalNames = 0;
+        g_FallbackNames = 0;
+        g_StringFactions = 0;
+        g_FamilyCacheCount = 0;
+        g_FamilyPendingCount = 0;
+        g_FamilyCanary = false;
+        g_FamilyRpcDisabled = false;
+        g_ObservedPlayerCount = 0;
+        g_ObservedFamilyCount = 0;
+        g_Count = 0;
+        for (int index = 0; index < 256; ++index)
+        {
+            g_Entries[index] = {};
+            g_NameGoodAt[index] = 0;
+            g_ObservedPlayers[index] = {};
+        }
+        for (auto& family : g_ObservedFamilies)
+            family = {};
+        ++g_Generation;
+        Unlock();
+    }
+
+    bool BuildSnapshotScript(
+        bool needsVisibility,
+        bool includeNonPlayers) noexcept
+    {
+        char adminKey[sizeof(Menu::s_AdminVariableKey) * 2]{};
+        int write = 0;
+        for (int read = 0;
+             Menu::s_AdminVariableKey[read] &&
+             read < static_cast<int>(
+                 sizeof(Menu::s_AdminVariableKey)) - 1;
+             ++read)
+        {
+            const char value = Menu::s_AdminVariableKey[read];
+            const bool safe =
+                (value >= 'a' && value <= 'z') ||
+                (value >= 'A' && value <= 'Z') ||
+                (value >= '0' && value <= '9') ||
+                value == '_' || value == '-' ||
+                value == '.' || value == '$';
+            if (!safe ||
+                write >= static_cast<int>(
+                    sizeof(adminKey)) - 1)
+                continue;
+            adminKey[write++] = value;
+        }
+        adminKey[write] = 0;
+        bool familyLookupDemand = false;
+        for (int index = 0;
+             index < static_cast<int>(
+                 Menu::EspProfileId::Count);
+             ++index)
+        {
+            const auto& profile =
+                Menu::s_EspProfiles[index];
+            familyLookupDemand |=
+                profile.enabled &&
+                profile.familyTag;
+        }
+
+        if (g_ScriptKey.built &&
+            g_ScriptKey.needsVisibility == needsVisibility &&
+            g_ScriptKey.includeNonPlayers == includeNonPlayers &&
+            g_ScriptKey.familyLookup == familyLookupDemand &&
+            lstrcmpA(g_ScriptKey.adminKey, adminKey) == 0)
+            return g_SnapshotScript[0] != 0;
+
+        const int length = std::snprintf(
+            g_SnapshotScript,
+            sizeof(g_SnapshotScript),
+            "const rows=[],seen={};"
+            "const adminKey='%s';"
+            "const needVis=%d,includeNonPlayers=%d,familyLookup=%d;"
+            "const root=(typeof globalThis!=='undefined'&&globalThis)||(typeof global!=='undefined'&&global)||(typeof window!=='undefined'&&window)||{};"
+            "const ctx=root.__ctx__;"
+            "const rage=(ctx&&ctx.mp)||(root.mp)||(typeof window!=='undefined'&&window.mp)||(typeof globalThis!=='undefined'&&globalThis.mp)||(typeof mp!=='undefined'?mp:null);"
+            "if(!rage||!rage.players)return '';"
+            // 5RP keeps mp/api as script-context bindings, so they are not
+            // own properties of the global object. The native probe pins
+            // api.players onto the global as __butterflyFiveRpPlayers; the
+            // bare identifier is a cheap fallback for the same object.
+            "let bareApi=null;"
+            "try{bareApi=(typeof api!=='undefined'&&api)||null;}catch(_){}"
+            "const apiRoot=root.__butterflyFiveRpApi||(ctx&&ctx.api)||(root.api)||bareApi||null;"
+            "const helpers=root.__butterflyFiveRpPlayers||(apiRoot&&apiRoot.players)||null;"
+            // 5RP never hardcodes the admin variable: the server publishes its
+            // name in mp.serverDataKeys.isAdmin (currently "152") and rotates
+            // it. The menu field stays as a manual override.
+            // Several mp instances coexist after a reconnect and the one our
+            // scripts run in carries an empty serverDataKeys, so the native
+            // probe pins the live table as __butterflyFiveRpDataKeys.
+            "let adminVar='';"
+            "try{const dk=root.__butterflyFiveRpDataKeys||rage.serverDataKeys;"
+            "if(dk&&dk.isAdmin)adminVar=String(dk.isAdmin).trim();}catch(_){}"
+            "if(!adminVar&&adminKey)adminVar=adminKey;"
+            "let adminHash=null;"
+            "try{const am=rage.game&&rage.game.misc;"
+            "if(adminVar&&am&&typeof am.getVariableHashKey==='function')"
+            "adminHash=am.getVariableHashKey(adminVar);}catch(_){}"
+            "const local=rage.players.local;"
+            "const valid=v=>v&&Number.isFinite(Number(v.x))&&"
+            "Number.isFinite(Number(v.y))&&"
+            "Number.isFinite(Number(v.z))&&"
+            "(Number(v.x)!==0||Number(v.y)!==0||Number(v.z)!==0);"
+            "let localHead=null;"
+            "if(local&&valid(local.position)){const p=local.position;"
+            "localHead={x:Number(p.x),y:Number(p.y),z:Number(p.z)+0.8};}"
+            "const cache=root.__butterflyNameCache||"
+            "(root.__butterflyNameCache={chars:{},families:{},pendingFam:{}});"
+            "const cleanLabel=(v,id)=>{let s=String(v==null?'':v).trim();"
+            "if(!s)return '';if(id!=null&&id>=0){const q=String(id);"
+            "if(s.endsWith('('+q+')'))s=s.slice(0,-q.length-2).trim();"
+            "else if(s.endsWith('['+q+']'))s=s.slice(0,-q.length-2).trim();"
+            "else if(s.endsWith('_'+q))s=s.slice(0,-q.length-1).trim();"
+            "else if(s.endsWith('#'+q))s=s.slice(0,-q.length-1).trim();"
+            "else if(s.endsWith(' '+q))s=s.slice(0,-q.length-1).trim();}"
+            "s=s.replace(/_/g,' ').replace(/\\s+/g,' ').trim();"
+            "if(s==='Player'||s==='Unknown'||s==='Citizen'||s==='NPC'||s==='Animal'||s==='undefined'||s==='null')return '';return s;};"
+            // Donate and achievement titles ride the same charName channel as
+            // real names. Not one of the 2424 character names in the live 5RP
+            // roster is Cyrillic, so a lone Cyrillic word is always a title.
+            "const isTitle=s=>/^\\S+$/.test(s)&&/[\\u0400-\\u04FF]/.test(s);"
+            // Bare identifiers such as #777 or ID:10 are what the server shows
+            // in place of a name, and the overlay already carries both ids in
+            // their own fields.
+            "const isIdLabel=s=>"
+            "/^(?:#|ID\\s*:\\s*)?\\d+(?:\\s*\\(\\d+\\))?$/i.test(s);"
+            "const isRealPerson=s=>{if(!s)return false;"
+            "if(/^(?:\\u0413\\u0440\\u0430\\u0436\\u0434\\u0430\\u043d\\u0438\\u043d|\\u0413\\u0440\\u0430\\u0436\\u0434\\u0430\\u043d\\u043a\\u0430|Player|Citizen|Unknown|NPC|Animal|\\u041d\\u0435\\u0437\\u043d\\u0430\\u043a\\u043e\\u043c\\u0435\\u0446)(?:\\s|\\(|#|$)/i.test(s))return false;"
+            "if(isIdLabel(s))return false;"
+            "if(isTitle(s))return false;"
+            "return true;};"
+            // Sessions that ran an older build carry titles in the cache;
+            // drop them once so a live reconnect is not needed.
+            "if(!cache.__sanitized){cache.__sanitized=1;"
+            "for(const k in cache.chars){"
+            "if(!isRealPerson(cleanLabel(cache.chars[k])))delete cache.chars[k];}}"
+            "if(!root.__butterflyDataHook&&rage&&rage.events&&typeof rage.events.addDataHandler==='function'){"
+            "root.__butterflyDataHook=true;try{"
+            "const onData=(ent,val)=>{if(ent&&val&&typeof val==='string'){"
+            "const s=cleanLabel(val,ent.remoteId);"
+            "if(isRealPerson(s)){"
+            "const rid=ent.remoteId;if(rid!=null&&rid>=0)cache.chars['r_'+rid]=s;"
+            "if(ent.handle!=null&&ent.handle>0)cache.chars['h_'+ent.handle]=s;"
+            "const sid=ent.getVariable?(ent.getVariable('sqlId')||ent.getVariable('characterId')):0;"
+            "if(sid>0)cache.chars[String(sid)]=s;}}};"
+            "rage.events.addDataHandler('charName',onData);"
+            "rage.events.addDataHandler('characterName',onData);"
+            "if(rage.serverDataKeys){for(const k in rage.serverDataKeys){"
+            "const sk=rage.serverDataKeys[k];if(sk)rage.events.addDataHandler(sk,onData);}}"
+            "}catch(_){}}"
+            "if(helpers&&typeof helpers.setName==='function'&&!helpers.__bfSetHook){"
+            "helpers.__bfSetHook=true;try{"
+            "const origSet=helpers.setName;"
+            "helpers.setName=function(p,n){"
+            "try{if(p&&n&&typeof n==='string'){"
+            "const s=cleanLabel(n,p.remoteId);"
+            "if(isRealPerson(s)){"
+            "if(p.remoteId!=null&&p.remoteId>=0)cache.chars['r_'+p.remoteId]=s;"
+            "if(p.handle!=null&&p.handle>0)cache.chars['h_'+p.handle]=s;"
+            "const sid=p.getVariable?(p.getVariable('sqlId')||p.getVariable('characterId')):0;"
+            "if(sid>0)cache.chars[String(sid)]=s;}}}"
+            "catch(_){}"
+            "return origSet.apply(this,arguments);};}"
+            "catch(_){}}"
+            "const vis=root.__butterflyVis||"
+            "(root.__butterflyVis={cursor:0,map:{}});"
+            "if(!vis.busy)vis.busy={};"
+            "const rc0=rage.raycasting;"
+            // Visibility is refreshed by a render-tick worker instead of by
+            // this snapshot. Async probes resolve a tick or two later, so
+            // firing them from a script that runs twice a second meant the
+            // answer was always a cycle old. The worker starts a few probes
+            // per frame and never waits, so the flag stays current and the
+            // frame thread is never blocked.
+            "if(!vis.worker&&rc0&&"
+            "typeof rc0.testPointToPointAsync==='function'&&"
+            "rage.events&&typeof rage.events.add==='function'){"
+            "vis.worker=1;vis.scan=0;vis.list=null;vis.listAt=0;"
+            "const tick=()=>{try{"
+            "const me=rage.players&&rage.players.local;"
+            "if(!me)return;const lp=me.position;"
+            "if(!lp||!Number.isFinite(Number(lp.x)))return;"
+            "const from={x:Number(lp.x),y:Number(lp.y),z:Number(lp.z)+0.8};"
+            "const mine=Number(me.handle)||0;const now=Date.now();"
+            // The roster is rebuilt twice a second instead of every frame:
+            // walking it 144 times a second is pure garbage for no new data.
+            // Only players close enough to be drawn are kept, nearest first:
+            // rage.players holds everyone on the server, so probing the whole
+            // roster spread the budget over people who are not on screen and
+            // left the ones next to you a second stale.
+            "if(!vis.list||now-vis.listAt>500){const acc=[];"
+            "rage.players.forEach(p=>{if(!p||p===me)return;"
+            "const q=p.position;if(!q)return;"
+            "const dx=Number(q.x)-from.x,dy=Number(q.y)-from.y,"
+            "dz=Number(q.z)-from.z;const d2=dx*dx+dy*dy+dz*dz;"
+            "if(!Number.isFinite(d2)||d2>122500)return;"
+            "acc.push({p:p,d:d2});});"
+            "acc.sort((a,b)=>a.d-b.d);"
+            "vis.list=acc.map(x=>x.p);vis.listAt=now;}"
+            "const list=vis.list;if(!list||!list.length)return;"
+            // Six starts per frame with the near-only list means a target you
+            // are actually looking at is re-probed within a frame or two. The
+            // staleness check below stops this from firing pointlessly when
+            // only a few people are nearby.
+            "let started=0,looked=0;"
+            "while(started<6&&looked<24){"
+            "const p=list[vis.scan%%list.length];"
+            "vis.scan=(vis.scan+1)%%list.length;++looked;"
+            "if(!p)continue;const h=Number(p.handle)||0;"
+            "if(!h)continue;const key=String(h);"
+            // A busy marker older than a second means the probe never came
+            // back, so the slot is reclaimed rather than stuck forever.
+            "const b=Number(vis.busy[key])||0;"
+            "if(b&&now-b<1000)continue;"
+            "const r=vis.map[key];if(r&&now-r.t<120)continue;"
+            "const tp=p.position;"
+            "if(!tp||!Number.isFinite(Number(tp.x)))continue;"
+            "const to={x:Number(tp.x),y:Number(tp.y),z:Number(tp.z)+0.8};"
+            "vis.busy[key]=now;++started;"
+            "Promise.resolve(rc0.testPointToPointAsync(from,to,mine,31))"
+            ".then(hit=>{vis.busy[key]=0;let v=true;"
+            "if(hit){const e=hit.entity!==undefined?hit.entity:hit.entityHit;"
+            "const hh=e&&typeof e==='object'?Number(e.handle):Number(e);"
+            "v=Number.isFinite(hh)&&hh===h;}"
+            "vis.map[key]={v:v,t:Date.now()};})"
+            ".catch(_=>{vis.busy[key]=0;});"
+            "}}catch(_){}};"
+            "try{rage.events.add('render',tick);}catch(_){vis.worker=0;}}"
+            // Visibility used to call testPointToPoint, which wraps
+            // START_EXPENSIVE_SYNCHRONOUS_SHAPE_TEST_LOS_PROBE: the native
+            // blocks until the physics world answers, and this script runs on
+            // the thread that drives the frame. Twenty-four of those per run
+            // cost ~19 ms and showed up as stutter. The async probe registers
+            // the ray and resolves on a later tick, so nothing waits and the
+            // budget can go back up.
+            "const visBudget=24;"
+            "let visIndex=0;const visStart=Number(vis.cursor)||0;"
+            "const clear=(target,end)=>{const idx=visIndex++;"
+            "if(!needVis)return true;"
+            "if(!localHead||!end)return false;"
+            "const key=String(Number(target.handle)||0);"
+            "if(local&&Number(local.handle)===Number(target.handle))"
+            "{vis.map[key]={v:true,t:Date.now()};return true;}"
+            "const rec=vis.map[key];"
+            // Read-only: probing lives in the render worker below, which runs
+            // far more often than this snapshot. Firing probes from here tied
+            // their freshness to the snapshot period and made the flag lag by
+            // a whole cycle.
+            "if(!vis.worker&&rc0&&typeof rc0.testPointToPoint==='function'"
+            "&&idx>=visStart&&idx<visStart+visBudget){try{"
+            "const hit=rc0.testPointToPoint(localHead,end,local,31);"
+            "const v=!hit||(!!hit.entity&&"
+            "Number(hit.entity.handle)===Number(target.handle));"
+            "vis.map[key]={v:v,t:Date.now()};return v;}catch(_){}}"
+            "return rec&&Date.now()-rec.t<5000?!!rec.v:true;};"
+            "const emit=(e,kind,isLocal)=>{if(!e)return;"
+            "const id=Number(e.remoteId),h=Number(e.handle);"
+            "if(!Number.isFinite(h)||h<=0||seen[h])return;"
+            "seen[h]=1;const p=e.position;"
+            "if(!valid(p))return;"
+            // hideAdmintag is deliberately ignored: the game uses it to drop the
+            // badge, but the flag itself keeps syncing, so hidden admins stay
+            // visible to us.
+            "let admin=0;if(kind===0&&adminVar){try{"
+            "let raw=adminHash!=null?e.getVariable(adminHash):undefined;"
+            "if(raw===undefined||raw===null)raw=e.getVariable(adminVar);"
+            "if(raw===true)admin=1;"
+            "else{const n=Number(raw);"
+            "admin=Number.isFinite(n)&&n>0?n:(raw?1:0);}}catch(_){}}"
+            "const read=(o,k)=>{try{"
+            "if(!o)return null;"
+            "const d=o[k];if(d!==undefined&&d!==null)return d;"
+            "if(typeof o.getVariable!=='function')return null;let v=o.getVariable(k);"
+            "if(v!==undefined&&v!==null)return v;try{"
+            "const misc=rage.game&&rage.game.misc;"
+            "if(misc&&typeof misc.getVariableHashKey==='function'){"
+            "const hk=misc.getVariableHashKey(k);v=o.getVariable(hk);"
+            "if(v!==undefined&&v!==null)return v;}}catch(_){}"
+            "return null;}catch(_){return null;}};"
+            "const first=(o,keys)=>{for(const k of keys){const v=read(o,k);"
+            "if(v!==undefined&&v!==null&&String(v).trim())return v;}return null;};"
+            "const label=v=>{if(v===undefined||v===null)return '';"
+            "let s=String(v).replace(/_/g,' ').trim();if(!s||/^\\d+$/.test(s)||"
+            "/^(?:fam(?:ily)?|family)\\s*#?\\d+$/i.test(s))return '';return s;};"
+            "const hiddenName=v=>/^(?:\\u0413\\u0440\\u0430\\u0436\\u0434"
+            "\\u0430\\u043d\\u0438\\u043d|\\u0413\\u0440\\u0430\\u0436"
+            "\\u0434\\u0430\\u043d\\u043a\\u0430|Player|Citizen|Unknown|"
+            "\\u041d\\u0435\\u0437\\u043d\\u0430\\u043a\\u043e\\u043c"
+            "\\u0435\\u0446)(?:\\s|\\(|#|$)/i.test(String(v||''));"
+            "const familyLabel=id=>{if(!(id>0))return '';let n=null;"
+            "if(cache.families&&cache.families[String(id)])return cache.families[String(id)];"
+            "const roots=[];try{if(rage.familyNames)roots.push(rage.familyNames);}catch(_){}"
+            "try{if(rage.modules&&rage.modules.familyNames)roots.push(rage.modules.familyNames);}catch(_){}"
+            "for(const r of roots){if(!r)continue;try{"
+            "if(typeof r.getName==='function')n=r.getName(id);"
+            "if(!n&&r.actions&&typeof r.actions.getName==='function')"
+            "n=r.actions.getName(id);"
+            "const maps=[r.namesMap,r.names,r.state&&r.state.namesMap];"
+            "for(const m of maps)if(!n&&m&&m[id]!=null)n=m[id];"
+            "}catch(_){}if(label(n)){cache.families[String(id)]=label(n);return label(n);}}return '';};"
+            // Keys and types below are the live server set read out of the
+            // api.players roster map: 14 populated keys plus Marabunta and
+            // Vagos, which exist but currently have no members.
+            "const isFactionKey=k=>/^F_[A-Z0-9_]+$/.test(k);"
+            "const factionLabel=(key,type)=>{const m={"
+            "F_LSPD:'LSPD',F_LSSD:'LSSD',F_FIB:'FIB',"
+            "F_LSARMY:'Army',F_LSCITYHALL:'Gov',F_EMS:'EMS',F_NEWS:'News',F_PRISON:'Prison',"
+            "F_GANG_BALLAS:'Ballas',F_GANG_BLOODS:'Bloods',"
+            "F_GANG_GROVE:'Grove',F_GANG_MARABUNTA:'Marabunta',"
+            "F_GANG_VAGOS:'Vagos',F_RUSSIANMAFIA:'RM',"
+            "F_ARMENIAMAFIA:'Armenian',F_MEXICOMAFIA:'Mexican'};"
+            "if(key&&m[key])return m[key];"
+            "const legacy={1:'Gov',2:'LSPD',3:'BCSD',4:'FIB',"
+            "5:'EMS',6:'Army',7:'News'};"
+            "if(/^\\d+$/.test(key)&&legacy[key])return legacy[key];"
+            // A faction the server added after this table was written still
+            // gets a readable tag instead of the raw key.
+            "if(isFactionKey(key)){"
+            "const d=key.replace(/^F_(?:GANG_|MAFIA_)?/,'').toLowerCase();"
+            "if(d)return d.charAt(0).toUpperCase()+d.slice(1);}"
+            "const t={1:'Police',2:'Army',3:'Gang',4:'Mafia',5:'News',"
+            "6:'Gov',7:'EMS',8:'FIB',9:'Prison'};"
+            "return t[type]||'';};"
+            "let factionId=0;let factionType=0;let factionKey='';"
+            "let factionTag='';"
+            "let familyId=0;let familyName='';let heading=0;"
+            "let sqlId=0;let nickname='';realName='';let displayName='';let dead=0;let knock=0;"
+            "let hp=NaN;let hpSync=NaN;let hpRaw=NaN;let dying=-1;"
+            "if(kind===0){try{"
+            // getServerFactionId is the roster lookup and therefore the only
+            // authoritative source; entity variables are just a fallback.
+            // groupId and clubs are deliberately absent: they carry biker
+            // clubs such as REDNECKS, which are not factions.
+            "let fr=null;"
+            "if(helpers&&typeof helpers.getServerFactionId==='function'){"
+            "try{fr=helpers.getServerFactionId.call(helpers,e);}catch(_){}}"
+            "if(fr==null||!String(fr).trim())"
+            "fr=first(e,['serverFactionId','factionKey','factionId','faction']);"
+            "factionKey=String(fr==null?'':fr).trim();"
+            "if(!isFactionKey(factionKey)&&!/^\\d+$/.test(factionKey))factionKey='';"
+            "if(/^\\d+$/.test(factionKey))factionId=Number(factionKey);"
+            "const fty=Number(first(e,['serverFactionType','factionType']));"
+            "if(Number.isFinite(fty)&&fty>0)factionType=fty;"
+            "else if(helpers&&typeof helpers.getServerFactionType==='function'){"
+            "try{factionType=Number(helpers.getServerFactionType.call(helpers,e))||0;}catch(_){}}"
+            // Only trust the entity's own tag once the key proves this really
+            // is a faction, otherwise club names leak in through factionName.
+            "if(factionKey)"
+            "factionTag=label(first(e,['factionTag','factionName','factionTitle']));"
+            "if(!factionTag)factionTag=factionLabel(factionKey,factionType);"
+            "const famRaw=first(e,['familyId','famId']);"
+            "familyId=Number(famRaw);"
+            "if(!Number.isFinite(familyId)||familyId<0)familyId=0;"
+            "familyName=label(first(e,['familyName','__familyName','familyTitle','yachtFamilyName']));"
+            "if(!familyName&&familyId>0)familyName=familyLabel(familyId);"
+            "if(!familyName&&familyId>0&&familyLookup&&apiRoot&&apiRoot.server&&typeof apiRoot.server.rpcCall==='function'){"
+            "const famKey=String(familyId);const now=Date.now();"
+            "if(!cache.pendingFam[famKey]||now-cache.pendingFam[famKey]>15000){"
+            "cache.pendingFam[famKey]=now;"
+            "try{Promise.resolve(apiRoot.server.rpcCall('s:familyPointsWar:getFamilyName',familyId)).then(v=>{if(v&&String(v).trim())cache.families[famKey]=String(v).trim();}).catch(()=>{});}catch(_){}}}"
+            "const sid=first(e,['sqlId','characterId']);"
+            "sqlId=Number(sid);"
+            "if(!Number.isFinite(sqlId)||sqlId<0)sqlId=0;"
+            "const cands=[];"
+            "try{if(helpers&&typeof helpers.getName==='function')cands.push(helpers.getName.call(helpers,e));}catch(_){}"
+            "try{if(helpers&&typeof helpers.getRpPlayerName==='function')cands.push(helpers.getRpPlayerName.call(helpers,e));}catch(_){}"
+            "try{if(helpers){for(const k in helpers){const m=helpers[k];if(m&&typeof m==='object'){"
+            "try{if(m[id])cands.push(m[id]);if(m[h])cands.push(m[h]);if(sqlId>0&&m[sqlId])cands.push(m[sqlId]);"
+            "if(typeof m.get==='function'){cands.push(m.get(e));cands.push(m.get(id));if(sqlId>0)cands.push(m.get(sqlId));}}"
+            "catch(_){}}}}}catch(_){}"
+            "if(cache.chars['r_'+id])cands.push(cache.chars['r_'+id]);"
+            "if(cache.chars['h_'+h])cands.push(cache.chars['h_'+h]);"
+            "if(sqlId>0&&cache.chars[String(sqlId)])cands.push(cache.chars[String(sqlId)]);"
+            "if(rage.serverDataKeys){for(const k in rage.serverDataKeys){"
+            "const sk=rage.serverDataKeys[k];if(sk){try{cands.push(e.getVariable(sk));}catch(_){}}}}"
+            "try{if(root.playerFriendsReplaceString)cands.push(root.playerFriendsReplaceString(id));}catch(_){}"
+            "try{if(root.getEntityVariable)cands.push(root.getEntityVariable(e,'charName',''));}catch(_){}"
+            "cands.push(read(e,'charName'));cands.push(read(e,'__displayCharName'));"
+            "cands.push(read(e,'characterName'));cands.push(read(e,'realName'));"
+            "cands.push(read(e,'playerName'));cands.push(read(e,'Nickname'));"
+            "cands.push(read(e,'nickname'));cands.push(read(e,'__displayName'));"
+            "cands.push(e.name);"
+            "realName='';"
+            "for(const c of cands){const cl=cleanLabel(c,id);if(isRealPerson(cl)){realName=cl;break;}}"
+            "if(realName){if(sqlId>0)cache.chars[String(sqlId)]=realName;if(id>=0)cache.chars['r_'+id]=realName;if(h>0)cache.chars['h_'+h]=realName;}"
+            "if(!realName&&sqlId>0&&cache.chars[String(sqlId)])realName=cache.chars[String(sqlId)];"
+            "if(!realName&&id>=0&&cache.chars['r_'+id])realName=cache.chars['r_'+id];"
+            "if(!realName&&h>0&&cache.chars['h_'+h])realName=cache.chars['h_'+h];"
+            "displayName=realName;"
+            "if(!displayName){for(const c of cands){const cl=cleanLabel(c,id);if(cl&&!isTitle(cl)&&!isIdLabel(cl)&&cl!=='Player'&&cl!=='Unknown'&&cl!=='Citizen'){displayName=cl;break;}}}"
+            "if(!displayName)displayName='\\u0413\\u0440\\u0430\\u0436\\u0434\\u0430\\u043d\\u0438\\u043d';"
+            "nickname=realName;"
+            "}catch(_){}"
+            "}"
+            "try{if(typeof e.getHealth==='function'){"
+            "const raw=Number(e.getHealth());"
+            "if(Number.isFinite(raw))hpRaw=raw;}}catch(_){}"
+            // health is what RAGE syncs, and it stays in roleplay hit points.
+            "try{const s=Number(e.health);"
+            "if(Number.isFinite(s)&&s>=0)hpSync=s;}catch(_){}"
+            // Measured live against the ped read out of memory: RAGE hands out
+            // player health already on the roleplay 0..100 scale, while the ped
+            // itself carries the GTA baseline of 100 that the client writes as
+            // setHealth(100+hp). So this value needs no correction.
+            "if(Number.isFinite(hpRaw))hp=hpRaw;"
+            "try{if(typeof e.isDeadOrDying==='function')"
+            "dying=e.isDeadOrDying(true)?1:0;"
+            "else if(typeof e.isDead==='function')dying=e.isDead()?1:0;}"
+            "catch(_){}"
+            // Zero roleplay hit points is the reliable signal: the client plays
+            // the death task only on the dying player's own machine, so a
+            // corpse streamed to us need not read as dead natively. The flag
+            // is the fallback when health is unreadable, and -1 means the
+            // native itself was missing.
+            "if(Number.isFinite(hp)){if(hp<=0)dead=1;}"
+            "else if(dying===1)dead=1;"
+            // Fatally injured with hit points left is the bleeding-out window,
+            // which the overlay draws apart from a finished death.
+            "if(dying===1&&!dead)knock=1;"
+            "try{if(typeof e.getHeading==='function')heading=Number(e.getHeading());"
+            "else if(typeof e.getRotation==='function'){const r=e.getRotation(2);"
+            "heading=Number(r&&r.z);}"
+            "if(!Number.isFinite(heading))heading=0;}catch(_){heading=0;}"
+            "const head={x:Number(p.x),y:Number(p.y),z:Number(p.z)+0.8};"
+            "const visible=clear(e,head);"
+            "let name=kind===0?(realName||displayName):"
+            "kind===2?String(e.name||'Animal'):String(e.name||'NPC');"
+            "const safe=v=>String(v==null?'':v).replace(/[\\t\\r\\n]/g,' ');"
+            // -1 keeps an unreadable value apart from a genuine zero.
+            "const hpOut=v=>Number.isFinite(v)?Math.round(v*10)/10:-1;"
+            "const row=[kind,isLocal?1:0,"
+            "Number.isFinite(id)?id:-1,h,"
+            "Number(p.x),Number(p.y),Number(p.z),admin,"
+            "visible?1:0,factionId,"
+            "safe(name),safe(factionTag),safe(familyName),"
+            "sqlId,safe(nickname),dead,knock,familyId,factionType,"
+            "safe(factionKey),heading,hpOut(hp),hpOut(hpSync),"
+            "hpOut(hpRaw),dying];"
+            "rows.push(row.join('\\t'));};"
+            "emit(local,0,true);"
+            "if(rage.players&&rage.players.forEach)rage.players.forEach(p=>emit(p,0,p===local));"
+            "if(includeNonPlayers&&rage.peds&&rage.peds.forEach)"
+            "rage.peds.forEach(p=>{let k=1;try{if(rage.game&&rage.game.ped&&rage.game.ped.isPedHuman){if(!rage.game.ped.isPedHuman(p.handle))k=2;}else if((rage.game&&rage.game.invoke&&rage.game.invoke('0xFF059E1E4C01E63C',p.handle)>>>0)===28)k=2;}catch(_){}emit(p,k,false);});"
+            "vis.cursor=visIndex?((visStart+visBudget)%%visIndex):0;"
+            "return rows.join('\\n');",
+            adminKey,
+            needsVisibility ? 1 : 0,
+            includeNonPlayers ? 1 : 0,
+            familyLookupDemand ? 1 : 0);
+        const bool ok = length > 0 &&
+            length < static_cast<int>(
+                sizeof(g_SnapshotScript));
+        if (ok)
+        {
+            g_ScriptKey.built = true;
+            g_ScriptKey.needsVisibility = needsVisibility;
+            g_ScriptKey.includeNonPlayers = includeNonPlayers;
+            g_ScriptKey.familyLookup = familyLookupDemand;
+            lstrcpynA(
+                g_ScriptKey.adminKey,
+                adminKey,
+                static_cast<int>(
+                    sizeof(g_ScriptKey.adminKey)));
+        }
+        else
+        {
+            g_ScriptKey = {};
+        }
+        return ok;
+    }
+
+    bool ParseRemoteId(
+        const char* begin,
+        const char* end,
+        std::uint16_t& remoteId) noexcept
+    {
+        if (!begin || !end || begin >= end)
+            return false;
+        bool negative = false;
+        if (*begin == '-')
+        {
+            negative = true;
+            ++begin;
+        }
+        std::uint32_t value = 0;
+        int digits = 0;
+        while (begin < end)
+        {
+            if (*begin < '0' || *begin > '9')
+                return false;
+            value = value * 10 +
+                static_cast<std::uint32_t>(*begin - '0');
+            if (value > 0xFFFF)
+                return false;
+            ++digits;
+            ++begin;
+        }
+        if (!digits)
+            return false;
+        remoteId = negative
+            ? static_cast<std::uint16_t>(0xFFFF)
+            : static_cast<std::uint16_t>(value);
+        return true;
+    }
+
+    bool ParseUnsigned(
+        const char* begin,
+        const char* end,
+        std::uint32_t& value) noexcept
+    {
+        value = 0;
+        if (!begin || !end || begin >= end)
+            return false;
+        int digits = 0;
+        while (begin < end)
+        {
+            if (*begin < '0' || *begin > '9')
+                return false;
+            value = value * 10 +
+                static_cast<std::uint32_t>(*begin - '0');
+            ++digits;
+            ++begin;
+        }
+        return digits != 0;
+    }
+
+    bool ParseFloat(
+        const char* begin,
+        const char* end,
+        float& value) noexcept
+    {
+        value = 0.0f;
+        if (!begin || !end || begin >= end)
+            return false;
+        char buffer[64]{};
+        int length = static_cast<int>(end - begin);
+        if (length >= static_cast<int>(sizeof(buffer)))
+            return false;
+        for (int index = 0; index < length; ++index)
+            buffer[index] = begin[index];
+        char* parseEnd = nullptr;
+        value = std::strtof(buffer, &parseEnd);
+        return parseEnd && parseEnd != buffer &&
+            *parseEnd == 0;
+    }
+
+    bool IsUsefulPlayerName(const char* value) noexcept
+    {
+        if (!value || !value[0])
+            return false;
+        const unsigned char* cursor =
+            reinterpret_cast<const unsigned char*>(value);
+        while (*cursor == ' ' || *cursor == '\t')
+            ++cursor;
+        if (*cursor == '#')
+            ++cursor;
+        else if ((cursor[0] == 'I' || cursor[0] == 'i') &&
+                 (cursor[1] == 'D' || cursor[1] == 'd'))
+        {
+            cursor += 2;
+            while (*cursor == ' ' || *cursor == '\t')
+                ++cursor;
+            if (*cursor == ':')
+                ++cursor;
+            while (*cursor == ' ' || *cursor == '\t')
+                ++cursor;
+        }
+        const unsigned char* numeric = cursor;
+        while (*cursor >= '0' && *cursor <= '9')
+            ++cursor;
+        if (cursor != numeric)
+        {
+            while (*cursor == ' ' || *cursor == '\t')
+                ++cursor;
+            if (*cursor == '(')
+            {
+                ++cursor;
+                const unsigned char* suffix = cursor;
+                while (*cursor >= '0' && *cursor <= '9')
+                    ++cursor;
+                if (cursor != suffix && *cursor == ')')
+                    ++cursor;
+                else
+                    cursor = suffix;
+            }
+            while (*cursor == ' ' || *cursor == '\t')
+                ++cursor;
+            if (!*cursor)
+                return false;
+        }
+        if (lstrcmpiA(value, "Player") == 0 ||
+            lstrcmpiA(value, "Citizen") == 0 ||
+            lstrcmpiA(value, "Unknown") == 0 ||
+            _strnicmp(value, "Player", 6) == 0 ||
+            _strnicmp(value, "Citizen", 7) == 0 ||
+            _strnicmp(value, "Unknown", 7) == 0 ||
+            strncmp(value, u8"Гражданин", 18) == 0 ||
+            strncmp(value, u8"Гражданка", 18) == 0 ||
+            strncmp(value, u8"Незнакомец", 20) == 0)
+            return false;
+        return _strnicmp(value, "Player #", 8) != 0;
+    }
+
+    bool IsStringFaction(
+        const char* key,
+        const char* tag) noexcept
+    {
+        auto useful = [](const char* value) -> bool {
+            if (!value || !value[0])
+                return false;
+            for (const char* cursor = value; *cursor; ++cursor)
+            {
+                if (*cursor < '0' || *cursor > '9')
+                    return true;
+            }
+            return false;
+        };
+        return useful(key) || useful(tag);
+    }
+
+    bool IsUsefulFamilyName(const char* value) noexcept
+    {
+        if (!value || !value[0])
+            return false;
+        bool digitsOnly = true;
+        for (const unsigned char* cursor =
+                 reinterpret_cast<
+                     const unsigned char*>(value);
+             *cursor;
+             ++cursor)
+        {
+            if (*cursor < '0' || *cursor > '9')
+            {
+                digitsOnly = false;
+                break;
+            }
+        }
+        if (digitsOnly)
+            return false;
+        const char* suffix = nullptr;
+        if (_strnicmp(value, "Family", 6) == 0)
+            suffix = value + 6;
+        else if (_strnicmp(value, "Fam", 3) == 0)
+            suffix = value + 3;
+        if (!suffix)
+            return true;
+        while (*suffix == ' ' || *suffix == '#')
+            ++suffix;
+        return *suffix < '0' || *suffix > '9';
+    }
+
+#if RAGEMP_DEV_BUILD
+    // A death lasts seconds and is easy to miss on screen, so every fresh
+    // sighting records the readings behind it. Players who stay down are not
+    // repeated, and one who gets up is armed again for the next time.
+    void LogDeathSightings(
+        const NameEntry* entries,
+        int count) noexcept
+    {
+        constexpr int kTracked = 64;
+        static std::uint16_t reported[kTracked]{};
+        static int reportedCount = 0;
+        std::uint16_t active[kTracked]{};
+        int activeCount = 0;
+        for (int index = 0; index < count; ++index)
+        {
+            const NameEntry& entry = entries[index];
+            if (entry.kind !=
+                    RagePlayerNames::EntityKind::Player ||
+                (!entry.dead && !entry.knock))
+                continue;
+            if (activeCount < kTracked)
+                active[activeCount++] = entry.remoteId;
+            bool known = false;
+            for (int seen = 0;
+                 seen < reportedCount && !known;
+                 ++seen)
+                known = reported[seen] == entry.remoteId;
+            if (known)
+                continue;
+            char line[192]{};
+            _snprintf(
+                line,
+                sizeof(line) - 1,
+                "[DEATH] id=%u %s name=%s hp=%.0f raw=%.0f "
+                "sync=%.0f dying=%d",
+                static_cast<unsigned>(entry.remoteId),
+                entry.dead ? "dead" : "knock",
+                entry.name[0] ? entry.name : "?",
+                entry.hp,
+                entry.hpRaw,
+                entry.hpSync,
+                entry.dyingFlag);
+            hooks::HLog(line);
+        }
+        reportedCount = 0;
+        for (int index = 0; index < activeCount; ++index)
+            reported[reportedCount++] = active[index];
+    }
+#endif
+
+    void ParseSnapshot(const char* text) noexcept
+    {
+        NameEntry parsed[256]{};
+        int parsedCount = 0;
+        const char* cursor = text ? text : "";
+        int helperReady = 0;
+        int canonicalNames = 0;
+        int fallbackNames = 0;
+        int stringFactions = 0;
+        int familyCacheCount = 0;
+        int familyPendingCount = 0;
+        int familyCanary = 0;
+        int familyRpcDisabled = 0;
+            constexpr int kFieldCount = 25;
+            while (*cursor && parsedCount < 256)
+            {
+                const char* lineEnd = cursor;
+                while (*lineEnd && *lineEnd != '\n')
+                    ++lineEnd;
+                if (strncmp(
+                        cursor,
+                        "@identity\t",
+                        10) == 0)
+                {
+                    std::sscanf(
+                        cursor,
+                        "@identity\t%d\t%d\t%d\t%d\t%d\t%d\t%d\t%d",
+                        &helperReady,
+                        &canonicalNames,
+                        &fallbackNames,
+                        &stringFactions,
+                        &familyCacheCount,
+                        &familyPendingCount,
+                        &familyCanary,
+                        &familyRpcDisabled);
+                    cursor = *lineEnd
+                        ? lineEnd + 1 : lineEnd;
+                    continue;
+                }
+
+                const char* fieldBegin[kFieldCount]{};
+                const char* fieldEnd[kFieldCount]{};
+                const char* field = cursor;
+                bool fieldsValid = true;
+                for (int index = 0;
+                     index < kFieldCount - 1;
+                     ++index)
+                {
+                    fieldBegin[index] = field;
+                    while (field < lineEnd && *field != '\t')
+                        ++field;
+                    if (field >= lineEnd)
+                    {
+                        fieldsValid = false;
+                        break;
+                    }
+                    fieldEnd[index] = field;
+                    ++field;
+                }
+                fieldBegin[kFieldCount - 1] = field;
+                fieldEnd[kFieldCount - 1] = lineEnd;
+
+                std::uint32_t kind = 0;
+                std::uint32_t local = 0;
+                std::uint16_t remoteId = 0;
+                std::uint32_t handle = 0;
+                float x = 0.0f;
+                float y = 0.0f;
+                float z = 0.0f;
+                float adminLevel = 0.0f;
+                std::uint32_t visible = 0;
+                float factionId = 0.0f;
+                if (fieldsValid &&
+                    ParseUnsigned(
+                        fieldBegin[0],
+                        fieldEnd[0],
+                        kind) &&
+                    kind <= 2 &&
+                    ParseUnsigned(
+                        fieldBegin[1],
+                        fieldEnd[1],
+                        local) &&
+                    local <= 1 &&
+                    ParseRemoteId(
+                        fieldBegin[2],
+                        fieldEnd[2],
+                        remoteId) &&
+                    ParseUnsigned(
+                        fieldBegin[3],
+                        fieldEnd[3],
+                        handle) &&
+                    handle != 0 &&
+                    ParseFloat(fieldBegin[4], fieldEnd[4], x) &&
+                    ParseFloat(fieldBegin[5], fieldEnd[5], y) &&
+                    ParseFloat(fieldBegin[6], fieldEnd[6], z) &&
+                    std::isfinite(x) &&
+                    std::isfinite(y) &&
+                    std::isfinite(z) &&
+                    ParseFloat(
+                        fieldBegin[7],
+                        fieldEnd[7],
+                        adminLevel) &&
+                    std::isfinite(adminLevel) &&
+                    ParseUnsigned(
+                        fieldBegin[8],
+                        fieldEnd[8],
+                        visible) &&
+                    ParseFloat(
+                        fieldBegin[9],
+                        fieldEnd[9],
+                        factionId) &&
+                    std::isfinite(factionId))
+                {
+                    NameEntry& entry = parsed[parsedCount++];
+                    entry.kind = static_cast<
+                        RagePlayerNames::EntityKind>(kind);
+                    entry.local = local != 0;
+                    entry.remoteId = remoteId;
+                    entry.handle = handle;
+                    entry.x = x;
+                    entry.y = y;
+                    entry.z = z;
+                    entry.adminLevel =
+                        static_cast<int>(adminLevel);
+                    entry.visible = visible != 0;
+                    entry.factionId =
+                        static_cast<int>(factionId);
+                    if (entry.factionId < 0)
+                        entry.factionId = 0;
+
+                    auto copyField =
+                        [](char* dest,
+                           int destSize,
+                           const char* begin,
+                           const char* end) {
+                            int length =
+                                static_cast<int>(end - begin);
+                            if (length > 0 &&
+                                begin[length - 1] == '\r')
+                                --length;
+                            if (length > destSize - 1)
+                                length = destSize - 1;
+                            for (int i = 0; i < length; ++i)
+                                dest[i] = begin[i];
+                            dest[length] = 0;
+                        };
+                    copyField(
+                        entry.name,
+                        static_cast<int>(sizeof(entry.name)),
+                        fieldBegin[10],
+                        fieldEnd[10]);
+                    if (!entry.name[0] && kind != 0)
+                        lstrcpynA(
+                            entry.name,
+                            kind == 2 ? "Animal" : "NPC",
+                            static_cast<int>(
+                                sizeof(entry.name)));
+                    copyField(
+                        entry.factionTag,
+                        static_cast<int>(
+                            sizeof(entry.factionTag)),
+                        fieldBegin[11],
+                        fieldEnd[11]);
+                    copyField(
+                        entry.familyName,
+                        static_cast<int>(
+                            sizeof(entry.familyName)),
+                        fieldBegin[12],
+                        fieldEnd[12]);
+
+                    float sqlIdF = 0.f;
+                    std::uint32_t dead = 0;
+                    std::uint32_t knock = 0;
+                    float familyIdF = 0.f;
+                    float factionTypeF = 0.f;
+                    if (ParseFloat(
+                            fieldBegin[13],
+                            fieldEnd[13],
+                            sqlIdF) &&
+                        std::isfinite(sqlIdF))
+                        entry.sqlId = static_cast<int>(sqlIdF);
+                    copyField(
+                        entry.nickname,
+                        static_cast<int>(
+                            sizeof(entry.nickname)),
+                        fieldBegin[14],
+                        fieldEnd[14]);
+                    if (ParseUnsigned(
+                            fieldBegin[15],
+                            fieldEnd[15],
+                            dead))
+                        entry.dead = dead != 0;
+                    if (ParseUnsigned(
+                            fieldBegin[16],
+                            fieldEnd[16],
+                            knock))
+                        entry.knock = knock != 0;
+                    if (ParseFloat(
+                            fieldBegin[17],
+                            fieldEnd[17],
+                            familyIdF) &&
+                        std::isfinite(familyIdF) &&
+                        familyIdF > 0.f)
+                        entry.familyId =
+                            static_cast<int>(familyIdF);
+                    if (ParseFloat(
+                            fieldBegin[18],
+                            fieldEnd[18],
+                            factionTypeF) &&
+                        std::isfinite(factionTypeF) &&
+                        factionTypeF > 0.f)
+                        entry.factionType =
+                            static_cast<int>(factionTypeF);
+                    copyField(
+                        entry.factionKey,
+                        static_cast<int>(
+                            sizeof(entry.factionKey)),
+                        fieldBegin[19],
+                        fieldEnd[19]);
+                    float headingF = 0.f;
+                    if (ParseFloat(
+                            fieldBegin[20],
+                            fieldEnd[20],
+                            headingF) &&
+                        std::isfinite(headingF))
+                        entry.heading = headingF;
+                    float hpF = -1.f;
+                    if (ParseFloat(
+                            fieldBegin[21],
+                            fieldEnd[21],
+                            hpF) &&
+                        std::isfinite(hpF))
+                        entry.hp = hpF;
+                    float hpSyncF = -1.f;
+                    if (ParseFloat(
+                            fieldBegin[22],
+                            fieldEnd[22],
+                            hpSyncF) &&
+                        std::isfinite(hpSyncF))
+                        entry.hpSync = hpSyncF;
+                    float hpRawF = -1.f;
+                    if (ParseFloat(
+                            fieldBegin[23],
+                            fieldEnd[23],
+                            hpRawF) &&
+                        std::isfinite(hpRawF))
+                        entry.hpRaw = hpRawF;
+                    float dyingF = -1.f;
+                    if (ParseFloat(
+                            fieldBegin[24],
+                            fieldEnd[24],
+                            dyingF) &&
+                        std::isfinite(dyingF))
+                        entry.dyingFlag = static_cast<int>(dyingF);
+                    if (entry.factionId <= 0 &&
+                        !entry.factionKey[0])
+                        entry.factionTag[0] = 0;
+
+                    if (!IsUsefulPlayerName(entry.nickname))
+                        entry.nickname[0] = 0;
+                    if (!IsUsefulPlayerName(entry.name))
+                    {
+                        if (entry.kind != RagePlayerNames::EntityKind::Player)
+                        {
+                            lstrcpynA(
+                                entry.name,
+                                entry.kind ==
+                                        RagePlayerNames::EntityKind::Animal
+                                    ? "Animal" : "NPC",
+                                static_cast<int>(
+                                    sizeof(entry.name)));
+                        }
+                        else
+                        {
+                            entry.name[0] = 0;
+                        }
+                    }
+
+                    if (entry.kind ==
+                        RagePlayerNames::EntityKind::Player)
+                    {
+                        FiveRpMetadataResolver::Metadata
+                            metadata{};
+                        if (FiveRpMetadataResolver::TryGet(
+                                entry.remoteId,
+                                entry.handle,
+                                metadata))
+                        {
+                            if (metadata.factionId > 0)
+                                entry.factionId =
+                                    metadata.factionId;
+                            if (metadata.factionType > 0)
+                                entry.factionType =
+                                    metadata.factionType;
+                            if (metadata.factionKey[0])
+                                lstrcpynA(
+                                    entry.factionKey,
+                                    metadata.factionKey,
+                                    static_cast<int>(
+                                        sizeof(entry.factionKey)));
+                            if (metadata.factionTag[0])
+                                lstrcpynA(
+                                    entry.factionTag,
+                                    metadata.factionTag,
+                                    static_cast<int>(
+                                        sizeof(entry.factionTag)));
+                            if (metadata.familyId > 0)
+                                entry.familyId =
+                                    metadata.familyId;
+                            entry.masked =
+                                metadata.masked;
+                            entry.displayAdmin =
+                                metadata.displayAdmin;
+                            entry.nametagDisabled =
+                                metadata.nametagDisabled;
+                            if (metadata.characterId > 0)
+                                entry.sqlId =
+                                    metadata.characterId;
+                            if (IsUsefulPlayerName(
+                                    metadata.name))
+                                lstrcpynA(
+                                    entry.name,
+                                    metadata.name,
+                                    static_cast<int>(
+                                        sizeof(entry.name)));
+                            if (IsUsefulPlayerName(
+                                    metadata.name))
+                                lstrcpynA(
+                                    entry.nickname,
+                                    metadata.name,
+                                    static_cast<int>(
+                                        sizeof(entry.nickname)));
+                            if (IsUsefulFamilyName(
+                                    metadata.familyName))
+                                lstrcpynA(
+                                    entry.familyName,
+                                    metadata.familyName,
+                                    static_cast<int>(
+                                        sizeof(entry.familyName)));
+                            if (entry.displayAdmin &&
+                                entry.adminLevel <= 0)
+                                entry.adminLevel = 1;
+                        }
+                    }
+                }
+                cursor = *lineEnd ? lineEnd + 1 : lineEnd;
+            }
+
+#if RAGEMP_DEV_BUILD
+        LogDeathSightings(parsed, parsedCount);
+#endif
+
+        const ULONGLONG now = GetTickCount64();
+        ULONGLONG nameGoodAt[256]{};
+        const auto metadataStatus =
+            FiveRpMetadataResolver::GetStatus();
+        Lock();
+        for (int index = 0;
+             index < parsedCount;
+             ++index)
+        {
+            auto& current = parsed[index];
+            if (current.kind !=
+                RagePlayerNames::EntityKind::Player)
+                continue;
+            for (int observedIndex = 0;
+                 observedIndex < g_ObservedPlayerCount;
+                 ++observedIndex)
+            {
+                const auto& observed =
+                    g_ObservedPlayers[observedIndex];
+                if (!observed.valid ||
+                    observed.remoteId != current.remoteId ||
+                    now - observed.updatedAt > 180000)
+                    continue;
+                if (IsUsefulPlayerName(observed.name))
+                {
+                    lstrcpynA(
+                        current.name,
+                        observed.name,
+                        static_cast<int>(
+                            sizeof(current.name)));
+                    lstrcpynA(
+                        current.nickname,
+                        observed.name,
+                        static_cast<int>(
+                            sizeof(current.nickname)));
+                }
+                if (observed.factionTag[0])
+                {
+                    lstrcpynA(
+                        current.factionTag,
+                        observed.factionTag,
+                        static_cast<int>(
+                            sizeof(current.factionTag)));
+                }
+                break;
+            }
+            if (current.familyId <= 0)
+                continue;
+            for (int familyIndex = 0;
+                 familyIndex < g_ObservedFamilyCount;
+                 ++familyIndex)
+            {
+                const auto& family =
+                    g_ObservedFamilies[familyIndex];
+                if (!family.valid ||
+                    family.familyId != current.familyId ||
+                    now - family.updatedAt > 300000 ||
+                    !IsUsefulFamilyName(family.name))
+                    continue;
+                lstrcpynA(
+                    current.familyName,
+                    family.name,
+                    static_cast<int>(
+                        sizeof(current.familyName)));
+                break;
+            }
+        }
+        for (int index = 0;
+             index < parsedCount;
+             ++index)
+        {
+            auto& current = parsed[index];
+            if (current.kind !=
+                RagePlayerNames::EntityKind::Player)
+                continue;
+            if (IsUsefulPlayerName(current.name))
+            {
+                nameGoodAt[index] = now;
+                continue;
+            }
+            for (int previous = 0;
+                 previous < g_Count;
+                 ++previous)
+            {
+                const auto& cached = g_Entries[previous];
+                if (cached.remoteId != current.remoteId ||
+                    cached.handle != current.handle ||
+                    (cached.sqlId > 0 &&
+                     current.sqlId > 0 &&
+                     cached.sqlId != current.sqlId) ||
+                    !IsUsefulPlayerName(cached.name) ||
+                    !g_NameGoodAt[previous] ||
+                    now - g_NameGoodAt[previous] > 5000)
+                    continue;
+                lstrcpynA(
+                    current.name,
+                    cached.name,
+                    static_cast<int>(
+                        sizeof(current.name)));
+                lstrcpynA(
+                    current.nickname,
+                    cached.nickname,
+                    static_cast<int>(
+                        sizeof(current.nickname)));
+                if (!current.factionKey[0])
+                {
+                    lstrcpynA(
+                        current.factionKey,
+                        cached.factionKey,
+                        static_cast<int>(
+                            sizeof(current.factionKey)));
+                    lstrcpynA(
+                        current.factionTag,
+                        cached.factionTag,
+                        static_cast<int>(
+                            sizeof(current.factionTag)));
+                }
+                if (!current.familyName[0] &&
+                    current.familyId ==
+                        cached.familyId)
+                {
+                    lstrcpynA(
+                        current.familyName,
+                        cached.familyName,
+                        static_cast<int>(
+                            sizeof(current.familyName)));
+                }
+                nameGoodAt[index] =
+                    g_NameGoodAt[previous];
+                break;
+            }
+        }
+        int overlayCanonical = 0;
+        int overlayFallback = 0;
+        int overlayStringFactions = 0;
+        for (int index = 0;
+             index < parsedCount;
+             ++index)
+        {
+            const auto& current = parsed[index];
+            if (current.kind !=
+                RagePlayerNames::EntityKind::Player)
+                continue;
+            if (IsUsefulPlayerName(current.name))
+                ++overlayCanonical;
+            else
+                ++overlayFallback;
+            if (IsStringFaction(
+                    current.factionKey,
+                    current.factionTag))
+                ++overlayStringFactions;
+        }
+        g_HelperReady =
+            metadataStatus.helperVisible ||
+            helperReady != 0 ||
+            overlayCanonical > 0 ||
+            g_ObservedPlayerCount > 0;
+        g_CanonicalNames =
+            overlayCanonical > 0
+                ? overlayCanonical
+                : canonicalNames;
+        g_FallbackNames =
+            overlayCanonical > 0 || overlayFallback > 0
+                ? overlayFallback
+                : fallbackNames;
+        g_StringFactions =
+            overlayStringFactions > 0
+                ? overlayStringFactions
+                : stringFactions;
+        g_FamilyCacheCount =
+            metadataStatus.familyCacheCount +
+            g_ObservedFamilyCount;
+        if (g_FamilyCacheCount <= 0)
+            g_FamilyCacheCount = familyCacheCount;
+        g_FamilyPendingCount =
+            metadataStatus.familyPendingCount > 0
+                ? metadataStatus.familyPendingCount
+                : familyPendingCount;
+        g_FamilyCanary =
+            metadataStatus.familyCanary ||
+            familyCanary != 0 ||
+            g_ObservedFamilyCount > 0;
+        g_FamilyRpcDisabled =
+            metadataStatus.familyRpcDisabled ||
+            familyRpcDisabled != 0;
+        g_Count = parsedCount;
+        for (int index = 0; index < parsedCount; ++index)
+        {
+            g_Entries[index] = parsed[index];
+            g_NameGoodAt[index] = nameGoodAt[index];
+        }
+        for (int index = parsedCount; index < 256; ++index)
+        {
+            g_Entries[index] = {};
+            g_NameGoodAt[index] = 0;
+        }
+        ++g_Generation;
+        Unlock();
+    }
+}
+
+namespace RagePlayerNames
+{
+    void ObserveIdentity(
+        std::uint16_t remoteId,
+        const char* name,
+        const char* factionTag) noexcept
+    {
+        if (!IsUsefulPlayerName(name) &&
+            (!factionTag || !factionTag[0]))
+            return;
+        const ULONGLONG now = GetTickCount64();
+        Lock();
+        int slot = -1;
+        for (int index = 0;
+             index < g_ObservedPlayerCount;
+             ++index)
+        {
+            if (g_ObservedPlayers[index].valid &&
+                g_ObservedPlayers[index].remoteId == remoteId)
+            {
+                slot = index;
+                break;
+            }
+        }
+        if (slot < 0)
+        {
+            if (g_ObservedPlayerCount < 256)
+                slot = g_ObservedPlayerCount++;
+            else
+            {
+                slot = 0;
+                for (int index = 1; index < 256; ++index)
+                {
+                    if (g_ObservedPlayers[index].updatedAt <
+                        g_ObservedPlayers[slot].updatedAt)
+                        slot = index;
+                }
+            }
+            g_ObservedPlayers[slot] = {};
+            g_ObservedPlayers[slot].valid = true;
+            g_ObservedPlayers[slot].remoteId = remoteId;
+        }
+        auto& observed = g_ObservedPlayers[slot];
+        observed.updatedAt = now;
+        if (IsUsefulPlayerName(name))
+        {
+            lstrcpynA(
+                observed.name,
+                name,
+                static_cast<int>(sizeof(observed.name)));
+        }
+        if (factionTag && factionTag[0])
+        {
+            lstrcpynA(
+                observed.factionTag,
+                factionTag,
+                static_cast<int>(
+                    sizeof(observed.factionTag)));
+        }
+        for (int index = 0; index < g_Count; ++index)
+        {
+            auto& current = g_Entries[index];
+            if (current.kind != EntityKind::Player ||
+                current.remoteId != remoteId)
+                continue;
+            if (IsUsefulPlayerName(observed.name))
+            {
+                lstrcpynA(
+                    current.name,
+                    observed.name,
+                    static_cast<int>(sizeof(current.name)));
+                lstrcpynA(
+                    current.nickname,
+                    observed.name,
+                    static_cast<int>(
+                        sizeof(current.nickname)));
+                g_NameGoodAt[index] = now;
+            }
+            if (observed.factionTag[0])
+            {
+                lstrcpynA(
+                    current.factionTag,
+                    observed.factionTag,
+                    static_cast<int>(
+                        sizeof(current.factionTag)));
+            }
+        }
+        ++g_Generation;
+        Unlock();
+    }
+
+    void ObserveFamily(
+        int familyId,
+        const char* name) noexcept
+    {
+        if (familyId <= 0 || !IsUsefulFamilyName(name))
+            return;
+        const ULONGLONG now = GetTickCount64();
+        Lock();
+        int slot = -1;
+        for (int index = 0;
+             index < g_ObservedFamilyCount;
+             ++index)
+        {
+            if (g_ObservedFamilies[index].valid &&
+                g_ObservedFamilies[index].familyId == familyId)
+            {
+                slot = index;
+                break;
+            }
+        }
+        if (slot < 0)
+        {
+            if (g_ObservedFamilyCount < 128)
+                slot = g_ObservedFamilyCount++;
+            else
+            {
+                slot = 0;
+                for (int index = 1; index < 128; ++index)
+                {
+                    if (g_ObservedFamilies[index].updatedAt <
+                        g_ObservedFamilies[slot].updatedAt)
+                        slot = index;
+                }
+            }
+            g_ObservedFamilies[slot] = {};
+            g_ObservedFamilies[slot].valid = true;
+            g_ObservedFamilies[slot].familyId = familyId;
+        }
+        auto& observed = g_ObservedFamilies[slot];
+        observed.updatedAt = now;
+        lstrcpynA(
+            observed.name,
+            name,
+            static_cast<int>(sizeof(observed.name)));
+        for (int index = 0; index < g_Count; ++index)
+        {
+            auto& current = g_Entries[index];
+            if (current.kind != EntityKind::Player ||
+                current.familyId != familyId)
+                continue;
+            lstrcpynA(
+                current.familyName,
+                observed.name,
+                static_cast<int>(
+                    sizeof(current.familyName)));
+        }
+        ++g_Generation;
+        Unlock();
+    }
+
+    void Update() noexcept
+    {
+        const auto status = RageV8Runtime::GetStatus();
+        const ULONGLONG now = GetTickCount64();
+        if (status.generation != g_RuntimeGeneration)
+        {
+            g_RuntimeGeneration = status.generation;
+            ResetSessionState();
+        }
+
+        if (g_PendingCommand)
+        {
+            // The readiness probe comes first: a Result is 32 KB and zeroing it
+            // on the stack every frame while the script is still running is
+            // pure waste.
+            if (RageV8Runtime::HasResultFor(g_PendingCommand))
+            {
+                RageV8Runtime::Result result{};
+                if (RageV8Runtime::PollResultFor(
+                        g_PendingCommand,
+                        result))
+                {
+                    if (result.success &&
+                        std::strncmp(
+                            result.text,
+                            "BridgeError:",
+                            12) != 0)
+                    {
+                        ParseSnapshot(result.text);
+                    }
+                    else if (result.text[0])
+                    {
+                        hooks::HLog(result.text);
+                    }
+                }
+                g_PendingCommand = 0;
+            }
+            else if (now - g_LastRequest >= 1500 ||
+                     status.state != RageV8Runtime::State::Ready ||
+                     !status.rootCaptured)
+            {
+                g_PendingCommand = 0;
+            }
+        }
+
+        const auto& npcProfile =
+            Menu::s_EspProfiles[static_cast<int>(
+                Menu::EspProfileId::Npc)];
+        const auto& animalProfile =
+            Menu::s_EspProfiles[static_cast<int>(
+                Menu::EspProfileId::Animal)];
+        const bool includeNonPlayers =
+            npcProfile.enabled ||
+            animalProfile.enabled ||
+            (Menu::s_RadarSettings.enabled &&
+             Menu::s_RadarSettings.showNpcs);
+        bool profileDemand = false;
+        bool visibilityDemand =
+            Features::g_AimbotEnabled;
+        for (int index = 0;
+             index < static_cast<int>(
+                 Menu::EspProfileId::Count);
+             ++index)
+        {
+            const auto& profile =
+                Menu::s_EspProfiles[index];
+            profileDemand |= profile.enabled;
+            visibilityDemand |=
+                profile.enabled &&
+                profile.visibleCheck;
+        }
+        const bool active =
+            Features::g_EspEnabled ||
+            Features::g_AimbotEnabled ||
+            profileDemand ||
+            Menu::s_RadarSettings.enabled ||
+            Menu::s_VehicleVisualSettings.enabled ||
+            Menu::s_ObjectVisualSettings.enabled ||
+            Menu::NeedsPlayerCache();
+        const ULONGLONG refreshInterval =
+            active ? 250ULL : 1000ULL;
+
+        // One script runs per V8 pump, so queueing behind another heavy job
+        // only stacks two long ticks back to back on the game's JS thread.
+        // Waiting a few frames costs nothing: the data set is unchanged.
+        if (!g_PendingCommand &&
+            status.queuedCommands == 0 &&
+            status.state == RageV8Runtime::State::Ready &&
+            status.rootCaptured &&
+            (GetAsyncKeyState(VK_F1) & 0x8000) == 0 &&
+            now - g_LastRequest >= refreshInterval)
+        {
+            g_LastRequest = now;
+            if (BuildSnapshotScript(
+                    visibilityDemand,
+                    includeNonPlayers))
+            {
+                if (RageV8Runtime::Enqueue(
+                        g_SnapshotScript,
+                        &g_PendingCommand))
+                {
+                    RuntimeProfiler::
+                        RecordVisibilitySamples(
+                            visibilityDemand
+                                ? 24u : 0u);
+                }
+            }
+        }
+    }
+
+    bool Get(
+        std::uint16_t remoteId,
+        char* output,
+        int outputSize) noexcept
+    {
+        if (!output || outputSize < 2)
+            return false;
+        output[0] = 0;
+        Lock();
+        for (int index = 0; index < g_Count; ++index)
+        {
+            if (g_Entries[index].remoteId != remoteId)
+                continue;
+            lstrcpynA(
+                output,
+                g_Entries[index].name,
+                outputSize);
+            Unlock();
+            return output[0] != 0;
+        }
+        Unlock();
+        return false;
+    }
+
+    bool FindNearest(
+        float x,
+        float y,
+        float z,
+        float maxDistance,
+        char* output,
+        int outputSize) noexcept
+    {
+        if (!output || outputSize < 2 ||
+            maxDistance <= 0.0f)
+            return false;
+        output[0] = 0;
+        const float maxDistanceSquared =
+            maxDistance * maxDistance;
+        float bestDistanceSquared = maxDistanceSquared;
+        int best = -1;
+
+        Lock();
+        for (int index = 0; index < g_Count; ++index)
+        {
+            // Only real mp.players — never fauna/NPC placeholders.
+            if (g_Entries[index].kind != EntityKind::Player)
+                continue;
+            const float dx = g_Entries[index].x - x;
+            const float dy = g_Entries[index].y - y;
+            const float dz = g_Entries[index].z - z;
+            const float distanceSquared =
+                dx * dx + dy * dy + dz * dz;
+            if (distanceSquared > bestDistanceSquared)
+                continue;
+            bestDistanceSquared = distanceSquared;
+            best = index;
+        }
+        if (best >= 0)
+        {
+            lstrcpynA(
+                output,
+                g_Entries[best].name,
+                outputSize);
+        }
+        Unlock();
+        return output[0] != 0;
+    }
+
+    int CopySnapshot(
+        SnapshotEntry* output,
+        int capacity,
+        std::uint64_t* generation) noexcept
+    {
+        if (!output || capacity <= 0)
+            return 0;
+        Lock();
+        int count = g_Count;
+        if (count > capacity)
+            count = capacity;
+        for (int index = 0; index < count; ++index)
+        {
+            output[index].kind = g_Entries[index].kind;
+            output[index].local = g_Entries[index].local;
+            output[index].remoteId = g_Entries[index].remoteId;
+            output[index].handle = g_Entries[index].handle;
+            output[index].x = g_Entries[index].x;
+            output[index].y = g_Entries[index].y;
+            output[index].z = g_Entries[index].z;
+            output[index].heading = g_Entries[index].heading;
+            output[index].adminLevel =
+                g_Entries[index].adminLevel;
+            output[index].visible =
+                g_Entries[index].visible;
+            output[index].factionId =
+                g_Entries[index].factionId;
+            output[index].factionType =
+                g_Entries[index].factionType;
+            output[index].familyId =
+                g_Entries[index].familyId;
+            output[index].sqlId = g_Entries[index].sqlId;
+            output[index].masked =
+                g_Entries[index].masked;
+            output[index].displayAdmin =
+                g_Entries[index].displayAdmin;
+            output[index].nametagDisabled =
+                g_Entries[index].nametagDisabled;
+            output[index].dead = g_Entries[index].dead;
+            output[index].knock = g_Entries[index].knock;
+            output[index].hp = g_Entries[index].hp;
+            output[index].hpSync = g_Entries[index].hpSync;
+            output[index].hpRaw = g_Entries[index].hpRaw;
+            output[index].dyingFlag =
+                g_Entries[index].dyingFlag;
+            output[index].boneMask =
+                g_Entries[index].boneMask;
+            for (int bone = 0;
+                 bone < static_cast<int>(
+                     BoneSlot::Count);
+                 ++bone)
+            {
+                output[index].bones[bone] =
+                    g_Entries[index].bones[bone];
+            }
+            lstrcpynA(
+                output[index].name,
+                g_Entries[index].name,
+                static_cast<int>(sizeof(output[index].name)));
+            lstrcpynA(
+                output[index].factionKey,
+                g_Entries[index].factionKey,
+                static_cast<int>(
+                    sizeof(output[index].factionKey)));
+            lstrcpynA(
+                output[index].factionTag,
+                g_Entries[index].factionTag,
+                static_cast<int>(
+                    sizeof(output[index].factionTag)));
+            lstrcpynA(
+                output[index].familyName,
+                g_Entries[index].familyName,
+                static_cast<int>(
+                    sizeof(output[index].familyName)));
+            lstrcpynA(
+                output[index].nickname,
+                g_Entries[index].nickname,
+                static_cast<int>(
+                    sizeof(output[index].nickname)));
+        }
+        if (generation)
+            *generation = g_Generation;
+        Unlock();
+        return count;
+    }
+
+    std::uint64_t SnapshotGeneration() noexcept
+    {
+        Lock();
+        const std::uint64_t generation = g_Generation;
+        Unlock();
+        return generation;
+    }
+
+    LocalIdentity GetLocalIdentity() noexcept
+    {
+        LocalIdentity identity{};
+        Lock();
+        for (int index = 0; index < g_Count; ++index)
+        {
+            if (!g_Entries[index].local)
+                continue;
+            identity.valid = true;
+            identity.factionId = g_Entries[index].factionId;
+            identity.familyId = g_Entries[index].familyId;
+            lstrcpynA(
+                identity.factionKey,
+                g_Entries[index].factionKey,
+                static_cast<int>(
+                    sizeof(identity.factionKey)));
+            lstrcpynA(
+                identity.familyName,
+                g_Entries[index].familyName,
+                static_cast<int>(
+                    sizeof(identity.familyName)));
+            break;
+        }
+        Unlock();
+        return identity;
+    }
+
+    bool GetByHandle(
+        std::uint32_t handle,
+        SnapshotEntry& entry) noexcept
+    {
+        if (!handle)
+            return false;
+        Lock();
+        for (int index = 0; index < g_Count; ++index)
+        {
+            if (g_Entries[index].handle != handle)
+                continue;
+            entry.kind = g_Entries[index].kind;
+            entry.local = g_Entries[index].local;
+            entry.remoteId = g_Entries[index].remoteId;
+            entry.handle = g_Entries[index].handle;
+            entry.x = g_Entries[index].x;
+            entry.y = g_Entries[index].y;
+            entry.z = g_Entries[index].z;
+            entry.heading = g_Entries[index].heading;
+            entry.adminLevel =
+                g_Entries[index].adminLevel;
+            entry.visible =
+                g_Entries[index].visible;
+            entry.factionId =
+                g_Entries[index].factionId;
+            entry.factionType =
+                g_Entries[index].factionType;
+            entry.familyId =
+                g_Entries[index].familyId;
+            entry.sqlId = g_Entries[index].sqlId;
+            entry.masked =
+                g_Entries[index].masked;
+            entry.displayAdmin =
+                g_Entries[index].displayAdmin;
+            entry.nametagDisabled =
+                g_Entries[index].nametagDisabled;
+            entry.dead = g_Entries[index].dead;
+            entry.knock = g_Entries[index].knock;
+            entry.hp = g_Entries[index].hp;
+            entry.hpSync = g_Entries[index].hpSync;
+            entry.hpRaw = g_Entries[index].hpRaw;
+            entry.dyingFlag = g_Entries[index].dyingFlag;
+            entry.boneMask =
+                g_Entries[index].boneMask;
+            for (int bone = 0;
+                 bone < static_cast<int>(
+                     BoneSlot::Count);
+                 ++bone)
+            {
+                entry.bones[bone] =
+                    g_Entries[index].bones[bone];
+            }
+            lstrcpynA(
+                entry.name,
+                g_Entries[index].name,
+                static_cast<int>(
+                    sizeof(entry.name)));
+            lstrcpynA(
+                entry.factionKey,
+                g_Entries[index].factionKey,
+                static_cast<int>(
+                    sizeof(entry.factionKey)));
+            lstrcpynA(
+                entry.factionTag,
+                g_Entries[index].factionTag,
+                static_cast<int>(
+                    sizeof(entry.factionTag)));
+            lstrcpynA(
+                entry.familyName,
+                g_Entries[index].familyName,
+                static_cast<int>(
+                    sizeof(entry.familyName)));
+            lstrcpynA(
+                entry.nickname,
+                g_Entries[index].nickname,
+                static_cast<int>(
+                    sizeof(entry.nickname)));
+            Unlock();
+            return true;
+        }
+        Unlock();
+        return false;
+    }
+
+    IdentityStatus GetIdentityStatus() noexcept
+    {
+        IdentityStatus status{};
+        Lock();
+        status.helperReady = g_HelperReady;
+        status.familyCanary = g_FamilyCanary;
+        status.familyRpcDisabled =
+            g_FamilyRpcDisabled;
+        status.canonicalNames = g_CanonicalNames;
+        status.fallbackNames = g_FallbackNames;
+        status.stringFactions =
+            g_StringFactions;
+        status.familyCacheCount =
+            g_FamilyCacheCount;
+        status.familyPendingCount =
+            g_FamilyPendingCount;
+        Unlock();
+        return status;
+    }
+
+    int Count() noexcept
+    {
+        Lock();
+        const int count = g_Count;
+        Unlock();
+        return count;
+    }
+}
