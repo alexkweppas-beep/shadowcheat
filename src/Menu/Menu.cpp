@@ -443,16 +443,15 @@ namespace Menu
         p.silentHitchance = true;
         p.silentHitchancePct = 100.f;
         p.triggerEnabled = false;
-        p.triggerKey = 0;
-        p.triggerFov = 7.f;
         p.triggerDelayMs = 35.f;
         p.triggerCooldownMs = 90.f;
-        p.triggerSticky = false;
-        p.triggerNearest = true;
         p.triggerVisible = true;
-        p.triggerBoneNearestAny = false;
+        // Head and the whole trunk. Limbs stay off so the trigger does not fire
+        // on an outstretched arm, but they are there to tick.
         p.triggerBones[0] = true;
+        p.triggerBones[1] = true;
         p.triggerBones[2] = true;
+        p.triggerBones[3] = true;
         p.ignoreDead = true;
         p.ignoreNpc = true;
         p.ignoreAdmins = true;

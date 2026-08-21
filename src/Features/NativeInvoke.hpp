@@ -687,16 +687,23 @@ namespace NativeInvoke
 
     // PAD::_SET_CONTROL_NORMAL. The value is consumed for this frame only,
     // so Trigger cannot leave INPUT_ATTACK latched after a fault/menu open.
+    // Reports whether the native was dispatched, not what it returned: it
+    // returns nothing, and NativeContext aliases the return slot onto the first
+    // argument, so reading a result back yielded inputGroup. With group 0 that
+    // read as failure on every call, and the caller's shot cooldown, which only
+    // arms on success, therefore never armed.
     inline bool SetControlValueNextFrame(
         int inputGroup,
         int control,
         float value) noexcept
     {
-        return Invoke<int>(
-            0xE8A25867FBA3B05Eull,
-            inputGroup,
-            control,
-            value) != 0;
+        NativeContext ctx;
+        ctx.Push(inputGroup);
+        ctx.Push(control);
+        ctx.Push(value);
+        return CallHandler(
+            Lookup(0xE8A25867FBA3B05Eull),
+            ctx);
     }
 
     // Synchronous LOS probe. flags: 1 = world/map geometry.

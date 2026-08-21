@@ -58,6 +58,11 @@ struct ModeSettings final
     int adminThreshold{};
     bool lockOnLast{};
     float fovPixels{};
+    // Test the crosshair against the ped's projected silhouette instead of
+    // against a pixel radius around a bone centre. Trigger wants this; vector
+    // and silent want the radius, because for them the radius is the aim FOV
+    // and is supposed to reach past the target.
+    bool hitboxTest{};
     bool bones[static_cast<int>(Hitbox::Count)]{};
 };
 
@@ -170,6 +175,216 @@ bool PedRejectedByTypeFilter(
     return false;
 }
 
+// One capsule per selectable hitbox, laid over the rig. A capsule whose ends
+// are the same bone is a disc around that bone.
+//
+// Radii are in metres and get scaled per ped below. That is the whole point of
+// this table: a tolerance fixed in pixels cannot be right at two distances at
+// once, because a ped's on-screen size falls off as 1/distance. Small enough to
+// fire only on the body up close, and it covers open air at range; wide enough
+// to work at range, and up close the crosshair sits plainly on a chest while
+// every bone centre is far outside it.
+struct HitboxCapsule final
+{
+    std::uint8_t from;
+    std::uint8_t to;
+    float radiusMetres;
+};
+
+constexpr HitboxCapsule kHitboxCapsules[
+    static_cast<int>(Hitbox::Count)] = {
+    // Head: a disc, so ticking Head alone does not also accept the neck. The
+    // rig's head bone sits around ear level and the skull reaches past it, so
+    // the radius is a little over half the width of a head.
+    /* Head          */ {0, 0, 0.12f},
+    /* Neck          */ {1, 2, 0.10f},
+    // Chest spans Spine3 down to the pelvis: the trunk is one target, and
+    // splitting it would leave a dead stripe across the stomach.
+    /* Chest         */ {2, 3, 0.19f},
+    /* Pelvis        */ {3, 3, 0.17f},
+    /* LeftUpperArm  */ {4, 5, 0.07f},
+    /* LeftForearm   */ {5, 6, 0.06f},
+    /* LeftHand      */ {6, 6, 0.06f},
+    /* RightUpperArm */ {7, 8, 0.07f},
+    /* RightForearm  */ {8, 9, 0.06f},
+    /* RightHand     */ {9, 9, 0.06f},
+    /* LeftThigh     */ {10, 11, 0.09f},
+    /* LeftCalf      */ {11, 12, 0.07f},
+    /* LeftFoot      */ {12, 12, 0.07f},
+    /* RightThigh    */ {13, 14, 0.09f},
+    /* RightCalf     */ {14, 15, 0.07f},
+    /* RightFoot     */ {15, 15, 0.07f},
+};
+
+float PointSegmentDistance(
+    const ImVec2& point,
+    const ImVec2& a,
+    const ImVec2& b) noexcept
+{
+    const float abx = b.x - a.x;
+    const float aby = b.y - a.y;
+    const float apx = point.x - a.x;
+    const float apy = point.y - a.y;
+    const float lengthSq = abx * abx + aby * aby;
+    float t = 0.f;
+    if (lengthSq > 1e-4f)
+    {
+        t = (apx * abx + apy * aby) / lengthSq;
+        t = t < 0.f ? 0.f : (t > 1.f ? 1.f : t);
+    }
+    const float dx = apx - abx * t;
+    const float dy = apy - aby * t;
+    return std::sqrt(dx * dx + dy * dy);
+}
+
+// Screen pixels per world metre at this ped's depth.
+//
+// Measured off bone pairs rather than the projection matrix: a pair whose world
+// axis runs across the view reports the true scale and a foreshortened one
+// reports less, so the largest ratio of the candidates is the estimate. Pairs
+// shorter than 20 cm are skipped because their pixel span is mostly noise.
+bool ProjectedPixelsPerMetre(
+    const Game::FramePedEntry& entry,
+    float& pixelsPerMetre) noexcept
+{
+    static constexpr std::uint8_t kPairs[][2] = {
+        {0, 3},   // head to pelvis
+        {10, 12}, // left thigh to left foot
+        {13, 15}, // right thigh to right foot
+        {4, 7},   // shoulder to shoulder
+    };
+    float best = 0.f;
+    for (const auto& pair : kPairs)
+    {
+        const std::uint32_t bits =
+            (1u << pair[0]) | (1u << pair[1]);
+        if ((entry.projectedBoneMask & bits) != bits ||
+            (entry.visual.boneMask & bits) != bits)
+            continue;
+        const Vector3& wa = entry.visual.bones[pair[0]];
+        const Vector3& wb = entry.visual.bones[pair[1]];
+        const float wx = wb.x - wa.x;
+        const float wy = wb.y - wa.y;
+        const float wz = wb.z - wa.z;
+        const float worldSpan =
+            std::sqrt(wx * wx + wy * wy + wz * wz);
+        if (worldSpan < 0.2f)
+            continue;
+        const float sx =
+            entry.projectedBones[pair[1]].x -
+            entry.projectedBones[pair[0]].x;
+        const float sy =
+            entry.projectedBones[pair[1]].y -
+            entry.projectedBones[pair[0]].y;
+        const float ratio =
+            std::sqrt(sx * sx + sy * sy) / worldSpan;
+        if (ratio > best)
+            best = ratio;
+    }
+    if (!(best > 0.5f) || !std::isfinite(best))
+        return false;
+    pixelsPerMetre = best;
+    return true;
+}
+
+// True when the crosshair lands on the projected silhouette of one of the
+// enabled hitboxes. Candidates are ranked by how far inside a capsule the
+// crosshair sits relative to that capsule's own width, so the ped it is most
+// solidly on wins instead of whichever bone centre happens to be nearest.
+bool EvaluateHitboxCandidate(
+    const Game::FramePedEntry& entry,
+    const ModeSettings& settings,
+    const ImVec2& center,
+    TargetCandidate& output) noexcept
+{
+    float pixelsPerMetre = 0.f;
+    if (!ProjectedPixelsPerMetre(entry, pixelsPerMetre))
+    {
+        ++g_Diagnostics.projectionRejects;
+        return false;
+    }
+
+    float bestRatio = 1.f;
+    int bestHitbox = -1;
+    for (int index = 0;
+         index < static_cast<int>(Hitbox::Count);
+         ++index)
+    {
+        if (!settings.bones[index])
+            continue;
+        const HitboxCapsule& capsule =
+            kHitboxCapsules[index];
+        const std::uint32_t bits =
+            (1u << capsule.from) | (1u << capsule.to);
+        if ((entry.projectedBoneMask & bits) != bits)
+            continue;
+        const float radius =
+            capsule.radiusMetres * pixelsPerMetre;
+        if (radius < 0.5f)
+            continue;
+        const ImVec2 a(
+            entry.projectedBones[capsule.from].x,
+            entry.projectedBones[capsule.from].y);
+        const ImVec2 b(
+            entry.projectedBones[capsule.to].x,
+            entry.projectedBones[capsule.to].y);
+        const float ratio =
+            PointSegmentDistance(center, a, b) / radius;
+        if (ratio <= bestRatio)
+        {
+            bestRatio = ratio;
+            bestHitbox = index;
+        }
+    }
+
+    if (bestHitbox < 0)
+    {
+        ++g_Diagnostics.fovRejects;
+        return false;
+    }
+
+    // The aim point stays the bone itself, not the point on the capsule the
+    // crosshair happened to be closest to.
+    const int anchor = kHitboxCapsules[bestHitbox].from;
+    Vector3 world{};
+    if (!TryGetHitboxWorld(
+            entry.visual,
+            static_cast<Hitbox>(anchor),
+            world))
+    {
+        ++g_Diagnostics.boneRejects;
+        return false;
+    }
+
+    output.ped = entry.ped;
+    output.world = world;
+    output.screen = entry.projectedBones[anchor];
+    output.crosshairDistanceSq = bestRatio * bestRatio;
+    output.rageHandle = entry.visual.rageHandle;
+    output.hitbox = bestHitbox;
+    output.visible =
+        entry.visualValid &&
+        entry.visual.visible;
+    output.valid = true;
+    return true;
+}
+
+// "Ignore invisible" means ignore peds we know are behind something, not peds
+// we know nothing about. Visibility comes from the RAGE snapshot, and a ped that
+// never got matched to a snapshot entry has visualValid false — treating that as
+// hidden silently dropped every unmatched target, which is why aiming straight
+// at a player could produce no shot at all.
+bool RejectedByVisibility(
+    const Game::FramePedEntry& entry,
+    const ModeSettings& settings) noexcept
+{
+    if (settings.wallshot || !settings.visibleCheck)
+        return false;
+    if (!entry.visualValid)
+        return false;
+    return !entry.visual.visible;
+}
+
 bool EvaluateCandidate(
     const Game::FramePedEntry& entry,
     Hitbox hitbox,
@@ -267,7 +482,9 @@ bool SelectTarget(
     TargetCandidate& best) noexcept
 {
     best = {};
-    if (!settings.enabled || settings.fovPixels <= 0.0f)
+    if (!settings.enabled)
+        return false;
+    if (!settings.hitboxTest && settings.fovPixels <= 0.0f)
         return false;
 
     Hitbox enabled[static_cast<int>(Hitbox::Count)]{};
@@ -299,13 +516,8 @@ bool SelectTarget(
             {
                 // fall through to full scan
             }
-            else if (settings.wallshot ||
-                !(settings.visibleCheck &&
-                  VisualPolicy::UseHiddenPalette(
-                      true,
-                      lockedEntry->visualValid,
-                      lockedEntry->visualValid &&
-                          lockedEntry->visual.visible)))
+            else if (!RejectedByVisibility(
+                         *lockedEntry, settings))
             {
                 const Hitbox preferred =
                     locked->hitbox >= 0 &&
@@ -363,7 +575,12 @@ bool SelectTarget(
             entry.visual.isLocal)
             continue;
 
-        if (entry.coarseVisible)
+        if (!entry.coarseVisible)
+            continue;
+        // The silhouette test has no radius to cull against, and a ped close
+        // enough to fill the screen has its torso proxy far from the crosshair
+        // while a limb crosses it. Its own capsule loop is the cheap reject.
+        if (!settings.hitboxTest)
         {
             const float coarseDx =
                 entry.coarseScreen.x - center.x;
@@ -376,28 +593,33 @@ bool SelectTarget(
                 coarseRadius * coarseRadius)
                 continue;
         }
-        else
-            continue;
 
         if (PedRejectedByTypeFilter(
                 entry, settings))
             continue;
 
-        if (!settings.wallshot &&
-            settings.visibleCheck &&
-            VisualPolicy::UseHiddenPalette(
-                true,
-                entry.visualValid,
-                entry.visualValid &&
-                    entry.visual.visible))
+        if (RejectedByVisibility(entry, settings))
         {
             ++g_Diagnostics.visibilityRejects;
             continue;
         }
 
-        // Bones from TryGetPedVisual (memory). Engine GetBone is quarantined.
+        // Filled by BuildFramePedContext from the engine skeleton; empty means
+        // this ped lost the frame's bone refresh budget.
         if (!entry.visual.boneMask)
             continue;
+
+        if (settings.hitboxTest)
+        {
+            TargetCandidate hit{};
+            if (EvaluateHitboxCandidate(
+                    entry, settings, center, hit) &&
+                (!best.valid ||
+                 hit.crosshairDistanceSq <
+                     best.crosshairDistanceSq))
+                best = hit;
+            continue;
+        }
 
         TargetCandidate pedBest{};
         TargetCandidate sticky{};
@@ -873,7 +1095,11 @@ AimDiagnostics GetAimDiagnostics() noexcept
 void RunAimbot()
 {
     g_Diagnostics = {};
-    PublishSilentTarget({});
+    // The published target is not blanked here. The bullet hook reads it from
+    // the game's own thread, so clearing it up front left a window on every
+    // frame, between here and the silent block below, where a shot fired in that
+    // window found no target and was never redirected. Each path below publishes
+    // exactly once instead.
     g_DisplayTarget = {};
 
     const Menu::AimWeaponProfile& profile = Menu::GetActiveAimProfile();
@@ -884,9 +1110,6 @@ void RunAimbot()
     const bool silentKeyHeld =
         profile.silentKey <= 0 ||
         (GetAsyncKeyState(profile.silentKey) & 0x8000) != 0;
-    const bool triggerKeyHeld =
-        profile.triggerKey <= 0 ||
-        (GetAsyncKeyState(profile.triggerKey) & 0x8000) != 0;
     g_Diagnostics.vectorKeyHeld =
         profile.vecEnabled && vectorKeyHeld;
 
@@ -915,8 +1138,6 @@ void RunAimbot()
         profile.silentEnabled && silentKeyHeld;
     g_Diagnostics.triggerEnabled =
         profile.triggerEnabled;
-    g_Diagnostics.triggerKeyHeld =
-        profile.triggerEnabled && triggerKeyHeld;
 
     UpdateSyntheticAim(
         g_AimbotEnabled &&
@@ -1023,23 +1244,36 @@ void RunAimbot()
             silentTarget);
         if (silentTarget.valid)
         {
-            g_SilentTarget = ToSnapshot(silentTarget);
-            g_SilentTarget.hitchanceEnabled =
+            // Assembled locally and handed over in one go. Writing the shared
+            // copy field by field left the sequence counter even while it was
+            // half updated, so the hook could accept a mix of two frames.
+            AimTargetSnapshot snapshot =
+                ToSnapshot(silentTarget);
+            snapshot.hitchanceEnabled =
                 profile.silentHitchance;
-            // Approximate distance from local player for hitchance curve.
+            // Distance from the local player, for the hitchance curve. This was
+            // derived from crosshairDistanceSq, which is the crosshair offset in
+            // pixels and not a distance at all, so a distance-based curve was
+            // being sampled with a number that had nothing to do with range.
             float distMeters = 40.f;
-            if (localPed)
+            if (frame.localPositionValid)
             {
-                // world is already bone pos; use crosshair proxy via FOV radius scale
+                const float dx =
+                    silentTarget.world.x - frame.localPosition.x;
+                const float dy =
+                    silentTarget.world.y - frame.localPosition.y;
+                const float dz =
+                    silentTarget.world.z - frame.localPosition.z;
                 distMeters = std::sqrt(
-                    (std::max)(0.f, silentTarget.crosshairDistanceSq)) * 0.35f + 5.f;
+                    dx * dx + dy * dy + dz * dz);
             }
-            g_SilentTarget.hitchance =
+            snapshot.hitchance =
                 Menu::EvaluateSilentHitchance(profile, distMeters);
 
             // Silent suite: always-on velocity track + miss bias + reaction gate.
             // Ballistic lead (distance / bullet speed) is applied in SilentAim hook.
             static const CPed* s_SilentPed = nullptr;
+            static int s_SilentHitbox = -1;
             static ULONGLONG s_SilentAcquired = 0;
             static Vector3 s_PrevWorld{};
             static ULONGLONG s_PrevAt = 0;
@@ -1048,12 +1282,25 @@ void RunAimbot()
             if (silentTarget.ped != s_SilentPed)
             {
                 s_SilentPed = silentTarget.ped;
+                s_SilentHitbox = silentTarget.hitbox;
                 s_SilentAcquired = now;
                 s_PrevWorld = silentTarget.world;
                 s_PrevAt = now;
                 s_SmoothVel = silentTarget.ped
                     ? silentTarget.ped->GetVelocity()
                     : Vector3{};
+            }
+            else if (silentTarget.hitbox != s_SilentHitbox)
+            {
+                // Same ped, different bone. The gap between two bones is not
+                // motion: head to pelvis inside one frame reads as tens of
+                // metres per second, and the blend below carried that into the
+                // lead for several frames afterwards. Rebase the history and
+                // skip the sample. The reaction timer is deliberately left
+                // alone, since the target itself did not change.
+                s_SilentHitbox = silentTarget.hitbox;
+                s_PrevWorld = silentTarget.world;
+                s_PrevAt = now;
             }
 
             // Blend entity velocity with bone-history velocity (covers vehicles).
@@ -1088,14 +1335,14 @@ void RunAimbot()
             }
             s_PrevWorld = silentTarget.world;
             s_PrevAt = now;
-            g_SilentTarget.velocity = s_SmoothVel;
+            snapshot.velocity = s_SmoothVel;
 
             if (profile.silentReactionMs > 0.f &&
                 now - s_SilentAcquired <
                     static_cast<ULONGLONG>(profile.silentReactionMs))
             {
                 // Hold previous / skip until reaction elapses.
-                g_SilentTarget.valid = false;
+                snapshot.valid = false;
             }
             else
             {
@@ -1107,27 +1354,28 @@ void RunAimbot()
                     aim.y += (RandomUnit() * 2.f - 1.f) * bias;
                     aim.z += (RandomUnit() * 2.f - 1.f) * bias * 0.5f;
                 }
-                g_SilentTarget.world = aim;
+                snapshot.world = aim;
             }
 
-            if (g_SilentTarget.valid)
-                PublishSilentTarget(g_SilentTarget);
-            if (profile.silentLock && g_SilentTarget.valid)
-                g_LockedSilentTarget = g_SilentTarget;
+            PublishSilentTarget(snapshot);
+            if (profile.silentLock && snapshot.valid)
+                g_LockedSilentTarget = snapshot;
         }
-        else if (profile.silentLock)
+        else
         {
-            g_LockedSilentTarget = {};
+            PublishSilentTarget({});
+            if (profile.silentLock)
+                g_LockedSilentTarget = {};
         }
     }
     else
     {
+        PublishSilentTarget({});
         g_LockedSilentTarget = {};
     }
     g_Diagnostics.silentTargetValid =
         g_SilentTarget.valid;
 
-    static AimTargetSnapshot s_TriggerLocked{};
     static const CPed* s_TriggerCandidate = nullptr;
     static const Menu::AimWeaponProfile* s_TriggerProfile = nullptr;
     static int s_TriggerHitbox = -1;
@@ -1135,15 +1383,14 @@ void RunAimbot()
     static ULONGLONG s_TriggerLastShotAt = 0;
     static ULONGLONG s_TriggerLastTickAt = 0;
 
-    if (profile.triggerEnabled && triggerKeyHeld)
+    if (profile.triggerEnabled)
     {
         ModeSettings triggerSettings{};
         triggerSettings.enabled = true;
-        triggerSettings.nearest =
-            profile.triggerNearest ||
-            profile.triggerBoneNearestAny;
-        triggerSettings.boneNearestAny =
-            profile.triggerBoneNearestAny;
+        // Fire when the crosshair is actually on an enabled body part. There is
+        // no radius to tune: the capsules are sized in metres and scaled per
+        // ped, so the test means the same thing at 3 m and at 300 m.
+        triggerSettings.hitboxTest = true;
         triggerSettings.visibleCheck =
             profile.triggerVisible;
         triggerSettings.ignoreDead = profile.ignoreDead;
@@ -1153,10 +1400,7 @@ void RunAimbot()
             profile.ignoreFriends || Menu::s_Aim_IgnoreFriends;
         triggerSettings.adminThreshold =
             Menu::s_AdminLevelThreshold;
-        triggerSettings.lockOnLast =
-            profile.triggerSticky;
-        triggerSettings.fovPixels =
-            ClampFloat(profile.triggerFov, 1.f, 40.f);
+        triggerSettings.lockOnLast = false;
         for (int i = 0; i < Menu::kAimHitboxCount; ++i)
             triggerSettings.bones[i] =
                 profile.triggerBones[i];
@@ -1171,7 +1415,6 @@ void RunAimbot()
             s_TriggerCandidate = nullptr;
             s_TriggerHitbox = -1;
             s_TriggerAcquiredAt = now;
-            s_TriggerLocked = {};
         }
         s_TriggerLastTickAt = now;
 
@@ -1179,21 +1422,22 @@ void RunAimbot()
             triggerSettings,
             frame,
             center,
-            profile.triggerSticky
-                ? &s_TriggerLocked
-                : nullptr,
+            nullptr,
             triggerTarget);
         g_Diagnostics.triggerTargetValid =
             triggerTarget.valid;
         if (triggerTarget.valid)
         {
-            if (triggerTarget.ped != s_TriggerCandidate ||
-                triggerTarget.hitbox != s_TriggerHitbox)
+            // Only a change of ped restarts the reaction delay. Restarting it
+            // when the closest bone changed meant that sweeping across a body,
+            // where head and chest trade places every frame, kept resetting the
+            // dwell timer and the trigger never fired at all.
+            if (triggerTarget.ped != s_TriggerCandidate)
             {
                 s_TriggerCandidate = triggerTarget.ped;
-                s_TriggerHitbox = triggerTarget.hitbox;
                 s_TriggerAcquiredAt = now;
             }
+            s_TriggerHitbox = triggerTarget.hitbox;
             const ULONGLONG delay = static_cast<ULONGLONG>(
                 ClampFloat(profile.triggerDelayMs, 0.f, 250.f));
             const ULONGLONG cooldown = static_cast<ULONGLONG>(
@@ -1217,15 +1461,12 @@ void RunAimbot()
                     g_Diagnostics.triggerFired = true;
                 }
             }
-            if (profile.triggerSticky)
-                s_TriggerLocked = ToSnapshot(triggerTarget);
         }
         else
         {
             s_TriggerCandidate = nullptr;
             s_TriggerHitbox = -1;
             s_TriggerAcquiredAt = now;
-            s_TriggerLocked = {};
         }
     }
     else
@@ -1235,7 +1476,6 @@ void RunAimbot()
         s_TriggerHitbox = -1;
         s_TriggerAcquiredAt = 0;
         s_TriggerLastTickAt = 0;
-        s_TriggerLocked = {};
     }
 
     if (profile.silentMark && g_SilentTarget.valid)

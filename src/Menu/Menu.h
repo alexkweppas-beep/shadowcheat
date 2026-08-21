@@ -314,18 +314,15 @@ namespace Menu
         float silentHcDistanceMul{1.f};
         AimCurve silentHitchanceCurve{};
 
-        // Trigger fires only when a filtered hitbox is close to the crosshair.
+        // Trigger fires when the crosshair is on one of the enabled hitboxes.
+        // There is no radius: the test is against the ped's projected
+        // silhouette, which already scales with distance.
         bool  triggerEnabled{};
-        int   triggerKey{}; // 0 = always armed while enabled
-        float triggerFov{7.f};
         float triggerDelayMs{35.f};
         float triggerCooldownMs{90.f};
-        bool  triggerSticky{};
-        bool  triggerNearest{true};
         bool  triggerVisible{true};
-        bool  triggerBoneNearestAny{};
         bool  triggerBones[kAimHitboxCount]{
-            true, false, true, false};
+            true, true, true, true};
 
         // Shared filters for vector + silent.
         bool  ignoreDead{true};

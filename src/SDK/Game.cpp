@@ -373,14 +373,6 @@ struct DirectBoneCacheEntry final {
     Vector3 rootPosition{};
     Vector3 bones[Game::kVisualBoneCount]{};
 };
-// How stale a cached rig may be before it is read again. This is a floor on
-// pose freshness, not a budget: the per-frame budget below still caps how many
-// peds can be refreshed, so lowering this only lets the budget be used more
-// fully when few peds are on screen. At 48 ms the pose advanced 21 times a
-// second no matter the frame rate, which is what made the skeleton look like it
-// ran at a fraction of the game.
-constexpr DWORD kBoneRefreshFloorMs = 16;
-
 // The smoothing needs sub-frame resolution. GetTickCount64 moves in ~15.6 ms
 // steps, so at 100 FPS several frames share a timestamp: the delta collapsed to
 // nothing on those frames and then jumped, which the eye reads as stepping.
@@ -414,14 +406,19 @@ struct WorldSmoothEntry final {
     Vector3 root{};
     Vector3 bones[Game::kVisualBoneCount]{};
     std::uint32_t boneMask{};
-    // The rig is only re-read for a dozen peds per frame, so between reads the
+    // When a crowd overflows the refresh budget the rig is not re-read, so the
     // pose is the same one translated to the new root. Splitting the pose off
     // the root makes a stale pose detectable — the offsets stop changing — and
-    // lets it be carried forward along its own velocity instead of freezing,
-    // which is what made the skeleton look like it ran at a third of the frame
-    // rate. Offsets are relative to the root, in metres.
+    // lets it be carried forward along its own velocity instead of freezing.
+    // Offsets are relative to the root, in metres.
     Vector3 poseOffset[Game::kVisualBoneCount]{};
     Vector3 poseVelocity[Game::kVisualBoneCount]{};
+    // The live root that bones[] is currently expressed against. Every frame
+    // the rig is rigidly translated by the change in this value before any
+    // filtering runs, so the smoothing only ever has to close a *pose* error.
+    // Filtering the world position instead put the whole skeleton a time
+    // constant behind the body, which is what made it trail a sprinting ped.
+    Vector3 poseAnchor{};
     // Seconds from the performance counter, not milliseconds from the tick
     // count: everything here is sub-frame timing.
     double updatedAtSec{};
@@ -2072,52 +2069,16 @@ namespace Game {
         const LONG epoch = InterlockedCompareExchange(
             &s_sessionCacheEpoch, 0, 0);
         const DWORD now = GetTickCount();
+        // No age gate here. Reaching this function already means the caller
+        // spent budget to get a fresh pose, and re-serving the cached rig
+        // translated by the root advanced the animation at the tick-count
+        // resolution (~15.6 ms) instead of the frame rate: above 60 FPS the
+        // pose only actually moved every second or third frame. Callers that
+        // want the stale rig ask TryGetCachedPedBones for it explicitly.
         int cacheSlot = LookupDirectBoneCache(pedKey);
         if (cacheSlot >= 0 &&
             s_directBoneCache[cacheSlot].epoch != epoch)
             cacheSlot = -1;
-        if (cacheSlot >= 0)
-        {
-            auto& cache = s_directBoneCache[cacheSlot];
-            if (now - cache.tick <= kBoneRefreshFloorMs)
-            {
-            if (!cache.boneMask)
-                return false;
-            Vector3 currentPosition =
-                cache.rootPosition;
-            __try {
-                currentPosition = ped->GetPosition();
-            } __except (EXCEPTION_EXECUTE_HANDLER) {
-                currentPosition = cache.rootPosition;
-            }
-            const Vector3 rootDelta{
-                currentPosition.x -
-                    cache.rootPosition.x,
-                currentPosition.y -
-                    cache.rootPosition.y,
-                currentPosition.z -
-                    cache.rootPosition.z
-            };
-            output.boneMask = cache.boneMask;
-            for (int slot = 0;
-                 slot < kVisualBoneCount;
-                 ++slot)
-            {
-                if (cache.boneMask & (1u << slot))
-                {
-                    output.bones[slot] = {
-                        cache.bones[slot].x +
-                            rootDelta.x,
-                        cache.bones[slot].y +
-                            rootDelta.y,
-                        cache.bones[slot].z +
-                            rootDelta.z
-                    };
-                }
-            }
-            return true;
-            }
-        }
 
         // Prefer V8 snapshot memory walk; fallback to engine GetBone safely wrapped in SEH if V8 lacks bones.
         constexpr bool kAllowEngineGetBone = true;
@@ -2241,8 +2202,9 @@ namespace Game {
             valid = false;
         }
 
+        const bool rebinding = cacheSlot < 0;
         bool recycled = false;
-        if (cacheSlot < 0)
+        if (rebinding)
         {
             if (s_directBoneCacheCount < 256)
             {
@@ -2257,17 +2219,27 @@ namespace Game {
             }
         }
         auto& cache = s_directBoneCache[cacheSlot];
-        cache = {};
-        cache.ped = pedKey;
+        if (rebinding)
+        {
+            cache = {};
+            cache.ped = pedKey;
+        }
         if (recycled)
             RebuildDirectBoneHash();
         else
             InsertDirectBoneHash(pedKey, cacheSlot);
         cache.epoch = epoch;
         cache.tick = now;
-        cache.rootPosition = pedPosition;
         if (!valid)
+        {
+            // The rig that last resolved is kept, along with the root it was
+            // measured against, so the caller's stale-cache fallback can still
+            // place it. A ragdolling or prone ped fails the plausibility checks
+            // above, and clearing the entry here made its skeleton disappear
+            // outright instead of holding the last good pose.
             return false;
+        }
+        cache.rootPosition = pedPosition;
 
         for (int slot = 0; slot < kVisualBoneCount; ++slot)
         {
@@ -2810,6 +2782,7 @@ namespace Game {
                 slot->remoteId =
                     entry.visual.remoteId;
                 slot->root = entry.livePosition;
+                slot->poseAnchor = entry.livePosition;
                 slot->boneMask =
                     processBones
                         ? entry.visual.boneMask
@@ -2837,8 +2810,11 @@ namespace Game {
             }
             else
             {
+                // Only enough of a filter to swallow a single bad read. Any
+                // slower and the box visibly trails the ped it belongs to,
+                // because livePosition off the nav matrix is already exact.
                 const float rootAlpha =
-                    1.f - std::exp(-110.f * dt);
+                    1.f - std::exp(-240.f * dt);
                 slot->root.x +=
                     (entry.livePosition.x -
                      slot->root.x) * rootAlpha;
@@ -2848,12 +2824,36 @@ namespace Game {
                 slot->root.z +=
                     (entry.livePosition.z -
                      slot->root.z) * rootAlpha;
-                // Loose enough to follow a sprint, tight enough that the
-                // extrapolated pose is not chased with a visible wobble.
+                // Applies to the pose only, never to the translation, so it
+                // softens the gait without putting the rig behind the body.
                 const float boneAlpha =
-                    1.f - std::exp(-38.f * dt);
+                    1.f - std::exp(-90.f * dt);
+                // Tracked even while bones are not wanted, so a ped that comes
+                // back into demand does not start from a long stale anchor.
+                const Vector3 anchorDelta{
+                    entry.livePosition.x -
+                        slot->poseAnchor.x,
+                    entry.livePosition.y -
+                        slot->poseAnchor.y,
+                    entry.livePosition.z -
+                        slot->poseAnchor.z
+                };
+                slot->poseAnchor = entry.livePosition;
                 if (processBones)
                 {
+                    // Carry the rig rigidly onto the new root first. Whatever
+                    // the filter below does, the skeleton stays on the ped.
+                    for (int bone = 0;
+                         bone < kVisualBoneCount;
+                         ++bone)
+                    {
+                        if (!(slot->boneMask & (1u << bone)))
+                            continue;
+                        slot->bones[bone].x += anchorDelta.x;
+                        slot->bones[bone].y += anchorDelta.y;
+                        slot->bones[bone].z += anchorDelta.z;
+                    }
+
                     // The offsets are identical on frames where the rig was not
                     // re-read, so any change at all means a fresh sample.
                     float poseDelta = 0.f;
@@ -2883,10 +2883,9 @@ namespace Game {
                     const bool freshPose = poseDelta > 1e-8f;
 
 #if RAGEMP_DEV_BUILD
-                    // The rig is only re-read every 48 ms, so the pose is meant
-                    // to be carried forward in between. If it still steps, then
-                    // either these samples are not being recognised as new or
-                    // the velocity they produce is useless: count both.
+                    // Every budgeted ped should now report a fresh pose on
+                    // every frame. A low fresh percentage here means the budget
+                    // is overflowing, which is what makes a gait step.
                     g_PoseDiagSamples += freshPose ? 1 : 0;
                     ++g_PoseDiagFrames;
                     if (freshPose)
@@ -3007,14 +3006,18 @@ namespace Game {
                                 entry.visual.bones[bone];
                             continue;
                         }
+                        // livePosition, not the filtered root: the offsets were
+                        // measured against the live root when they were read,
+                        // so mixing in the filtered one reintroduced exactly
+                        // the positional lag this function is meant to avoid.
                         const Vector3 predicted{
-                            slot->root.x +
+                            entry.livePosition.x +
                                 slot->poseOffset[bone].x +
                                 slot->poseVelocity[bone].x * age,
-                            slot->root.y +
+                            entry.livePosition.y +
                                 slot->poseOffset[bone].y +
                                 slot->poseVelocity[bone].y * age,
-                            slot->root.z +
+                            entry.livePosition.z +
                                 slot->poseOffset[bone].z +
                                 slot->poseVelocity[bone].z * age
                         };
@@ -3459,12 +3462,17 @@ namespace Game {
         }
 #endif
 
+        // A dozen peds a frame was too few: anyone outside the budget kept a
+        // frozen gait, so a sprinting ped dragged a stale pose behind them.
+        // Sixteen GetBone calls per ped is cheap enough to cover every ped that
+        // is actually on screen and wanted, and the priority sort above still
+        // spends the budget on the freshest need first when a crowd overflows.
         int boneBudget = 0;
         if (boneDemandCount > 0)
         {
-            boneBudget = boneDemandCount <= 20
+            boneBudget = boneDemandCount <= 48
                 ? boneDemandCount
-                : (boneDemandCount <= 64 ? 14 : 12);
+                : (boneDemandCount <= 96 ? 40 : 32);
         }
         for (int rank = 0;
              rank < next.count &&
@@ -3475,20 +3483,6 @@ namespace Game {
                 next.entries[priority[rank]];
             if (!entry.boneDemand)
                 continue;
-            const DWORD age =
-                BoneCacheAge(
-                    entry.ped,
-                    next.sessionEpoch);
-            if (age <= kBoneRefreshFloorMs &&
-                TryGetCachedPedBones(
-                    entry.ped,
-                    entry.livePosition,
-                    entry.visual,
-                    kBoneRefreshFloorMs))
-            {
-                ++next.boneCacheHits;
-                continue;
-            }
             if (TryGetDirectPedBones(
                     entry.ped,
                     entry.visual))
@@ -3512,11 +3506,10 @@ namespace Game {
                     false);
                 continue;
             }
-            // The bone budget only refreshes a dozen peds per frame, so the rest
-            // must fall back to their cached rig. Leaving the mask empty made
-            // the skeleton blink as the budget rotated through the crowd, so a
-            // stale pose translated by the root delta is used instead: the rig
-            // stays attached to the ped and the outline stops flickering.
+            // Only reached when a crowd overflows the budget above. Leaving the
+            // mask empty made the skeleton blink as the budget rotated through
+            // the crowd, so a stale pose translated by the root delta is used
+            // instead: the rig stays attached to the ped and stops flickering.
             if (!entry.visual.boneMask &&
                 TryGetCachedPedBones(
                     entry.ped,
