@@ -17,6 +17,7 @@
 #include "mapper/intel_driver.hpp"
 #include "mapper/kdmapper.hpp"
 #include "mapper/launcher.hpp"
+#include "mapper/remote_inject.hpp"
 #include "network.hpp"
 #include "resource.h"
 #include "streamproof.hpp"
@@ -173,6 +174,13 @@ static std::string g_product_id;
 static std::string g_integrity_hash_expected;
 static std::vector<uint8_t> g_pending_cheat;
 static Mapper::MapResult g_mapped;
+
+// The internal product is a DLL mapped into GTA5.exe from user mode. It needs
+// no driver, so the whole driver load/handshake is skipped for it.
+static bool IsInternalProduct(const std::string &pid) {
+  return pid == xorstr_("internal") || pid == xorstr_("ragemp_internal") ||
+         pid == xorstr_("internal_ragemp");
+}
 
 // Список активных подписок — заполняется в DoLogin из ответа сервера
 static std::vector<Network::AuthSubscription> g_auth_subscriptions;
@@ -962,17 +970,21 @@ std::string Phase1_Prepare(const std::string &product_id) {
   SecureZeroMemory(new_session_key.data(), new_session_key.size());
 
   // Шаг 3 [MUT]: загрузить драйвер
-  {
-    std::string r = Phase1C_LoadDriver(product_id);
-    if (r != xorstr_("ok"))
-      return r;
-  }
+  // Internal мапится в GTA5 из юзермода и ядра не касается — драйвер для него
+  // не нужен, и грузить его было бы лишним следом.
+  if (!IsInternalProduct(product_id)) {
+    {
+      std::string r = Phase1C_LoadDriver(product_id);
+      if (r != xorstr_("ok"))
+        return r;
+    }
 
-  // Шаг 4 [ULTRA]: handshake драйвер
-  if (!Phase1D_DriverHandshake()) {
-    DWORD err = GetLastError();
-    return xorstr_("error:Драйвер уже загружен. Пожалуйста, перезагрузите ПК. Код: ") +
-           std::to_string(err);
+    // Шаг 4 [ULTRA]: handshake драйвер
+    if (!Phase1D_DriverHandshake()) {
+      DWORD err = GetLastError();
+      return xorstr_("error:Драйвер уже загружен. Пожалуйста, перезагрузите ПК. Код: ") +
+             std::to_string(err);
+    }
   }
 
   // Шаг 5 [ULTRA]: дешифровать чит AES-GCM
@@ -1045,6 +1057,20 @@ std::string Phase2_Inject() {
 
   if (shadow::loader_antidbg::is_being_debugged(true))
     shadow::loader_antidbg::kill_local();
+
+  // Internal: мапим DLL в GTA5.exe из юзермода и выходим. Ни локального
+  // маппинга в лоадер, ни драйвера, ни патча кредов под внешний чит — пейлоад
+  // живёт внутри игры и сам читает cloud.session.
+  if (IsInternalProduct(g_product_id)) {
+    if (!RemoteInject::InjectIntoGame(g_pending_cheat)) {
+      std::string err = xorstr_("error:Не удалось инжектить в GTA5: ") +
+                        RemoteInject::LastError();
+      report_error(xorstr_("PHASE2"), err);
+      return err;
+    }
+    set_cheat_running(true);
+    return xorstr_("ok");
+  }
 
   // Шаг 1 [ULTRA]: патчим session_key + креды в чит
   {
