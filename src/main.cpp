@@ -1012,6 +1012,46 @@ static bool WriteMachineEnvVar(const wchar_t *name, const wchar_t *value) {
   return true;
 }
 
+// Runs `setx <name> <value> /M` in a hidden console (CREATE_NO_WINDOW — no
+// window flashes on screen) and waits for it. This is the canonical tool for
+// machine-wide env vars; the direct registry write above is kept only as a
+// fallback for when setx.exe itself cannot start.
+static bool WriteMachineEnvVarViaSetx(const wchar_t *name,
+                                      const wchar_t *value) {
+  wchar_t sysdir[MAX_PATH]{};
+  if (!GetSystemDirectoryW(sysdir, MAX_PATH) || !sysdir[0])
+    return false;
+
+  wchar_t cmd[MAX_PATH * 2]{};
+  swprintf(cmd, ARRAYSIZE(cmd), L"\"%s\\setx.exe\" %s %s /M", sysdir, name,
+           value);
+
+  STARTUPINFOW si{};
+  si.cb = sizeof(si);
+  si.dwFlags = STARTF_USESHOWWINDOW;
+  si.wShowWindow = SW_HIDE;
+  PROCESS_INFORMATION pi{};
+  if (!CreateProcessW(nullptr, cmd, nullptr, nullptr, FALSE,
+                      CREATE_NO_WINDOW | CREATE_UNICODE_ENVIRONMENT, nullptr,
+                      nullptr, &si, &pi))
+    return false;
+  WaitForSingleObject(pi.hProcess, 10000);
+  DWORD exitCode = 1;
+  GetExitCodeProcess(pi.hProcess, &exitCode);
+  CloseHandle(pi.hProcess);
+  CloseHandle(pi.hThread);
+
+  if (exitCode != 0)
+    return false;
+
+  // setx broadcasts WM_SETTINGCHANGE itself; repeat it so shells that missed
+  // the tool's broadcast still refresh before the game starts.
+  SendMessageTimeoutW(HWND_BROADCAST, WM_SETTINGCHANGE, 0,
+                      reinterpret_cast<LPARAM>(L"Environment"),
+                      SMTO_ABORTIFHUNG, 2000, nullptr);
+  return true;
+}
+
 // Returns true when injection may proceed. Sets the EOS null-AC var when the
 // game is closed; blocks when the game is open and the var is unset.
 static bool EnsureEosNullAntiCheat(std::string &errOut) {
@@ -1029,11 +1069,25 @@ static bool EnsureEosNullAntiCheat(std::string &errOut) {
         "перед запуском игры");
     return false;
   }
-  if (!WriteMachineEnvVar(L"EOS_USE_ANTICHEATCLIENTNULL", L"1")) {
+  // Каноничный путь — setx.exe скрытой консолью; реестр — только фолбэк.
+  if (!WriteMachineEnvVarViaSetx(L"EOS_USE_ANTICHEATCLIENTNULL", L"1") &&
+      !WriteMachineEnvVar(L"EOS_USE_ANTICHEATCLIENTNULL", L"1")) {
     errOut = xorstr_(
         "error:Не удалось подготовить окружение. Запустите лоадер от "
         "администратора.");
     return false;
+  }
+
+  // Verify the value actually landed before letting the inject through.
+  {
+    std::wstring check;
+    if (!ReadMachineEnvVar(L"EOS_USE_ANTICHEATCLIENTNULL", check) ||
+        check != L"1") {
+      errOut = xorstr_(
+          "error:Не удалось подготовить окружение. Запустите лоадер от "
+          "администратора.");
+      return false;
+    }
   }
   return true;
 }
