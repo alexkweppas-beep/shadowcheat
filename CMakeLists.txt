@@ -14,6 +14,10 @@ if(NOT PROJECT_NAME)
     project(shadow_internal LANGUAGES CXX C)
 endif()
 
+# MinHook is C. The repository root declares CXX only, so building from there
+# would otherwise fail to find a C compiler.
+enable_language(C)
+
 file(GLOB_RECURSE SHADOW_INTERNAL_SOURCES CONFIGURE_DEPENDS
     "${CMAKE_CURRENT_SOURCE_DIR}/src/*.cpp")
 
