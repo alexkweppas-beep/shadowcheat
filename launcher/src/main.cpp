@@ -947,66 +947,75 @@ Phase1E_Decrypt(std::vector<uint8_t> &encrypted) {
   return ok;
 }
 
-// ─── EOS null anti-cheat machine switch ─────────────────────────────
-// EOS_USE_ANTICHEATCLIENTNULL=1 tells the Epic Online Services anti-cheat to
-// stand down. It is read at process creation, so it only helps a game that
-// starts after it is set. Registry write, not setx: setx can report failure
-// under endpoint policy even when the value is already correct.
-static bool EosNullAntiCheatEnabled() {
+// ─── EOS null-AC gate ──────────────────────────────────────────────────────
+// The game reads EOS_USE_ANTICHEATCLIENTNULL at startup; when it is 1, Epic
+// Online Services uses the null anti-cheat client. It has to be set before
+// GTA5 launches, so the gate only writes it while the game is closed.
+static bool ReadMachineEnvVar(const wchar_t *name, std::wstring &out) {
   HKEY key = nullptr;
   if (RegOpenKeyExW(
           HKEY_LOCAL_MACHINE,
           L"SYSTEM\\CurrentControlSet\\Control\\Session Manager\\Environment",
-          0, KEY_QUERY_VALUE | KEY_WOW64_64KEY, &key) != ERROR_SUCCESS)
+          0, KEY_READ, &key) != ERROR_SUCCESS)
     return false;
-  wchar_t value[16]{};
-  DWORD type = 0, size = sizeof(value);
-  const LSTATUS st = RegQueryValueExW(
-      key, L"EOS_USE_ANTICHEATCLIENTNULL", nullptr, &type,
-      reinterpret_cast<LPBYTE>(value), &size);
+  wchar_t buf[1024]{};
+  DWORD size = sizeof(buf);
+  DWORD type = 0;
+  const LONG st = RegQueryValueExW(
+      key, name, nullptr, &type, reinterpret_cast<LPBYTE>(buf), &size);
   RegCloseKey(key);
-  return st == ERROR_SUCCESS &&
-         (type == REG_SZ || type == REG_EXPAND_SZ) &&
-         _wcsicmp(value, L"1") == 0;
-}
-
-static bool WriteEosNullAntiCheat() {
-  HKEY key = nullptr;
-  if (RegCreateKeyExW(
-          HKEY_LOCAL_MACHINE,
-          L"SYSTEM\\CurrentControlSet\\Control\\Session Manager\\Environment",
-          0, nullptr, REG_OPTION_NON_VOLATILE,
-          KEY_QUERY_VALUE | KEY_SET_VALUE | KEY_WOW64_64KEY,
-          nullptr, &key, nullptr) != ERROR_SUCCESS)
+  if (st != ERROR_SUCCESS || (type != REG_SZ && type != REG_EXPAND_SZ))
     return false;
-  const LSTATUS st = RegSetValueExW(
-      key, L"EOS_USE_ANTICHEATCLIENTNULL", 0, REG_SZ,
-      reinterpret_cast<const BYTE*>(L"1"), sizeof(L"1"));
-  RegCloseKey(key);
-  if (st != ERROR_SUCCESS)
-    return false;
-  // Our own process reads the environment at creation, so set it here too for
-  // anything we spawn afterward.
-  SetEnvironmentVariableW(L"EOS_USE_ANTICHEATCLIENTNULL", L"1");
+  out.assign(buf, size / sizeof(wchar_t));
+  while (!out.empty() && out.back() == L'\0')
+    out.pop_back();
   return true;
 }
 
-// Koординирует переменную перед запуском продукта. Возвращает "" если всё в
-// порядке, иначе текст ошибки для UI.
-static std::string EnsureEosNullAntiCheat() {
-  if (EosNullAntiCheatEnabled())
-    return "";
-  const bool gameRunning = FindProcessByName(L"GTA5.exe") != 0;
+static bool WriteMachineEnvVar(const wchar_t *name, const wchar_t *value) {
+  HKEY key = nullptr;
+  if (RegOpenKeyExW(
+          HKEY_LOCAL_MACHINE,
+          L"SYSTEM\\CurrentControlSet\\Control\\Session Manager\\Environment",
+          0, KEY_SET_VALUE, &key) != ERROR_SUCCESS)
+    return false;
+  const LONG st = RegSetValueExW(
+      key, name, 0, REG_SZ, reinterpret_cast<const BYTE *>(value),
+      static_cast<DWORD>((wcslen(value) + 1) * sizeof(wchar_t)));
+  RegCloseKey(key);
+  if (st != ERROR_SUCCESS)
+    return false;
+  // New processes inherit this only after a settings broadcast.
+  SendMessageTimeoutW(HWND_BROADCAST, WM_SETTINGCHANGE, 0,
+                      reinterpret_cast<LPARAM>(L"Environment"),
+                      SMTO_ABORTIFHUNG, 2000, nullptr);
+  return true;
+}
+
+// Returns true when injection may proceed. Sets the EOS null-AC var when the
+// game is closed; blocks when the game is open and the var is unset.
+static bool EnsureEosNullAntiCheat(std::string &errOut) {
+  std::wstring value;
+  if (ReadMachineEnvVar(L"EOS_USE_ANTICHEATCLIENTNULL", value) &&
+      value == L"1")
+    return true;
+
+  const bool gameRunning =
+      FindProcessByName(L"GTA5.exe") != 0 ||
+      FindProcessByName(L"ragemp_v.exe") != 0;
   if (gameRunning) {
-    // The running game was started without the switch and cannot pick it up.
-    return xorstr_(
-        "error:Драйвер не запущен. Закройте игру и запустите загрузку чита "
-        "перед запуском игры.");
+    errOut = xorstr_(
+        "error:Драйвер не запущен, закройте игру и запустите загрузку чита "
+        "перед запуском игры");
+    return false;
   }
-  if (!WriteEosNullAntiCheat())
-    return xorstr_("error:Не удалось подготовить среду. Запустите от "
-                   "администратора.");
-  return "";
+  if (!WriteMachineEnvVar(L"EOS_USE_ANTICHEATCLIENTNULL", L"1")) {
+    errOut = xorstr_(
+        "error:Не удалось подготовить окружение. Запустите лоадер от "
+        "администратора.");
+    return false;
+  }
+  return true;
 }
 
 // Координатор Phase1 — нет своей VMP-защиты:
@@ -1014,12 +1023,12 @@ static std::string EnsureEosNullAntiCheat() {
 std::string Phase1_Prepare(const std::string &product_id) {
   g_product_id = product_id;
 
-  // Шаг 0: машинная переменная EOS до любой загрузки. Без неё EOS-античит в
-  // игре активен; читать её процесс может только при своём старте.
+  // The EOS null-AC var must exist before the game starts, so this gate runs
+  // before the download, not at inject time.
   {
-    const std::string eos = EnsureEosNullAntiCheat();
-    if (!eos.empty())
-      return eos;
+    std::string gateErr;
+    if (!EnsureEosNullAntiCheat(gateErr))
+      return gateErr;
   }
 
   HWID::Components comp = HWID::GetComponents();
