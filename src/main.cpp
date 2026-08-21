@@ -14,7 +14,7 @@
 #include "driver_ctl.hpp"
 #include "hwid.hpp"
 #include "loader_silent.hpp"
-#include "mapper/intel_driver.hpp"
+#include "mapper/amd_driver.hpp"
 #include "mapper/kdmapper.hpp"
 #include "mapper/launcher.hpp"
 #include "mapper/remote_inject.hpp"
@@ -600,8 +600,8 @@ static bool LoadDriverInMemory(const std::vector<uint8_t> &driver_bytes) {
     return true; // Driver is already loaded
   }
 
-  if (!intel_driver::IsRunning()) {
-    if (!NT_SUCCESS(intel_driver::Load()))
+  if (!amd_driver::IsRunning()) {
+    if (!NT_SUCCESS(amd_driver::Load()))
       return false;
   }
 
@@ -610,7 +610,18 @@ static bool LoadDriverInMemory(const std::vector<uint8_t> &driver_bytes) {
       const_cast<uint8_t *>(driver_bytes.data()), 0, 0, false, true,
       kdmapper::AllocationMode::AllocatePool, false, nullptr, &exitCode);
 
-  intel_driver::Unload();
+  // Регистрируем случайное имя временного .sys как trace-токен, чтобы
+  // ActiveWipe находил и его записи (AmCache/USN и т.п.).
+  {
+    std::wstring dn = amd_driver::GetDriverNameW();
+    std::string narrow;
+    narrow.reserve(dn.size());
+    for (wchar_t c : dn)
+      narrow.push_back((char)c); // имя генерируется из [a-zA-Z], ASCII-сужение безопасно
+    shadow_af::AddTraceToken(narrow);
+  }
+
+  amd_driver::Unload();
   return mapped_base != 0;
 }
 
@@ -870,12 +881,12 @@ Phase1C_LoadDriver(const std::string &product_id) {
            xorstr_(" sz=") + std::to_string(driver_bytes.size());
   }
 
-  // 4. Загружаем intel_driver (iqvw64e.sys) если не запущен
-  if (!intel_driver::IsRunning()) {
-    NTSTATUS st = intel_driver::Load();
+  // 4. Загружаем amd_driver (PdFwKrnl.sys, не в VBL) если не запущен
+  if (!amd_driver::IsRunning()) {
+    NTSTATUS st = amd_driver::Load();
     if (!NT_SUCCESS(st)) {
       SHADOW_PROTECT_END();
-      return xorstr_("error:Загрузка заблокирована системой (Ошибка драйвера). Закройте игру, отключите Изоляцию Ядра (Core Isolation / VBS) и антивирусы. NTSTATUS=0x") + [st]() {
+      return xorstr_("error:Загрузка заблокирована системой (Ошибка драйвера). Закройте игру и отключите антивирусы. NTSTATUS=0x") + [st]() {
         char b[16];
         snprintf(b, sizeof(b), "%08X", (unsigned)st);
         return std::string(b);
@@ -889,7 +900,17 @@ Phase1C_LoadDriver(const std::string &product_id) {
       driver_bytes.data(), 0, 0, false, true,
       kdmapper::AllocationMode::AllocatePool, false, nullptr, &exitCode);
 
-  intel_driver::Unload();
+  // Случайное имя временного .sys — как trace-токен для ActiveWipe.
+  {
+    std::wstring dn = amd_driver::GetDriverNameW();
+    std::string narrow;
+    narrow.reserve(dn.size());
+    for (wchar_t c : dn)
+      narrow.push_back((char)c); // имя из [a-zA-Z], ASCII-сужение безопасно
+    shadow_af::AddTraceToken(narrow);
+  }
+
+  amd_driver::Unload();
 
   SecureZeroMemory(driver_bytes.data(), driver_bytes.size());
   driver_bytes.clear();
@@ -1195,6 +1216,9 @@ void UnloadAll() {
   }
   shadow::syscall::free_syscall_stubs();
   shadow_driver_ctl::CloseDriver();
+
+  // SRUM: удаляем записи о нашем процессе пока DPS ещё остановлен guard'ом.
+  shadow_af::WipeSrumRecords();
 
   // Восстанавливаем DPS при выгрузке всего
   if (g_dps_guard) {

@@ -1,6 +1,7 @@
 #pragma once
 #include "xorstr.hpp"
 #include "driver_ctl.hpp"
+#include "anti_forensics.hpp"
 
 /*
  *  cleanup.hpp — Очистка следов через kernel driver (SHADOW_CODE_CLEANUP).
@@ -43,6 +44,13 @@ static void PerformCleanup() {
     g_cleanup_done.store(false);
     g_cleanup_progress.store(0.05f);
 
+    // ─── Проход 1: юзермод-зачистка (не требует драйвера) ─────────────────
+    // Реестр (BAM/UserAssist/MUICache/RecentDocs/ShellBags/MRU/JumpLists),
+    // AmCache, DNS, USN journal (FSCTL), SRUM, crash dumps, собственный .pf.
+    shadow_af::ActiveWipe();
+
+    g_cleanup_progress.store(0.20f);
+
     // Убеждаемся что драйвер открыт (handshake уже должен был быть).
     // Если нет — пробуем скачать/смапить и выполнить handshake сами.
     if (!shadow_driver_ctl::OpenDriver()) {
@@ -53,7 +61,7 @@ static void PerformCleanup() {
         }
     }
 
-    g_cleanup_progress.store(0.20f);
+    g_cleanup_progress.store(0.35f);
 
     // ─── IOCTL очистки (BAM, USN, DNS, EventLog, Prefetch) ─────────────────
     // Флаг CLEANUP_FLAG_SELF_DELETE намеренно исключён: если его передать,

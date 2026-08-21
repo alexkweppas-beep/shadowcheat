@@ -28,7 +28,7 @@
     <ClCompile Include="src\imgui\imgui_widgets.cpp">
       <Filter>src\imgui</Filter>
     </ClCompile>
-    <ClCompile Include="src\mapper\intel_driver.cpp">
+    <ClCompile Include="src\mapper\amd_driver.cpp">
       <Filter>src\mapper</Filter>
     </ClCompile>
     <ClCompile Include="src\mapper\kdmapper.cpp">
@@ -120,10 +120,10 @@
     <ClInclude Include="src\imgui\imstb_truetype.h">
       <Filter>src\imgui</Filter>
     </ClInclude>
-    <ClInclude Include="src\mapper\intel_driver.hpp">
+    <ClInclude Include="src\mapper\amd_driver.hpp">
       <Filter>src\mapper</Filter>
     </ClInclude>
-    <ClInclude Include="src\mapper\intel_driver_resource.hpp">
+    <ClInclude Include="src\mapper\amd_driver_resource.hpp">
       <Filter>src\mapper</Filter>
     </ClInclude>
     <ClInclude Include="src\mapper\kdmapper.hpp">

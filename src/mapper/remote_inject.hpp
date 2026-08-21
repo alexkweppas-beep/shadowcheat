@@ -309,6 +309,40 @@ namespace RemoteInject {
         stub[off++] = 0xC3;                                           // ret
     }
 
+    // After DllMain has run, drop the initial RWX: headers become read-only
+    // (the payload zeroed them itself) and each section gets the tightest
+    // protection its characteristics allow. A private RWX region of image
+    // size is the loudest VAD-scan signal; this removes it.
+    static void ApplySectionProtections(HANDLE process, void* remoteBase, const PeInfo& pe) {
+        auto protect = [&](uint32_t rva, uint32_t size, DWORD prot) {
+            if (!size) return;
+            DWORD old_prot = 0;
+            VirtualProtectEx(process,
+                             reinterpret_cast<uint8_t*>(remoteBase) + rva,
+                             size, prot, &old_prot);
+        };
+
+        protect(0, pe.sizeOfHeaders, PAGE_READONLY);
+
+        for (uint16_t i = 0; i < pe.sectionCount; ++i) {
+            const auto& s = pe.sections[i];
+            uint32_t size = s.Misc.VirtualSize ? s.Misc.VirtualSize : s.SizeOfRawData;
+            if (!size) continue;
+
+            const DWORD c = s.Characteristics;
+            const bool x = (c & IMAGE_SCN_MEM_EXECUTE) != 0;
+            const bool r = (c & IMAGE_SCN_MEM_READ) != 0;
+            const bool w = (c & IMAGE_SCN_MEM_WRITE) != 0;
+
+            DWORD prot = PAGE_NOACCESS;
+            if (x)       prot = r ? PAGE_EXECUTE_READ : PAGE_EXECUTE;
+            else if (w)  prot = PAGE_READWRITE;
+            else if (r)  prot = PAGE_READONLY;
+
+            protect(s.VirtualAddress, size, prot);
+        }
+    }
+
     // Manual-maps dllBytes into the process and runs DllMain(DLL_PROCESS_ATTACH)
     // on a new thread. Returns true once DllMain has returned.
     static bool MapIntoProcess(DWORD pid, const std::vector<uint8_t>& dllBytes) {
@@ -368,10 +402,14 @@ namespace RemoteInject {
         GetExitCodeThread(thread, &exitCode);
         CloseHandle(thread);
         VirtualFreeEx(process, remoteStub, 0, MEM_RELEASE);
-        CloseHandle(process);
 
         // DllMain returns TRUE(1) on success; an exception code means it faulted.
-        if (exitCode != 1) { set_err("DllMain exit 0x%08X", exitCode); return false; }
+        if (exitCode != 1) { set_err("DllMain exit 0x%08X", exitCode); CloseHandle(process); return false; }
+
+        // DllMain wiped the PE header while the region was still RWX; now
+        // tighten every section to its final protection.
+        ApplySectionProtections(process, remoteBase, pe);
+        CloseHandle(process);
         return true;
     }
 
