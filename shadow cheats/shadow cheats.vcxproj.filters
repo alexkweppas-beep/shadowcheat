@@ -1,0 +1,297 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Project ToolsVersion="4.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <ItemGroup>
+    <Filter Include="core">
+      <UniqueIdentifier>{a0000001-0000-0000-0000-000000000001}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="config">
+      <UniqueIdentifier>{a0000001-0000-0000-0000-000000000002}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="driver">
+      <UniqueIdentifier>{a0000001-0000-0000-0000-000000000003}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="memory">
+      <UniqueIdentifier>{a0000001-0000-0000-0000-000000000004}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="sdk">
+      <UniqueIdentifier>{a0000001-0000-0000-0000-000000000005}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="math">
+      <UniqueIdentifier>{a0000001-0000-0000-0000-000000000006}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="features">
+      <UniqueIdentifier>{a0000001-0000-0000-0000-000000000007}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="render">
+      <UniqueIdentifier>{a0000001-0000-0000-0000-000000000008}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="utils">
+      <UniqueIdentifier>{a0000001-0000-0000-0000-000000000009}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="gui">
+      <UniqueIdentifier>{2d4747df-bdd4-4276-a6d6-d9a3dc8901cc}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="gui\elements">
+      <UniqueIdentifier>{3d4747df-bdd4-4276-a6d6-d9a3dc8901cc}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="gui\settings">
+      <UniqueIdentifier>{4d4747df-bdd4-4276-a6d6-d9a3dc8901cc}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="external">
+      <UniqueIdentifier>{a0000001-0000-0000-0000-00000000000a}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="external\imgui">
+      <UniqueIdentifier>{a0000001-0000-0000-0000-00000000000b}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="features\esp">
+      <UniqueIdentifier>{1f4747df-bdd4-4276-a6d6-d9a3dc8901cc}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="features\aimbot">
+      <UniqueIdentifier>{d607cb67-2353-4fd0-b72a-30e4f2d12820}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="security">
+      <UniqueIdentifier>{54321678-4321-4fd0-b72a-30e4f2d12820}</UniqueIdentifier>
+    </Filter>
+  </ItemGroup>
+  <ItemGroup>
+    <ClCompile Include="src\core\main.cpp">
+      <Filter>core</Filter>
+    </ClCompile>
+    <ClCompile Include="src\driver\driver_io.cpp">
+      <Filter>driver</Filter>
+    </ClCompile>
+    <ClCompile Include="src\memory\memory.cpp">
+      <Filter>memory</Filter>
+    </ClCompile>
+    <ClCompile Include="src\sdk\CPed.cpp">
+      <Filter>sdk</Filter>
+    </ClCompile>
+    <ClCompile Include="src\sdk\bones.cpp">
+      <Filter>sdk</Filter>
+    </ClCompile>
+    <ClCompile Include="src\sdk\math_utils.cpp">
+      <Filter>sdk</Filter>
+    </ClCompile>
+    <ClCompile Include="src\sdk\world_to_screen.cpp">
+      <Filter>sdk</Filter>
+    </ClCompile>
+    <ClCompile Include="src\render\overlay.cpp">
+      <Filter>render</Filter>
+    </ClCompile>
+    <ClCompile Include="src\render\draw.cpp">
+      <Filter>render</Filter>
+    </ClCompile>
+    <ClCompile Include="src\utils\console.cpp">
+      <Filter>utils</Filter>
+    </ClCompile>
+    <ClCompile Include="src\utils\logger.cpp">
+      <Filter>utils</Filter>
+    </ClCompile>
+    <ClCompile Include="external\imgui\imgui.cpp">
+      <Filter>external\imgui</Filter>
+    </ClCompile>
+    <ClCompile Include="external\imgui\imgui_draw.cpp">
+      <Filter>external\imgui</Filter>
+    </ClCompile>
+    <ClCompile Include="external\imgui\imgui_tables.cpp">
+      <Filter>external\imgui</Filter>
+    </ClCompile>
+    <ClCompile Include="external\imgui\imgui_widgets.cpp">
+      <Filter>external\imgui</Filter>
+    </ClCompile>
+    <ClCompile Include="src\features\esp\esp.cpp">
+      <Filter>features\esp</Filter>
+    </ClCompile>
+    <ClCompile Include="src\render\debug_overlay.cpp">
+      <Filter>render</Filter>
+    </ClCompile>
+    <ClCompile Include="src\core\entity_list.cpp">
+      <Filter>core</Filter>
+    </ClCompile>
+    <ClCompile Include="src\security\security.cpp">
+      <Filter>security</Filter>
+    </ClCompile>
+    <ClCompile Include="src\utils\http.cpp" />
+    <ClCompile Include="src\config\cheat_config.cpp" />
+    <ClCompile Include="src\sdk\CVehicle.cpp" />
+    <ClCompile Include="src\gui\loveup\gui.cpp" />
+    <ClCompile Include="src\gui\loveup\helpers\blur.cpp" />
+    <ClCompile Include="src\gui\loveup\helpers\config.cpp" />
+    <ClCompile Include="src\gui\loveup\helpers\loveup_draw.cpp" />
+    <ClCompile Include="src\gui\loveup\helpers\fonts.cpp" />
+    <ClCompile Include="src\gui\loveup\helpers\stb_implementation.cpp" />
+    <ClCompile Include="src\gui\loveup\helpers\texture.cpp" />
+    <ClCompile Include="src\gui\loveup\widgets\blackout.cpp" />
+    <ClCompile Include="src\gui\loveup\widgets\button.cpp" />
+    <ClCompile Include="src\gui\loveup\widgets\checkbox.cpp" />
+    <ClCompile Include="src\gui\loveup\widgets\child.cpp" />
+    <ClCompile Include="src\gui\loveup\widgets\colorpicker.cpp" />
+    <ClCompile Include="src\gui\loveup\widgets\config_button.cpp" />
+    <ClCompile Include="src\gui\loveup\widgets\config_field.cpp" />
+    <ClCompile Include="src\gui\loveup\widgets\config_info.cpp" />
+    <ClCompile Include="src\gui\loveup\widgets\curve.cpp" />
+    <ClCompile Include="src\gui\loveup\widgets\draw_segment.cpp" />
+    <ClCompile Include="src\gui\loveup\widgets\dropdown.cpp" />
+    <ClCompile Include="src\gui\loveup\widgets\helpers.cpp" />
+    <ClCompile Include="src\gui\loveup\widgets\init_keybinds.cpp" />
+    <ClCompile Include="src\gui\loveup\widgets\keybind.cpp" />
+    <ClCompile Include="src\gui\loveup\widgets\notify.cpp" />
+    <ClCompile Include="src\gui\loveup\widgets\popup.cpp" />
+    <ClCompile Include="src\gui\loveup\widgets\search.cpp" />
+    <ClCompile Include="src\gui\loveup\widgets\seperator.cpp" />
+    <ClCompile Include="src\gui\loveup\widgets\slider.cpp" />
+    <ClCompile Include="src\gui\loveup\widgets\subtab_section.cpp" />
+    <ClCompile Include="src\gui\loveup\widgets\tab_button.cpp" />
+    <ClCompile Include="src\gui\loveup\widgets\text_field.cpp" />
+    <ClCompile Include="src\gui\loveup\widgets\weapon_checkbox.cpp" />
+    <ClCompile Include="src\gui\loveup\widgets\weapon_info.cpp" />
+    <ClCompile Include="src\gui\loveup\widgets\window.cpp" />
+    <ClCompile Include="external\imgui\imgui_freetype.cpp" />
+    <ClCompile Include="external\imgui\backends\imgui_impl_dx11.cpp" />
+    <ClCompile Include="external\imgui\backends\imgui_impl_win32.cpp" />
+  </ItemGroup>
+  <ItemGroup>
+    <ClInclude Include="src\core\globals.hpp">
+      <Filter>core</Filter>
+    </ClInclude>
+    <ClInclude Include="src\core\platform_detect.hpp">
+      <Filter>core</Filter>
+    </ClInclude>
+    <ClInclude Include="src\config\settings.hpp">
+      <Filter>config</Filter>
+    </ClInclude>
+    <ClInclude Include="src\driver\ioctl_codes.hpp">
+      <Filter>driver</Filter>
+    </ClInclude>
+    <ClInclude Include="src\driver\driver_io.hpp">
+      <Filter>driver</Filter>
+    </ClInclude>
+    <ClInclude Include="src\memory\memory.hpp">
+      <Filter>memory</Filter>
+    </ClInclude>
+    <ClInclude Include="src\memory\memory_access.hpp">
+      <Filter>memory</Filter>
+    </ClInclude>
+    <ClInclude Include="src\sdk\offsets.hpp">
+      <Filter>sdk</Filter>
+    </ClInclude>
+    <ClInclude Include="src\sdk\CPed.hpp">
+      <Filter>sdk</Filter>
+    </ClInclude>
+    <ClInclude Include="src\sdk\bones.hpp">
+      <Filter>sdk</Filter>
+    </ClInclude>
+    <ClInclude Include="src\sdk\math_utils.hpp">
+      <Filter>sdk</Filter>
+    </ClInclude>
+    <ClInclude Include="src\sdk\world_to_screen.hpp">
+      <Filter>sdk</Filter>
+    </ClInclude>
+    <ClInclude Include="src\math\SimpleMath.h">
+      <Filter>math</Filter>
+    </ClInclude>
+    <ClInclude Include="src\render\overlay.hpp">
+      <Filter>render</Filter>
+    </ClInclude>
+    <ClInclude Include="src\render\draw.hpp">
+      <Filter>render</Filter>
+    </ClInclude>
+    <ClInclude Include="src\utils\console.hpp">
+      <Filter>utils</Filter>
+    </ClInclude>
+    <ClInclude Include="src\utils\logger.hpp">
+      <Filter>utils</Filter>
+    </ClInclude>
+    <ClInclude Include="external\imgui\imconfig.h">
+      <Filter>external\imgui</Filter>
+    </ClInclude>
+    <ClInclude Include="external\imgui\imgui.h">
+      <Filter>external\imgui</Filter>
+    </ClInclude>
+    <ClInclude Include="external\imgui\imgui_internal.h">
+      <Filter>external\imgui</Filter>
+    </ClInclude>
+    <ClInclude Include="external\imgui\imstb_rectpack.h">
+      <Filter>external\imgui</Filter>
+    </ClInclude>
+    <ClInclude Include="external\imgui\imstb_textedit.h">
+      <Filter>external\imgui</Filter>
+    </ClInclude>
+    <ClInclude Include="external\imgui\imstb_truetype.h">
+      <Filter>external\imgui</Filter>
+    </ClInclude>
+    <ClInclude Include="src\features\aimbot\aimbot.hpp">
+      <Filter>features\aimbot</Filter>
+    </ClInclude>
+    <ClInclude Include="src\features\esp\esp.hpp">
+      <Filter>features\esp</Filter>
+    </ClInclude>
+    <ClInclude Include="src\render\debug_overlay.hpp">
+      <Filter>render</Filter>
+    </ClInclude>
+    <ClInclude Include="src\core\entity_list.hpp">
+      <Filter>core</Filter>
+    </ClInclude>
+    <ClInclude Include="src\sdk\weapons.hpp">
+      <Filter>sdk</Filter>
+    </ClInclude>
+    <ClInclude Include="src\features\aimbot\trigger.hpp">
+      <Filter>features\aimbot</Filter>
+    </ClInclude>
+    <ClInclude Include="src\security\security.hpp">
+      <Filter>security</Filter>
+    </ClInclude>
+    <ClInclude Include="src\security\anti_analysis.hpp">
+      <Filter>security</Filter>
+    </ClInclude>
+    <ClInclude Include="src\security\advanced_tricks.hpp">
+      <Filter>security</Filter>
+    </ClInclude>
+    <ClInclude Include="src\security\honeypot.hpp">
+      <Filter>security</Filter>
+    </ClInclude>
+    <ClInclude Include="src\security\api_hash.hpp">
+      <Filter>security</Filter>
+    </ClInclude>
+    <ClInclude Include="src\security\vmp_markers.hpp">
+      <Filter>security</Filter>
+    </ClInclude>
+    <ClInclude Include="src\security\themida_markers.hpp">
+      <Filter>security</Filter>
+    </ClInclude>
+    <ClInclude Include="src\security\protection_config.hpp">
+      <Filter>security</Filter>
+    </ClInclude>
+    <ClInclude Include="src\security\ThemidaSDK.h">
+      <Filter>security</Filter>
+    </ClInclude>
+    <ClInclude Include="src\security\VMProtectSDK.h">
+      <Filter>security</Filter>
+    </ClInclude>
+    <ClInclude Include="src\security\skCrypter.h">
+      <Filter>security</Filter>
+    </ClInclude>
+    <ClInclude Include="src\utils\http.hpp" />
+    <ClInclude Include="src\gui\loveup\headers\includes.h" />
+    <ClInclude Include="src\gui\loveup\headers\widgets.h" />
+    <ClInclude Include="src\gui\loveup\headers\config.h" />
+    <ClInclude Include="src\gui\loveup\headers\flags.h" />
+    <ClInclude Include="src\gui\loveup\headers\draw.h" />
+    <ClInclude Include="src\gui\loveup\headers\fonts.h" />
+    <ClInclude Include="src\gui\loveup\headers\functions.h" />
+    <ClInclude Include="src\gui\loveup\headers\blur.h" />
+    <ClInclude Include="src\gui\loveup\headers\stb_wrapper.h" />
+    <ClInclude Include="src\gui\loveup\settings\colors.h" />
+    <ClInclude Include="src\gui\loveup\settings\elements.h" />
+    <ClInclude Include="src\gui\loveup\settings\variables.h" />
+    <ClInclude Include="src\gui\loveup\data\fonts.h" />
+    <ClInclude Include="external\imgui\imgui_freetype.h" />
+    <ClInclude Include="external\imgui\backends\imgui_impl_dx11.h" />
+    <ClInclude Include="external\imgui\backends\imgui_impl_win32.h" />
+  </ItemGroup>
+  <ItemGroup>
+    <None Include="src\math\SimpleMath.inl">
+      <Filter>math</Filter>
+    </None>
+  </ItemGroup>
+</Project>

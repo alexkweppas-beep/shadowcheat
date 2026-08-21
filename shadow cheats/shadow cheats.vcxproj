@@ -1,0 +1,230 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Project DefaultTargets="Build" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <ItemGroup Label="ProjectConfigurations">
+    <ProjectConfiguration Include="Debug|x64">
+      <Configuration>Debug</Configuration>
+      <Platform>x64</Platform>
+    </ProjectConfiguration>
+    <ProjectConfiguration Include="Release|x64">
+      <Configuration>Release</Configuration>
+      <Platform>x64</Platform>
+    </ProjectConfiguration>
+  </ItemGroup>
+  <PropertyGroup Label="Globals">
+    <VCProjectVersion>17.0</VCProjectVersion>
+    <Keyword>Win32Proj</Keyword>
+    <ProjectGuid>{e31a4130-bd82-491f-ba57-ae438c2191c4}</ProjectGuid>
+    <RootNamespace>shadowcheats</RootNamespace>
+    <WindowsTargetPlatformVersion>10.0</WindowsTargetPlatformVersion>
+  </PropertyGroup>
+  <Import Project="$(VCTargetsPath)\Microsoft.Cpp.Default.props" />
+  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'" Label="Configuration">
+    <ConfigurationType>DynamicLibrary</ConfigurationType>
+    <UseDebugLibraries>true</UseDebugLibraries>
+    <PlatformToolset>v143</PlatformToolset>
+    <CharacterSet>Unicode</CharacterSet>
+  </PropertyGroup>
+  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'" Label="Configuration">
+    <ConfigurationType>DynamicLibrary</ConfigurationType>
+    <UseDebugLibraries>false</UseDebugLibraries>
+    <PlatformToolset>v145</PlatformToolset>
+    <WholeProgramOptimization>true</WholeProgramOptimization>
+    <CharacterSet>Unicode</CharacterSet>
+  </PropertyGroup>
+  <Import Project="$(VCTargetsPath)\Microsoft.Cpp.props" />
+  <ImportGroup Label="ExtensionSettings" />
+  <ImportGroup Label="Shared" />
+  <ImportGroup Label="PropertySheets" Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">
+    <Import Project="$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props" Condition="exists('$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props')" Label="LocalAppDataPlatform" />
+  </ImportGroup>
+  <ImportGroup Label="PropertySheets" Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
+    <Import Project="$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props" Condition="exists('$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props')" Label="LocalAppDataPlatform" />
+  </ImportGroup>
+  <PropertyGroup Label="UserMacros" />
+  <PropertyGroup>
+    <IncludePath>$(ProjectDir)src;$(ProjectDir)src\security;$(ProjectDir)src\config;$(ProjectDir)external\imgui;$(ProjectDir)external\imgui\backends;$(ProjectDir)external\freetype\include;$(ProjectDir)external\stb;$(IncludePath)</IncludePath>
+    <LibraryPath>$(ProjectDir)external\freetype\win64;$(ProjectDir)src\security;$(LibraryPath)</LibraryPath>
+    <OutDir>$(SolutionDir)build\bin\$(Platform)\$(Configuration)\</OutDir>
+    <IntDir>$(SolutionDir)build\obj\$(Platform)\$(Configuration)\$(ProjectName)\</IntDir>
+  </PropertyGroup>
+  <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">
+    <ClCompile>
+      <WarningLevel>Level3</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <PreprocessorDefinitions>SHADOW_PACKER=1;SHADOW_HAVE_VMP_SDK=1;_DEBUG;_CONSOLE;NOMINMAX;WIN32_LEAN_AND_MEAN;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <ConformanceMode>true</ConformanceMode>
+      <LanguageStandard>stdcpp20</LanguageStandard>
+      <RuntimeLibrary>MultiThreadedDebug</RuntimeLibrary>
+      <AdditionalOptions>/utf-8 %(AdditionalOptions)</AdditionalOptions>
+    </ClCompile>
+    <Link>
+      <SubSystem>Windows</SubSystem>
+      <GenerateDebugInformation>true</GenerateDebugInformation>
+      <AdditionalDependencies>winhttp.lib;freetype.lib;%(AdditionalDependencies)</AdditionalDependencies>
+      <AdditionalDependencies>VMProtectSDK64.lib;%(AdditionalDependencies)</AdditionalDependencies>
+    </Link>
+  </ItemDefinitionGroup>
+  <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
+    <ClCompile>
+      <WarningLevel>Level3</WarningLevel>
+      <FunctionLevelLinking>true</FunctionLevelLinking>
+      <IntrinsicFunctions>true</IntrinsicFunctions>
+      <SDLCheck>false</SDLCheck>
+      <PreprocessorDefinitions>SHADOW_PACKER=1;SHADOW_HAVE_VMP_SDK=1;NDEBUG;_CONSOLE;NOMINMAX;WIN32_LEAN_AND_MEAN;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <ConformanceMode>true</ConformanceMode>
+      <LanguageStandard>stdcpp20</LanguageStandard>
+      <RuntimeLibrary>MultiThreaded</RuntimeLibrary>
+      <AdditionalOptions>/utf-8 /FS %(AdditionalOptions)</AdditionalOptions>
+    </ClCompile>
+    <Link>
+      <SubSystem>Windows</SubSystem>
+      <GenerateDebugInformation>true</GenerateDebugInformation>
+      <AdditionalDependencies>winhttp.lib;freetype.lib;%(AdditionalDependencies)</AdditionalDependencies>
+      <AdditionalDependencies>VMProtectSDK64.lib;%(AdditionalDependencies)</AdditionalDependencies>
+    </Link>
+  </ItemDefinitionGroup>
+  <ItemGroup>
+    <!-- core -->
+    <ClCompile Include="src\core\entity_list.cpp" />
+    <ClCompile Include="src\core\main.cpp" />
+    <ClCompile Include="src\utils\http.cpp" />
+    <ClCompile Include="src\security\security.cpp" />
+    <ClCompile Include="src\config\cheat_config.cpp" />
+    <!-- driver -->
+    <ClCompile Include="src\driver\driver_io.cpp" />
+    <!-- features -->
+    <ClCompile Include="src\features\esp\esp.cpp" />
+    <ClCompile Include="src\memory\memory.cpp" />
+    <!-- sdk -->
+    <ClCompile Include="src\render\debug_overlay.cpp" />
+    <ClCompile Include="src\sdk\CPed.cpp" />
+    <ClCompile Include="src\sdk\CVehicle.cpp" />
+    <ClCompile Include="src\sdk\bones.cpp" />
+    <ClCompile Include="src\sdk\math_utils.cpp" />
+    <ClCompile Include="src\sdk\world_to_screen.cpp" />
+    <!-- render -->
+    <ClCompile Include="src\render\overlay.cpp" />
+    <ClCompile Include="src\render\draw.cpp" />
+    <!-- utils -->
+    <ClCompile Include="src\utils\console.cpp" />
+    <ClCompile Include="src\utils\logger.cpp" />
+    <!-- loveup menu - main -->
+    <ClCompile Include="src\gui\loveup\gui.cpp" />
+    <!-- loveup menu - helpers -->
+    <ClCompile Include="src\gui\loveup\helpers\blur.cpp" />
+    <ClCompile Include="src\gui\loveup\helpers\config.cpp" />
+    <ClCompile Include="src\gui\loveup\helpers\loveup_draw.cpp" />
+    <ClCompile Include="src\gui\loveup\helpers\fonts.cpp" />
+    <ClCompile Include="src\gui\loveup\helpers\stb_implementation.cpp" />
+    <ClCompile Include="src\gui\loveup\helpers\texture.cpp" />
+    <!-- loveup menu - widgets -->
+    <ClCompile Include="src\gui\loveup\widgets\blackout.cpp" />
+    <ClCompile Include="src\gui\loveup\widgets\button.cpp" />
+    <ClCompile Include="src\gui\loveup\widgets\checkbox.cpp" />
+    <ClCompile Include="src\gui\loveup\widgets\child.cpp" />
+    <ClCompile Include="src\gui\loveup\widgets\colorpicker.cpp" />
+    <ClCompile Include="src\gui\loveup\widgets\config_button.cpp" />
+    <ClCompile Include="src\gui\loveup\widgets\config_field.cpp" />
+    <ClCompile Include="src\gui\loveup\widgets\config_info.cpp" />
+    <ClCompile Include="src\gui\loveup\widgets\curve.cpp" />
+    <ClCompile Include="src\gui\loveup\widgets\draw_segment.cpp" />
+    <ClCompile Include="src\gui\loveup\widgets\dropdown.cpp" />
+    <ClCompile Include="src\gui\loveup\widgets\helpers.cpp" />
+    <ClCompile Include="src\gui\loveup\widgets\init_keybinds.cpp" />
+    <ClCompile Include="src\gui\loveup\widgets\keybind.cpp" />
+    <ClCompile Include="src\gui\loveup\widgets\notify.cpp" />
+    <ClCompile Include="src\gui\loveup\widgets\popup.cpp" />
+    <ClCompile Include="src\gui\loveup\widgets\search.cpp" />
+    <ClCompile Include="src\gui\loveup\widgets\seperator.cpp" />
+    <ClCompile Include="src\gui\loveup\widgets\slider.cpp" />
+    <ClCompile Include="src\gui\loveup\widgets\subtab_section.cpp" />
+    <ClCompile Include="src\gui\loveup\widgets\tab_button.cpp" />
+    <ClCompile Include="src\gui\loveup\widgets\text_field.cpp" />
+    <ClCompile Include="src\gui\loveup\widgets\weapon_checkbox.cpp" />
+    <ClCompile Include="src\gui\loveup\widgets\weapon_info.cpp" />
+    <ClCompile Include="src\gui\loveup\widgets\window.cpp" />
+    <!-- imgui (loveup version with freetype) -->
+    <ClCompile Include="external\imgui\imgui.cpp" />
+    <ClCompile Include="external\imgui\imgui_draw.cpp" />
+    <ClCompile Include="external\imgui\imgui_tables.cpp" />
+    <ClCompile Include="external\imgui\imgui_widgets.cpp" />
+    <ClCompile Include="external\imgui\imgui_freetype.cpp" />
+    <ClCompile Include="external\imgui\backends\imgui_impl_dx11.cpp" />
+    <ClCompile Include="external\imgui\backends\imgui_impl_win32.cpp" />
+  </ItemGroup>
+  <ItemGroup>
+    <!-- core -->
+    <ClInclude Include="src\core\entity_list.hpp" />
+    <ClInclude Include="src\core\globals.hpp" />
+    <ClInclude Include="src\utils\http.hpp" />
+    <ClInclude Include="src\core\platform_detect.hpp" />
+    <!-- config / settings -->
+    <ClInclude Include="src\config\settings.hpp" />
+    <!-- security -->
+    <ClInclude Include="src\security\security.hpp" />
+    <ClInclude Include="src\security\anti_analysis.hpp" />
+    <ClInclude Include="src\security\advanced_tricks.hpp" />
+    <ClInclude Include="src\security\honeypot.hpp" />
+    <ClInclude Include="src\security\api_hash.hpp" />
+    <ClInclude Include="src\security\vmp_markers.hpp" />
+    <ClInclude Include="src\security\themida_markers.hpp" />
+    <ClInclude Include="src\security\protection_config.hpp" />
+    <ClInclude Include="src\security\ThemidaSDK.h" />
+    <ClInclude Include="src\security\VMProtectSDK.h" />
+    <ClInclude Include="src\security\skCrypter.h" />
+    <!-- driver -->
+    <ClInclude Include="src\driver\ioctl_codes.hpp" />
+    <ClInclude Include="src\driver\driver_io.hpp" />
+    <!-- features -->
+    <ClInclude Include="src\features\aimbot\aimbot.hpp" />
+    <ClInclude Include="src\features\aimbot\trigger.hpp" />
+    <ClInclude Include="src\features\esp\esp.hpp" />
+    <ClInclude Include="src\memory\memory.hpp" />
+    <ClInclude Include="src\memory\memory_access.hpp" />
+    <!-- sdk -->
+    <ClInclude Include="src\render\debug_overlay.hpp" />
+    <ClInclude Include="src\sdk\offsets.hpp" />
+    <ClInclude Include="src\sdk\CPed.hpp" />
+    <ClInclude Include="src\sdk\bones.hpp" />
+    <ClInclude Include="src\sdk\math_utils.hpp" />
+    <ClInclude Include="src\sdk\weapons.hpp" />
+    <ClInclude Include="src\sdk\world_to_screen.hpp" />
+    <!-- math -->
+    <ClInclude Include="src\math\SimpleMath.h" />
+    <!-- render -->
+    <ClInclude Include="src\render\overlay.hpp" />
+    <ClInclude Include="src\render\draw.hpp" />
+    <!-- utils -->
+    <ClInclude Include="src\utils\console.hpp" />
+    <ClInclude Include="src\utils\logger.hpp" />
+    <!-- loveup headers -->
+    <ClInclude Include="src\gui\loveup\headers\includes.h" />
+    <ClInclude Include="src\gui\loveup\headers\widgets.h" />
+    <ClInclude Include="src\gui\loveup\headers\config.h" />
+    <ClInclude Include="src\gui\loveup\headers\flags.h" />
+    <ClInclude Include="src\gui\loveup\headers\draw.h" />
+    <ClInclude Include="src\gui\loveup\headers\fonts.h" />
+    <ClInclude Include="src\gui\loveup\headers\functions.h" />
+    <ClInclude Include="src\gui\loveup\headers\blur.h" />
+    <ClInclude Include="src\gui\loveup\headers\stb_wrapper.h" />
+    <ClInclude Include="src\gui\loveup\settings\colors.h" />
+    <ClInclude Include="src\gui\loveup\settings\elements.h" />
+    <ClInclude Include="src\gui\loveup\settings\variables.h" />
+    <ClInclude Include="src\gui\loveup\data\fonts.h" />
+    <!-- imgui headers -->
+    <ClInclude Include="external\imgui\imconfig.h" />
+    <ClInclude Include="external\imgui\imgui.h" />
+    <ClInclude Include="external\imgui\imgui_internal.h" />
+    <ClInclude Include="external\imgui\imgui_freetype.h" />
+    <ClInclude Include="external\imgui\backends\imgui_impl_dx11.h" />
+    <ClInclude Include="external\imgui\backends\imgui_impl_win32.h" />
+    <ClInclude Include="external\imgui\imstb_rectpack.h" />
+    <ClInclude Include="external\imgui\imstb_textedit.h" />
+    <ClInclude Include="external\imgui\imstb_truetype.h" />
+  </ItemGroup>
+  <ItemGroup>
+    <None Include="src\math\SimpleMath.inl" />
+  </ItemGroup>
+  <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
+  <ImportGroup Label="ExtensionTargets" />
+</Project>
