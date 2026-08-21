@@ -1110,7 +1110,10 @@ static void RenderDashboard(LoaderUI &ui) {
       ImGui::SetCursorPos({12.f, list_y});
       char sid[32];
       snprintf(sid, sizeof(sid), "##prod_%d", i);
-      if (ImGui::InvisibleButton(sid, item_size)) {
+      const bool product_switch_locked =
+          ui.busy_prepare || ui.busy_inject || ui.phase == Phase::Enabled;
+      if (ImGui::InvisibleButton(sid, item_size) &&
+          !product_switch_locked) {
         if (ui.selected_idx != i) {
           ui.selected_idx = i;
           ui.phase =
