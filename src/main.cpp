@@ -1718,6 +1718,10 @@ int APIENTRY wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
   std::string async_prepare_result;
   std::string async_inject_result;
   std::mutex async_mutex;
+  // Internal is a one-click product: once its payload is downloaded and
+  // decrypted, immediately queue Phase2 instead of waiting for another button.
+  // This flag is consumed by the main thread before the inject worker starts.
+  bool auto_inject_internal = false;
 
   // Флаг для успешного modal
   bool show_success_modal = false;
@@ -1806,6 +1810,12 @@ int APIENTRY wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
         ui.busy_prepare = false;
         if (res == "ok") {
           ui.phase = Phase::Ready;
+          if (IsInternalProduct(g_product_id)) {
+            auto_inject_internal = true;
+            ui.busy_inject = true;
+            ui.last_inject_result = "__pending__";
+            ui.inject_start_time = (float)ImGui::GetTime();
+          }
         } else {
           std::string err = res;
           if (err.rfind("error:", 0) == 0)
@@ -2021,13 +2031,15 @@ int APIENTRY wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
     if (ui.busy_inject && async_inject_result.empty() &&
         ui.last_inject_result == "__pending__") {
       ui.last_inject_result.clear();
+      const bool auto_internal = auto_inject_internal;
+      auto_inject_internal = false;
       std::string cur_pid;
       if (ui.selected_idx >= 0 && ui.selected_idx < (int)ui.products.size())
         cur_pid = ui.products[ui.selected_idx].id;
 
       // Trigger: не инжектим DLL — просто сигналим "ok", треды стартуют в
       // fn_enable
-      if (cur_pid == xorstr_("trigger")) {
+      if (!auto_internal && cur_pid == xorstr_("trigger")) {
         std::lock_guard<std::mutex> lk(async_mutex);
         async_inject_result = xorstr_("ok");
       } else {
