@@ -203,6 +203,9 @@ namespace
     volatile LONG g_ReconnectRequested = 0;
     volatile LONG g_WaitingForContextChange = 0;
     volatile LONG g_V8Paused = 0;
+    // Deadline for a pause taken on suspicion rather than on evidence. Zero
+    // when no such pause is in effect.
+    volatile LONG64 g_PauseUntil = 0;
     volatile LONG64 g_RootGeneration = 0;
     volatile LONG64 g_BoundContext = 0;
     volatile LONG64 g_ReconnectPreviousContext = 0;
@@ -2275,6 +2278,13 @@ namespace
             {
                 InvalidateRoot(
                     "V8 context changed; rebinding RAGE API");
+                // The context being left is what the wait below compares
+                // against, and this is now the only place that records it.
+                // Leaving it unset would arm a wait that can never be
+                // satisfied, because that check ignores a zero.
+                InterlockedExchange64(
+                    &g_ReconnectPreviousContext,
+                    static_cast<LONG64>(boundContext));
                 InterlockedExchange(
                     &g_WaitingForContextChange,
                     1);
@@ -2642,72 +2652,45 @@ namespace RageV8Runtime
         return true;
     }
 
-    void PrepareForReconnect() noexcept
+    void PauseForSuspectedReconnect() noexcept
     {
+        // Reversible on purpose, and that is the whole point of it.
+        //
+        // This used to dismantle the bridge outright on the key that starts a
+        // soft reconnect: it dropped the captured root, bumped the generation,
+        // threw away every queued command and then armed a wait for the isolate
+        // context to change. But the key is a guess, not an event. Press it
+        // without reconnecting and the context never changes, so the wait is
+        // never satisfied, the root is never recaptured, and everything that
+        // goes through the script runtime stays dead until a real reconnect
+        // happens. One stray key press cost names, health, vehicle state and
+        // teleports for the rest of the session.
+        //
+        // Nothing here needs to predict a reconnect, because Update already
+        // detects a real one on its own: it compares the live context against
+        // the bound one and invalidates the root when they differ, key or no
+        // key. So all this does is hold our own enqueue and execute side for a
+        // moment, which is the one thing the key is actually useful for: not
+        // handing work to an isolate that may be about to be torn down.
+        //
+        // If a reconnect follows, the detection above takes over and this pause
+        // is irrelevant. If none follows, the pause lifts by itself and nothing
+        // was lost.
         if (static_cast<State>(
                 InterlockedCompareExchange(
                     &g_State,
                     0,
-                    0)) != State::Ready ||
-            InterlockedCompareExchange(
-                &g_RootCaptured,
-                0,
-                0) == 0)
+                    0)) != State::Ready)
             return;
 
-        constexpr ULONGLONG kReadyGraceMs = 8000;
-        if (!g_ReadySince ||
-            GetTickCount64() - g_ReadySince < kReadyGraceMs)
-            return;
-
-        auto context =
-            static_cast<std::uintptr_t>(
-                InterlockedCompareExchange64(
-                    &g_BoundContext,
-                    0,
-                    0));
-        if (!context)
-            context = CurrentContextValue();
-        if (!context)
-            return;
-
-        // Soft-pause only: drop our enqueue/execute side and wait for the
-        // isolate context to actually change. Do NOT call InvalidateRoot /
-        // V8 APIs here — that races RAGE teardown and faults in ntdll.
-        InterlockedExchange64(
-            &g_ReconnectPreviousContext,
-            static_cast<LONG64>(context));
+        // Long enough to cover the start of a real teardown, short enough that
+        // a mistaken press costs a few seconds of stale labels instead of the
+        // session.
+        constexpr ULONGLONG kWindowMs = 4000;
         InterlockedExchange(&g_V8Paused, 1);
-        InterlockedExchange(&g_WaitingForContextChange, 1);
-        InterlockedExchange(&g_RootCaptured, 0);
-        g_RootPersistent = nullptr;
-        InterlockedExchange64(&g_BoundContext, 0);
-        InterlockedIncrement64(&g_RootGeneration);
-
-        Lock(g_CommandLock);
-        const auto dropped = g_CommandCount;
-        g_CommandRead = 0;
-        g_CommandWrite = 0;
-        g_CommandCount = 0;
-        for (auto& command : g_Commands)
-            ResetCommand(command);
-        Unlock(g_CommandLock);
-        if (dropped)
-        {
-            InterlockedExchangeAdd64(
-                &g_DroppedCommands,
-                static_cast<LONG64>(dropped));
-        }
-        Lock(g_CameraCommandLock);
-        g_CameraCommand = {};
-        InterlockedExchange(&g_CameraCommandPending, 0);
-        InterlockedExchange(&g_CameraAimRequested, 0);
-        Unlock(g_CameraCommandLock);
-
-        SetState(
-            State::WaitingForApi,
-            "Reconnect soft-pause; waiting for new V8 context");
-        InterlockedExchange(&g_ReconnectRequested, 1);
+        InterlockedExchange64(
+            &g_PauseUntil,
+            static_cast<LONG64>(GetTickCount64() + kWindowMs));
     }
 
     void Update() noexcept
@@ -2715,6 +2698,20 @@ namespace RageV8Runtime
         const State state = static_cast<State>(
             InterlockedCompareExchange(&g_State, 0, 0));
         const ULONGLONG now = GetTickCount64();
+
+        // Lift a suspicion-based pause once its window is up. Skipped while a
+        // context change is genuinely being waited for, because that wait owns
+        // the pause and clears it when the new context arrives.
+        const auto pauseUntil =
+            InterlockedCompareExchange64(&g_PauseUntil, 0, 0);
+        if (pauseUntil &&
+            static_cast<ULONGLONG>(pauseUntil) <= now)
+        {
+            InterlockedExchange64(&g_PauseUntil, 0);
+            if (InterlockedCompareExchange(
+                    &g_WaitingForContextChange, 0, 0) == 0)
+                InterlockedExchange(&g_V8Paused, 0);
+        }
         if (state == State::Uninitialized)
         {
 #ifdef RESOURCE_DUMPER_SAFE_JS

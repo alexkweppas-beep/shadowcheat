@@ -68,7 +68,10 @@ namespace RageV8Runtime
     bool Initialize() noexcept;
     void Update() noexcept;
     void Retry() noexcept;
-    void PrepareForReconnect() noexcept;
+    // Holds our enqueue and execute side for a few seconds because a reconnect
+    // may be starting. Reversible: a real reconnect is detected by Update from
+    // the isolate context itself, so this never has to be right.
+    void PauseForSuspectedReconnect() noexcept;
 
     bool Enqueue(
         const char* script,
