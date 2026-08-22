@@ -2134,8 +2134,11 @@ if(aty===4)break;
 }
 ab=mp.game.ui.getNextBlipInfoId(8);
 }
-}catch(e){g.__bfPl.apdbg='walk threw';}
-g.__bfPl.apdbg='blips='+ablips+(agot?(' at='+ax.toFixed(0)+','+ay.toFixed(0)):' nomark');
+}catch(e){if(s.dbg)g.__bfPl.apdbg='walk threw';}
+/* Only assembled when someone is going to read it. This formats two floats and
+concatenates on every autopilot cycle, and the reply it rides along in is polled
+four times a second, so in a build with no log to write to it was pure waste. */
+if(s.dbg)g.__bfPl.apdbg='blips='+ablips+(agot?(' at='+ax.toFixed(0)+','+ay.toFixed(0)):' nomark');
 if(agot){
 /* The destination needs a usable height. A map waypoint carries none, and the
 ground probe cannot answer for terrain that is not streamed in yet, so this used
@@ -2187,8 +2190,8 @@ s._apx=ax;s._apy=ay;s._apMove=anow;
 inv('0x158BB33F920D360C',h,vh,ax,ay,az,60.0,
 4|8|16|32|262144|524288,20.0);
 s._ap=1;
-g.__bfPl.apdbg+=' z='+az.toFixed(0)+'/'+azsrc+' sent';
-}else{
+if(s.dbg)g.__bfPl.apdbg+=' z='+az.toFixed(0)+'/'+azsrc+' sent';
+}else if(s.dbg){
 g.__bfPl.apdbg+=' running v='+aspd.toFixed(1);
 }
 /* Re-asserted every cycle: the task otherwise settles back to a cruise speed
@@ -2261,7 +2264,7 @@ mp.events.add('render',g.__bfPlFn);
             "s.afk=%s;s.afkMs=%llu;s.tpSeq=%d;"
             "s.vSeatbelt=%s;s.vSkipAnim=%s;s.vSpeed=%s;s.vSpeedMul=%.2f;"
             "s.vGrav=%s;s.vGravMul=%.2f;s.vEngine=%s;"
-            "s.vAuto=%s;}catch(e){}",
+            "s.vAuto=%s;s.dbg=%s;}catch(e){}",
             g_Settings.speedhack ? "true" : "false",
             g_Settings.speedhackValue,
             g_Settings.superJump ? "true" : "false",
@@ -2279,7 +2282,15 @@ mp.events.add('render',g.__bfPlFn);
             vm.gravityEnable ? "true" : "false",
             vm.gravityMult,
             vm.engineForceOn ? "true" : "false",
-            vm.autopilot ? "true" : "false");
+            vm.autopilot ? "true" : "false",
+            // Off in a shipping build, so the bookkeeping strings below are not
+            // assembled at all rather than merely not printed.
+#if defined(RAGEMP_DIAGNOSTICS)
+            "true"
+#else
+            "false"
+#endif
+        );
 
         if (g_PlJsPushed &&
             std::strcmp(state, g_PlJsLastState) == 0)
