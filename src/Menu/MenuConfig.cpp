@@ -466,6 +466,7 @@ namespace Menu
             WG_WRITE("sil_fov", p.silentFov);
             WG_WRITE("sil_draw", p.silentDrawFov);
             WG_WRITE("sil_mark", p.silentMark);
+            WG_WRITE("sil_mark_style", p.silentMarkStyle);
             WG_WRITE("sil_lock", p.silentLock);
             WG_WRITE("sil_near", p.silentNearest);
             WG_WRITE("sil_bone_any", p.silentBoneNearestAny);
@@ -588,6 +589,7 @@ namespace Menu
             WO_WRITE("sil_draw", p.silentDrawFov);
             WO_WRITE("sil_fov", p.silentFov);
             WO_WRITE("sil_mark", p.silentMark);
+            WO_WRITE("sil_mark_style", p.silentMarkStyle);
             WO_WRITE("sil_lock", p.silentLock);
             WO_WRITE("sil_near", p.silentNearest);
             WO_WRITE("sil_bone_any", p.silentBoneNearestAny);
@@ -677,6 +679,7 @@ namespace Menu
             PROFILE_WRITE("stat_id", profile.staticIdTag);
             PROFILE_WRITE("show_dead", profile.showDead);
             PROFILE_WRITE("visible", profile.visibleCheck);
+            PROFILE_WRITE("hidden_style", profile.hiddenStyle);
             PROFILE_WRITE("radar", profile.radarOverlay);
             PROFILE_WRITE("health_pos", profile.healthBarPos);
             PROFILE_WRITE("armor_pos", profile.armorBarPos);
@@ -1083,6 +1086,7 @@ namespace Menu
             WG_READ_FLOAT("sil_fov", p.silentFov);
             WG_READ_BOOL("sil_draw", p.silentDrawFov);
             WG_READ_BOOL("sil_mark", p.silentMark);
+            WG_READ_INT("sil_mark_style", p.silentMarkStyle);
             WG_READ_BOOL("sil_lock", p.silentLock);
             WG_READ_BOOL("sil_near", p.silentNearest);
             WG_READ_BOOL("sil_bone_any", p.silentBoneNearestAny);
@@ -1171,6 +1175,8 @@ namespace Menu
             sprintf_s(key, "aim_wpn_%u_" suffix, hash); CFG_READ_BOOL(key, target)
 #define WO_READ_FLOAT(suffix, target) \
             sprintf_s(key, "aim_wpn_%u_" suffix, hash); CFG_READ_FLOAT(key, target)
+#define WO_READ_INT(suffix, target) \
+            sprintf_s(key, "aim_wpn_%u_" suffix, hash); CFG_READ_INT(key, target)
             WO_READ_BOOL("active", slot.active);
             WO_READ_BOOL("vec_on", p.vecEnabled);
             {
@@ -1246,6 +1252,7 @@ namespace Menu
             WO_READ_BOOL("sil_draw", p.silentDrawFov);
             WO_READ_FLOAT("sil_fov", p.silentFov);
             WO_READ_BOOL("sil_mark", p.silentMark);
+            WO_READ_INT("sil_mark_style", p.silentMarkStyle);
             WO_READ_BOOL("sil_lock", p.silentLock);
             WO_READ_BOOL("sil_near", p.silentNearest);
             WO_READ_BOOL("sil_bone_any", p.silentBoneNearestAny);
@@ -1366,6 +1373,7 @@ namespace Menu
             PROFILE_READ("stat_id", CFG_READ_BOOL, profile.staticIdTag);
             PROFILE_READ("show_dead", CFG_READ_BOOL, profile.showDead);
             PROFILE_READ("visible", CFG_READ_BOOL, profile.visibleCheck);
+            PROFILE_READ("hidden_style", CFG_READ_INT, profile.hiddenStyle);
             PROFILE_READ("radar", CFG_READ_BOOL, profile.radarOverlay);
             PROFILE_READ("health_pos", CFG_READ_INT, profile.healthBarPos);
             PROFILE_READ("armor_pos", CFG_READ_INT, profile.armorBarPos);
@@ -1408,6 +1416,9 @@ namespace Menu
             if (profile.armorStyle < 0 ||
                 profile.armorStyle >= EspBarStyleCount)
                 profile.armorStyle = EspBarSolid;
+            if (profile.hiddenStyle < 0 ||
+                profile.hiddenStyle >= EspHiddenStyleCount)
+                profile.hiddenStyle = EspHiddenTintAll;
             if (profile.weaponDisplay < 0 ||
                 profile.weaponDisplay >= EspWeaponDisplayCount)
                 profile.weaponDisplay = EspWeaponText;

@@ -40,6 +40,9 @@
 #include "../Features/ModelPreview.h"
 #include "../Helpers/inject_ready.h"
 
+// Defined in dllmain.cpp, which owns the single-instance claim.
+void ReleaseSoleInstanceClaim() noexcept;
+
 // ----------------------------------------------------------------
 // External linkage  (see declarations in Hooks.h)
 // ----------------------------------------------------------------
@@ -1187,6 +1190,7 @@ namespace hooks
         g_VtableHookInstalled = false;
         g_InlineHookInstalled = false;
         HLog("Shutdown: hooks removed; manual-map image left dormant");
+        ReleaseSoleInstanceClaim();
         // Last, so everything above is still recorded. No-op in a build
         // without RAGEMP_DIAGNOSTICS.
         Diagnostics::Shutdown();

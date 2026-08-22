@@ -81,6 +81,18 @@ namespace Menu
             : (s_Language == Language::Ukrainian ? kUk : kEn);
     }
 
+    static const char* const* HiddenStyleNames() noexcept
+    {
+        static const char* kEn[] = {
+            "Everything", "Box + skeleton only" };
+        static const char* kRu[] = {
+            "Всё", "Только бокс и скелет" };
+        static const char* kUk[] = {
+            "Все", "Тільки бокс і скелет" };
+        return s_Language == Language::Russian ? kRu
+            : (s_Language == Language::Ukrainian ? kUk : kEn);
+    }
+
     static const char* const* BarStyleNames() noexcept
     {
         static const char* kEn[] = {
@@ -787,7 +799,19 @@ namespace Menu
             T("Visible Check", "Проверка видимости", "Перевірка видимості"),
             &profile.visibleCheck,
             profile.hiddenColor,
-            false);
+            true);
+        if (MenuUi::BeginOverflowPopup("visible"))
+        {
+            gui->dropdown(
+                T("Recolour", "Перекрашивать", "Перефарбовувати"),
+                &profile.hiddenStyle,
+                HiddenStyleNames(),
+                EspHiddenStyleCount);
+            if (profile.hiddenStyle < 0 ||
+                profile.hiddenStyle >= EspHiddenStyleCount)
+                profile.hiddenStyle = EspHiddenTintAll;
+            MenuUi::EndOverflowPopup();
+        }
         VisualsRow(
             "dead",
             ICON_FA_SKULL,

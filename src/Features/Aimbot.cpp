@@ -497,16 +497,16 @@ void AppendEnabledHitboxes(
     count = 0;
     if (settings.boneNearestAny)
     {
-        // Core torso chain only — limbs flicker near the crosshair and
-        // look like camera shake even with shake disabled.
-        static constexpr Hitbox kCore[] = {
-            Hitbox::Head,
-            Hitbox::Neck,
-            Hitbox::Chest,
-            Hitbox::Pelvis,
-        };
-        for (const Hitbox hitbox : kCore)
-            out[count++] = hitbox;
+        // Every bone, limbs included. This was restricted to the torso chain
+        // because limbs near the crosshair made the aim twitch, but the fix for
+        // that is the sticky hitbox below, which refuses to change bone unless
+        // the challenger is clearly closer. Excluding them instead threw away
+        // the case the setting exists for: a target behind cover with only an
+        // arm or a leg exposed had nothing left to aim at.
+        for (int index = 0;
+             index < static_cast<int>(Hitbox::Count);
+             ++index)
+            out[count++] = static_cast<Hitbox>(index);
         return;
     }
     for (int i = 0; i < static_cast<int>(Hitbox::Count); ++i)

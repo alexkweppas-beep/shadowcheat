@@ -1172,14 +1172,31 @@ namespace Menu
             1.f,
             300.f,
             "%.0f px");
-        // One dot marks whichever target the aim is on, silent or vector, so
-        // the label avoids naming a mode even though the flag lives here.
+        // Marks whichever target the aim is on, silent or vector, so the label
+        // avoids naming a mode even though the flag lives here.
         DrawAimColorToggleRow(
             "silent_mark_target",
             ICON_FA_CIRCLE_DOT,
-            T("Target dot", "Точка цели", "Точка цілі"),
+            T("Mark target", "Метка цели", "Мітка цілі"),
             &profile.silentMark,
             s_Aim_MarkColor);
+        if (profile.silentMark)
+        {
+            static const char* const kEn[] = { "Dot", "Orbits" };
+            static const char* const kRu[] = { "Точка", "Орбиты" };
+            static const char* const kUk[] = { "Точка", "Орбіти" };
+            gui->dropdown(
+                T("Mark style###aim_mark_style",
+                  "Стиль метки###aim_mark_style",
+                  "Стиль мітки###aim_mark_style"),
+                &profile.silentMarkStyle,
+                s_Language == Language::Russian ? kRu
+                    : (s_Language == Language::Ukrainian ? kUk : kEn),
+                EspTargetMarkStyleCount);
+            if (profile.silentMarkStyle < 0 ||
+                profile.silentMarkStyle >= EspTargetMarkStyleCount)
+                profile.silentMarkStyle = EspTargetMarkDot;
+        }
         DrawAimBooleanRow(
             "silent_lock",
             ICON_FA_LINK,

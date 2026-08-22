@@ -230,24 +230,8 @@ namespace Menu
               "Сила притиску###misc_vehicle_gravity_value"),
             &vm.gravityMult,
             1.f,
-            10.f,
+            VehicleMovement::Settings::kMaxGravity,
             "%.1fx");
-        MiscRow(
-            "cars_fly",
-            ICON_FA_PLANE,
-            T("Fly", "Полёт", "Політ"),
-            &vm.fly);
-        DrawAimAnimatedSlider(
-            "cars_fly_speed",
-            vm.fly,
-            ICON_FA_GAUGE_HIGH,
-            T("Fly speed###cars_fly_speed",
-              "Скорость полёта###cars_fly_speed",
-              "Швидкість польоту###cars_fly_speed"),
-            &vm.flySpeed,
-            0.2f,
-            20.f,
-            "%.1f");
         MiscRow(
             "cars_seatbelt",
             ICON_FA_SHIELD,

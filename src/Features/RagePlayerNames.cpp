@@ -6,6 +6,7 @@
 #include "RuntimeProfiler.h"
 #include "Visuals.h"
 #include "../Menu/Menu.h"
+#include "../SDK/Game.h"
 #include "../SDK/RageBuildFlavor.h"
 
 #include <Windows.h>
@@ -75,10 +76,13 @@ namespace
         char name[48]{};
     };
 
-    char g_SnapshotScript[16384]{};
+    // Sized well clear of the current script rather than snugly around it: this
+    // is a static buffer, the spare kilobytes cost nothing, and _snprintf_s
+    // truncation here would ship a syntactically broken script to V8.
+    char g_SnapshotScript[24576]{};
 
     // The script text only changes when one of these inputs changes, so the
-    // 16 KB format runs on a toggle instead of four times a second.
+    // format runs on a toggle instead of four times a second.
     struct SnapshotScriptKey final
     {
         bool built{};
@@ -234,19 +238,6 @@ namespace
             "Number.isFinite(Number(v.y))&&"
             "Number.isFinite(Number(v.z))&&"
             "(Number(v.x)!==0||Number(v.y)!==0||Number(v.z)!==0);"
-            // Rays start at the camera, not at the local ped's chest. In third
-            // person the camera sits metres behind and above the body, so a
-            // chest-to-chest ray answered a question nobody asked: it called
-            // targets hidden that were plainly on screen, and visible ones the
-            // player could not see past their own cover.
-            "const eyeOf=()=>{try{const cam=rage.game&&rage.game.cam;"
-            "const cp=cam&&typeof cam.getGameplayCamCoord==='function'"
-            "?cam.getGameplayCamCoord():null;"
-            "if(valid(cp))return{x:Number(cp.x),y:Number(cp.y),z:Number(cp.z)};}"
-            "catch(_){}return null;};"
-            "let localEye=eyeOf();"
-            "if(!localEye&&local&&valid(local.position)){const p=local.position;"
-            "localEye={x:Number(p.x),y:Number(p.y),z:Number(p.z)+0.8};}"
             "const cache=root.__butterflyNameCache||"
             "(root.__butterflyNameCache={chars:{},families:{},pendingFam:{}});"
             "const cleanLabel=(v,id)=>{let s=String(v==null?'':v).trim();"
@@ -305,104 +296,43 @@ namespace
             "catch(_){}"
             "return origSet.apply(this,arguments);};}"
             "catch(_){}}"
-            "const vis=root.__butterflyVis||"
-            "(root.__butterflyVis={cursor:0,map:{}});"
-            "if(!vis.busy)vis.busy={};"
-            "const rc0=rage.raycasting;"
-            // Visibility is refreshed by a render-tick worker instead of by
-            // this snapshot. Async probes resolve a tick or two later, so
-            // firing them from a script that runs twice a second meant the
-            // answer was always a cycle old. The worker starts a few probes
-            // per frame and never waits, so the flag stays current and the
-            // frame thread is never blocked.
-            "if(!vis.worker&&rc0&&"
-            "typeof rc0.testPointToPointAsync==='function'&&"
-            "rage.events&&typeof rage.events.add==='function'){"
-            "vis.worker=1;vis.scan=0;vis.list=null;vis.listAt=0;"
-            "const tick=()=>{try{"
-            "const me=rage.players&&rage.players.local;"
-            "if(!me)return;const lp=me.position;"
-            "if(!lp||!Number.isFinite(Number(lp.x)))return;"
-            "let from=eyeOf();"
-            "if(!from)from={x:Number(lp.x),y:Number(lp.y),z:Number(lp.z)+0.8};"
-            "const mine=Number(me.handle)||0;const now=Date.now();"
-            // The roster is rebuilt twice a second instead of every frame:
-            // walking it 144 times a second is pure garbage for no new data.
-            // Only players close enough to be drawn are kept, nearest first:
-            // rage.players holds everyone on the server, so probing the whole
-            // roster spread the budget over people who are not on screen and
-            // left the ones next to you a second stale.
-            "if(!vis.list||now-vis.listAt>500){const acc=[];"
-            "rage.players.forEach(p=>{if(!p||p===me)return;"
-            "const q=p.position;if(!q)return;"
-            "const dx=Number(q.x)-from.x,dy=Number(q.y)-from.y,"
-            "dz=Number(q.z)-from.z;const d2=dx*dx+dy*dy+dz*dz;"
-            "if(!Number.isFinite(d2)||d2>122500)return;"
-            "acc.push({p:p,d:d2});});"
-            "acc.sort((a,b)=>a.d-b.d);"
-            "vis.list=acc.map(x=>x.p);vis.listAt=now;}"
-            "const list=vis.list;if(!list||!list.length)return;"
-            // Six starts per frame with the near-only list means a target you
-            // are actually looking at is re-probed within a frame or two. The
-            // staleness check below stops this from firing pointlessly when
-            // only a few people are nearby.
-            "let started=0,looked=0;"
-            "while(started<6&&looked<24){"
-            "const p=list[vis.scan%%list.length];"
-            "vis.scan=(vis.scan+1)%%list.length;++looked;"
-            "if(!p)continue;const h=Number(p.handle)||0;"
-            "if(!h)continue;const key=String(h);"
-            // A busy marker older than a second means the probe never came
-            // back, so the slot is reclaimed rather than stuck forever.
-            "const b=Number(vis.busy[key])||0;"
-            "if(b&&now-b<1000)continue;"
-            "const r=vis.map[key];if(r&&now-r.t<120)continue;"
-            "const tp=p.position;"
-            "if(!tp||!Number.isFinite(Number(tp.x)))continue;"
-            "const to={x:Number(tp.x),y:Number(tp.y),z:Number(tp.z)+0.8};"
-            "vis.busy[key]=now;++started;"
-            // Flags 17 = world geometry | objects. Peds and ragdolls used to be
-            // in the mask, which is what made a crowd hide everyone in it, and
-            // once they are out the ray can no longer terminate on the target
-            // itself: any hit at all is something in the way, so the entity
-            // comparison this used to do is both unnecessary and wrong.
-            "Promise.resolve(rc0.testPointToPointAsync(from,to,mine,17))"
-            ".then(hit=>{vis.busy[key]=0;"
-            "vis.map[key]={v:!hit,t:Date.now()};})"
-            ".catch(_=>{vis.busy[key]=0;});"
-            "}}catch(_){}};"
-            "try{rage.events.add('render',tick);}catch(_){vis.worker=0;}}"
-            // Visibility used to call testPointToPoint, which wraps
-            // START_EXPENSIVE_SYNCHRONOUS_SHAPE_TEST_LOS_PROBE: the native
-            // blocks until the physics world answers, and this script runs on
-            // the thread that drives the frame. Twenty-four of those per run
-            // cost ~19 ms and showed up as stutter. The async probe registers
-            // the ray and resolves on a later tick, so nothing waits and the
-            // budget can go back up.
-            "const visBudget=24;"
-            "let visIndex=0;const visStart=Number(vis.cursor)||0;"
-            "const clear=(target,end)=>{const idx=visIndex++;"
-            "if(!needVis)return true;"
-            "if(!localEye||!end)return false;"
-            "const key=String(Number(target.handle)||0);"
-            "if(local&&Number(local.handle)===Number(target.handle))"
-            "{vis.map[key]={v:true,t:Date.now()};return true;}"
-            "const rec=vis.map[key];"
-            // Read-only: probing lives in the render worker below, which runs
-            // far more often than this snapshot. Firing probes from here tied
-            // their freshness to the snapshot period and made the flag lag by
-            // a whole cycle.
-            "if(!vis.worker&&rc0&&typeof rc0.testPointToPoint==='function'"
-            "&&idx>=visStart&&idx<visStart+visBudget){try{"
-            "const hit=rc0.testPointToPoint(localEye,end,local,17);"
-            "const v=!hit;"
-            "vis.map[key]={v:v,t:Date.now()};return v;}catch(_){}}"
-            // A record was trusted for five seconds, which is long enough to
-            // walk out of cover and back in twice. Beyond the short window the
-            // answer is unknown, and unknown reports visible: this flag is only
-            // read at all when the Present-thread prober never worked, and the
-            // one thing it must not do is hide someone standing in the open.
-            "return rec&&Date.now()-rec.t<400?!!rec.v:true;};"
+            // Visibility is gone from here entirely. It used to be a render-tick
+            // worker firing ten asynchronous raycasts a frame, plus a read of
+            // its results on every snapshot, and it was the most expensive thing
+            // this script did. The profiler put V8 execution at a 33 ms
+            // ninety-ninth percentile against a 1.1 ms median, and the frame
+            // tail matched it almost exactly: average frame rate barely moved,
+            // but the game hitched several times a second, which is what "the
+            // FPS is close but it feels awful" actually measures.
+            //
+            // C++ now answers the same question by calling the game's own shape
+            // test manager from the render thread, so there is nothing for JS to
+            // do. Two systems answering one question was worse than one either
+            // way: they disagreed, and the disagreement was the flicker.
+            //
+            // If the C++ side ever fails to resolve its entry points, visibility
+            // degrades to "everyone visible" and the telemetry says so with
+            // probe=0. That is a loud, diagnosable failure, which is worth more
+            // than a silent fallback that costs a hitch every frame.
+            //
+            // Any worker left installed by an earlier build is removed, once.
+            // The image can be injected over a live session, so a previous
+            // version's render handler would otherwise keep firing raycasts
+            // forever with nothing reading them.
+            "try{const ov=root.__butterflyVis;"
+            "if(ov&&ov.fn&&rage.events&&"
+            "typeof rage.events.remove==='function'){"
+            "rage.events.remove('render',ov.fn);ov.fn=null;ov.worker=0;}}"
+            "catch(_){}"
+            // Emitted as visible for every row. The field is kept so the wire
+            // format and the parser do not have to change, and so the C++
+            // fallback keeps its "unknown reads as visible" convention if the
+            // probe ever goes away.
+            "const clear=()=>true;"
+            // Expensive identity resolutions allowed this pass. See the cache
+            // below: this is what keeps the snapshot's cost flat regardless of
+            // how many players are on the server.
+            "let resolveBudget=3;"
             "const emit=(e,kind,isLocal)=>{if(!e)return;"
             "const id=Number(e.remoteId),h=Number(e.handle);"
             "if(!Number.isFinite(h)||h<=0||seen[h])return;"
@@ -476,7 +406,53 @@ namespace
             "let familyId=0;let familyName='';let heading=0;"
             "let sqlId=0;let nickname='';realName='';let displayName='';let dead=0;let knock=0;"
             "let hp=NaN;let hpSync=NaN;let hpRaw=NaN;let dying=-1;"
-            "if(kind===0){try{"
+            // Identity is resolved once per player and then reused.
+            //
+            // Everything in this block is a property of the character, not of
+            // the moment: name, faction, family, database id. None of it changes
+            // while a player is connected, and resolving it cost the snapshot
+            // most of its runtime. Each `read` is up to three trips across the
+            // bridge into the engine, `first` runs one per key until something
+            // answers, and below that there is a walk over every member of the
+            // helpers object plus one over every server data key. Tens of calls
+            // per player, a hundred players, four times a second: that is where
+            // the ninety-ninth percentile frame went.
+            //
+            // Cached entries are refreshed on a long timer, because a player can
+            // change faction or name mid-session and a cache that never expired
+            // would show the old one forever.
+            //
+            // The refresh is rationed rather than scheduled: a handful of
+            // players are re-resolved per snapshot, oldest effectively first.
+            // Expiring everyone on the same tick would simply move the spike
+            // instead of removing it, since the whole roster would then resolve
+            // together once per interval. At this budget a hundred-player
+            // roster cycles through in roughly ten seconds, and a player whose
+            // name has not arrived at all is retried far sooner than one that
+            // merely might have changed.
+            "if(kind===0){"
+            "if(!cache.ident)cache.ident={};"
+            // Keyed on the remote id but validated against the handle too: the
+            // server hands remote ids out again after a player leaves, and a
+            // reused one would otherwise inherit the previous occupant's name.
+            "const ik='i'+id;const ic=cache.ident[ik];const tn=Date.now();"
+            "const need=!ic||ic.hh!==h||"
+            "(ic.n?tn-ic.at>=20000:tn-ic.at>=4000);"
+            "if((!need||resolveBudget<=0)&&ic){"
+            "factionId=ic.fi;factionType=ic.ft;factionKey=ic.fk;"
+            "factionTag=ic.fg;familyId=ic.mi;familyName=ic.mn;"
+            "sqlId=ic.s;realName=ic.n;displayName=ic.d;nickname=ic.n;"
+            // Family names arrive later over an asynchronous call, so a cached
+            // entry that had none is topped up from the local map. That lookup
+            // touches no engine bridge and costs nothing.
+            "if(!familyName&&familyId>0){const fl=familyLabel(familyId);"
+            "if(fl){familyName=fl;ic.mn=fl;}}"
+            "}else if(resolveBudget<=0){"
+            // Nothing cached and no budget left this pass: the row goes out with
+            // placeholders and is filled in on a following snapshot. One frame
+            // of "Гражданин" for a player who just appeared beats dragging the
+            // whole roster's resolution into this one.
+            "}else{--resolveBudget;try{"
             // getServerFactionId is the roster lookup and therefore the only
             // authoritative source; entity variables are just a fallback.
             // groupId and clubs are deliberately absent: they carry biker
@@ -541,18 +517,21 @@ namespace
             "if(!displayName)displayName='\\u0413\\u0440\\u0430\\u0436\\u0434\\u0430\\u043d\\u0438\\u043d';"
             "nickname=realName;"
             "}catch(_){}"
-            "}"
-            "try{if(typeof e.getHealth==='function'){"
-            "const raw=Number(e.getHealth());"
-            "if(Number.isFinite(raw))hpRaw=raw;}}catch(_){}"
-            // health is what RAGE syncs, and it stays in roleplay hit points.
+            "cache.ident[ik]={n:realName,d:displayName,fi:factionId,"
+            "ft:factionType,fk:factionKey,fg:factionTag,mi:familyId,"
+            "mn:familyName,s:sqlId,at:tn,hh:h};"
+            "}}"
+            // getHealth() used to be called here as well. It is a native call
+            // across the bridge, once per player per snapshot, for a number C++
+            // already reads straight out of the ped every frame: the ESP takes
+            // the memory value as primary and only falls back to this snapshot
+            // when that read is unusable. Paying for it here bought nothing.
+            //
+            // health is what RAGE syncs, and it stays in roleplay hit points, so
+            // it is not derivable from memory and does stay. It is a property
+            // read rather than a native call, which is the cheaper of the two.
             "try{const s=Number(e.health);"
-            "if(Number.isFinite(s)&&s>=0)hpSync=s;}catch(_){}"
-            // Measured live against the ped read out of memory: RAGE hands out
-            // player health already on the roleplay 0..100 scale, while the ped
-            // itself carries the GTA baseline of 100 that the client writes as
-            // setHealth(100+hp). So this value needs no correction.
-            "if(Number.isFinite(hpRaw))hp=hpRaw;"
+            "if(Number.isFinite(s)&&s>=0){hpSync=s;hp=s;}}catch(_){}"
             "try{if(typeof e.isDeadOrDying==='function')"
             "dying=e.isDeadOrDying(true)?1:0;"
             "else if(typeof e.isDead==='function')dying=e.isDead()?1:0;}"
@@ -591,7 +570,6 @@ namespace
             "if(rage.players&&rage.players.forEach)rage.players.forEach(p=>emit(p,0,p===local));"
             "if(includeNonPlayers&&rage.peds&&rage.peds.forEach)"
             "rage.peds.forEach(p=>{let k=1;try{if(rage.game&&rage.game.ped&&rage.game.ped.isPedHuman){if(!rage.game.ped.isPedHuman(p.handle))k=2;}else if((rage.game&&rage.game.invoke&&rage.game.invoke('0xFF059E1E4C01E63C',p.handle)>>>0)===28)k=2;}catch(_){}emit(p,k,false);});"
-            "vis.cursor=visIndex?((visStart+visBudget)%%visIndex):0;"
             "return rows.join('\\n');",
             adminKey,
             needsVisibility ? 1 : 0,

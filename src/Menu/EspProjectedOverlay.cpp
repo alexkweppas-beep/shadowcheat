@@ -380,17 +380,21 @@ static OverlayRects DrawPlayerOverlayImpl(
 
     if (local.box) {
         RUNTIME_PROFILE_BEGIN(boxTimer);
+        // The box-only override wins over the all-element one, so a caller can
+        // recolour the outline while leaving the labels alone.
+        const float* outlineOverride =
+            options
+                ? (options->boxColorOverride
+                    ? options->boxColorOverride
+                    : options->colorOverride)
+                : nullptr;
         const float* boxColSrc =
             (player.dead || player.knock)
                 ? local.deadColor
-                : (options && options->colorOverride
-                    ? options->colorOverride
-                    : local.boxColor);
+                : (outlineOverride ? outlineOverride : local.boxColor);
         const ImU32 boxCol = EspRgba(boxColSrc, drawOpacity);
         const float* fillSrc =
-            (options && options->colorOverride)
-                ? options->colorOverride
-                : local.boxFillColor;
+            outlineOverride ? outlineOverride : local.boxFillColor;
         const ImU32 fillCol = EspRgba(fillSrc, drawOpacity * 0.22f);
         EspDrawBoxStyled(
             draw, boxMin, boxMax, boxCol, local.boxStyle, fillCol, 1.8f);

@@ -55,7 +55,18 @@ namespace
     bool g_CwJsPaused = false;
     int g_CwJsKey = 0;
     std::uint64_t g_CwJsGeneration = 0;
+    std::uint64_t g_CwAimQueryId = 0;
+    ULONGLONG g_CwAimAt = 0;
+    ULONGLONG g_CwHintAt = 0;
     bool g_CwHaveHint = false;
+    // Where the outstanding probe was fired from, so the distance it comes back
+    // with is measured against the same origin.
+    Vector3 g_CwAimOrigin{};
+    float g_CwHintDist = 0.f;
+    // Corner order is bit-coded: bit 0 is X, bit 1 is Y, bit 2 is Z, so two
+    // corners share an edge exactly when their indices differ in one bit.
+    Vector3 g_CwBox[8]{};
+    bool g_CwHaveBox = false;
     float g_CwHintX = 0.f;
     float g_CwHintY = 0.f;
     float g_CwHintZ = 0.f;
@@ -1255,33 +1266,60 @@ namespace
             return true;
         static constexpr char kHook[] = R"JS((function(){try{
 var g=typeof globalThis!=='undefined'?globalThis:this;
-if(g.__bfMvH3)return;
-g.__bfMvH3=true;
 g.__bfMv=g.__bfMv||{freecam:false,noclip:false,paused:false,fcSpeed:1.5,ncSpeed:1.5};
+/* Re-registering used to be blocked by a one-shot guard flag. The V8 context
+outlives a payload unload, so the handler from the previous injection stayed
+registered and a rebuilt hook could never replace it. Keeping the function
+around and removing it first makes re-injection idempotent. */
+if(g.__bfMvFn){try{mp.events.remove('render',g.__bfMvFn);}catch(e){}}
 g.__bfKd=function(vk,c){
 try{if(mp.keys&&mp.keys.isDown(vk))return true;}catch(e){}
 try{return mp.game.controls.getDisabledControlNormal(0,c)>0.4;}catch(e){}
 return false;
 };
-mp.events.add('render',function(){
+g.__bfMvFn=function(){
 var s=g.__bfMv;if(!s)return;
 var p=mp.players&&mp.players.local;
-if(!s.freecam&&s._cam){
+/* Gated on _rsc as well as on the camera. Setup can leave script cams
+rendering without a camera object, and gating the teardown on the object alone
+meant that state was never undone: the view stayed where freecam left it. */
+if(!s.freecam&&(s._cam||s._rsc)){
+/* Rendering goes back to the gameplay camera before the script camera is
+destroyed. The other order leaves the game rendering script cams with nothing
+to render, which is exactly the camera that never came back. */
+try{mp.game.cam.renderScriptCams(false,false,0,true,true,0);}catch(e){}
+s._rsc=false;
+if(s._cam){
 try{s._cam.setActive(false);}catch(e){}
 try{s._cam.destroy(true);}catch(e){try{s._cam.destroy();}catch(e2){}}
 s._cam=null;
-try{mp.game.cam.renderScriptCams(false,false,0,true,false,0);}catch(e){}
+}
 }
 if(!s.freecam&&!s.noclip){
 if(s._on&&p){
 try{p.freezePosition(false);p.setCollision(true,true);p.setVelocity(0,0,0);}catch(e){}
+/* The car has to be handed back too, or it stays frozen and ghosted after
+noclip is switched off. */
+if(s._nv){
+try{
+var ov=mp.vehicles&&mp.vehicles.atHandle?mp.vehicles.atHandle(s._nv):null;
+if(ov){ov.freezePosition(false);ov.setCollision(true,true);ov.setVelocity(0,0,0);}
+}catch(e){}
 }
+}
+s._nv=0;
 s._on=false;
 return;
 }
 if(!p)return;
 s._on=true;
 try{p.freezePosition(true);p.setVelocity(0,0,0);}catch(e){}
+/* Whatever actually has to be moved. Seated, the player cannot be: the seat
+puts them back every frame, so noclip did nothing at all inside a vehicle. */
+var nv=null;
+try{if(p.vehicle&&p.vehicle.handle)nv=p.vehicle;}catch(e){nv=null;}
+s._nv=nv?nv.handle:0;
+if(nv){try{nv.freezePosition(true);nv.setVelocity(0,0,0);}catch(e){}}
 for(var i=0;i<350;i++){
 if(i===1||i===2)continue;
 try{mp.game.controls.disableControlAction(0,i,true);}catch(e){}
@@ -1291,13 +1329,19 @@ if(!s._cam){
 var pos=p.position,rot={x:0,z:0};
 try{rot=mp.game.cam.getGameplayCamRot(2);}catch(e){}
 s.pitch=rot.x||0;s.yaw=rot.z||0;
-try{
-s._cam=mp.cameras.new('default',
+var nc=null;
+try{nc=mp.cameras.new('default',
 new mp.Vector3(pos.x,pos.y,pos.z+0.6),
-new mp.Vector3(s.pitch,0,s.yaw),50);
-s._cam.setActive(true);
-mp.game.cam.renderScriptCams(true,false,0,true,false,0);
-}catch(e){s._cam=null;return;}
+new mp.Vector3(s.pitch,0,s.yaw),50);}catch(e){nc=null;}
+if(!nc)return;
+/* Published the moment it exists, and the render switch is tracked on its
+own. The old code assigned inside a try whose catch nulled it again, so a
+setup that threw half way through orphaned the camera and left the render
+switch on with no way to reach it. */
+s._cam=nc;
+try{nc.setActive(true);}catch(e){}
+try{mp.game.cam.renderScriptCams(true,false,0,true,false,0);
+s._rsc=true;}catch(e){}
 }
 if(s.paused||!s._cam)return;
 var lx=0,ly=0;
@@ -1322,7 +1366,8 @@ s._cam.setRot(s.pitch,0,s.yaw,2);
 return;
 }
 if(s.paused)return;
-try{p.setCollision(false,false);}catch(e){}
+var ne=nv||p;
+try{ne.setCollision(false,false);}catch(e){}
 var nrot={x:0,y:0,z:0};
 try{nrot=mp.game.cam.getGameplayCamRot(2);}catch(e){}
 var nyr=(nrot.z||0)*0.01745329252,npr=(nrot.x||0)*0.01745329252;
@@ -1330,7 +1375,7 @@ var nfx=-Math.sin(nyr)*Math.cos(npr),nfy=Math.cos(nyr)*Math.cos(npr),nfz=Math.si
 var nrx=Math.cos(nyr),nry=Math.sin(nyr);
 var nfast=g.__bfKd(0x10,21)?2.5:1;
 var nspd=(s.ncSpeed||1.5)*nfast*0.35;
-var np=p.position;
+var np=ne.position;
 if(g.__bfKd(0x57,32))np=new mp.Vector3(np.x+nfx*nspd,np.y+nfy*nspd,np.z+nfz*nspd);
 if(g.__bfKd(0x53,33))np=new mp.Vector3(np.x-nfx*nspd,np.y-nfy*nspd,np.z-nfz*nspd);
 if(g.__bfKd(0x41,34))np=new mp.Vector3(np.x-nrx*nspd,np.y-nry*nspd,np.z);
@@ -1342,8 +1387,9 @@ instead of per move: the call is the server's own "a jump is coming" API and
 spamming it every frame would itself stand out. */
 try{var nw=Date.now();if(!s._acAt||nw-s._acAt>2000){s._acAt=nw;
 mp.events.call('c:ac:check',3000);}}catch(e){}
-try{p.setCoordsNoOffset(np.x,np.y,np.z,false,false,false);}catch(e){}
-});
+try{ne.setCoordsNoOffset(np.x,np.y,np.z,false,false,false);}catch(e){}
+};
+mp.events.add('render',g.__bfMvFn);
 }catch(e){}})();)JS";
         if (!EnqueueFreecamScript(kHook))
             return false;
@@ -1574,43 +1620,139 @@ try{p.setCoordsNoOffset(np.x,np.y,np.z,false,false,false);}catch(e){}
             return true;
         static constexpr char kHook[] = R"JS((function(){try{
 var g=typeof globalThis!=='undefined'?globalThis:this;
-if(g.__bfCwH1)return;
-g.__bfCwH1=true;
 g.__bfCw=g.__bfCw||{on:false,paused:false,key:2};
-function pose(){
-var mv=g.__bfMv;
-if(mv&&mv.freecam&&mv._cam){
-try{var c=mv._cam.getCoord();
-return {x:c.x,y:c.y,z:c.z,p:mv.pitch||0,yw:mv.yaw||0};}catch(e){}
+/* Same reason as the movement hook: the V8 context outlives a payload unload,
+so a one-shot guard flag left the previous injection's handler in place and no
+rebuilt hook could ever replace it. */
+if(g.__bfCwFn){try{mp.events.remove('render',g.__bfCwFn);}catch(e){}}
+function fin(v){
+return !!v&&isFinite(v.x)&&isFinite(v.y)&&isFinite(v.z)&&
+(v.x!==0||v.y!==0||v.z!==0);
 }
-var pos={x:0,y:0,z:0},rot={x:0,z:0};
-try{pos=mp.game.cam.getGameplayCamCoord();}catch(e){}
-try{rot=mp.game.cam.getGameplayCamRot(2);}catch(e){}
-return {x:pos.x||0,y:pos.y||0,z:pos.z||0,p:rot.x||0,yw:rot.z||0};
-}
-function mark(x,y,z){
-try{mp.game.graphics.drawMarker(1,x,y,z,0,0,0,0,0,0,0.75,0.75,0.55,80,180,255,210,false,false,2,false,null,null,false);}catch(e){
-try{mp.game.graphics.drawMarker(1,new mp.Vector3(x,y,z),new mp.Vector3(0,0,0),new mp.Vector3(0,0,0),new mp.Vector3(0.75,0.75,0.55),80,180,255,210,false,false,2,false,'','',false);}catch(e2){}}
-try{mp.game.graphics.drawMarker(0,x,y,z+1.2,0,0,0,0,0,0,0.42,0.42,0.42,80,180,255,230,false,false,2,false,null,null,false);}catch(e){}
+/* The ray comes from C++, which reads it out of the viewport matrix the frame
+is actually drawn with. Asking the game for it here does not work: measured in
+game, getGameplayCamCoord yields nothing usable on foot, and the values it was
+defaulted to were zeroes, so the probe was cast out of the world origin and the
+destination landed somewhere random. Only the freecam path worked, and only
+because that pose came off a camera object this script created itself. */
+function ray(s){
+if(!s.rayAt||Date.now()-s.rayAt>1200)return null;
+var o={x:s.ox,y:s.oy,z:s.oz},d={x:s.dx,y:s.dy,z:s.dz};
+if(!fin(o)||!fin(d))return null;
+return {o:o,d:d};
 }
 function hitAt(ox,oy,oz,fx,fy,fz){
+/* Started a little ahead of the lens. In third person the camera sits close
+to, and sometimes inside, world geometry, and a ray that begins there reports
+a hit at the camera itself, which parks the destination at your feet. */
+ox+=fx*0.5;oy+=fy*0.5;oz+=fz*0.5;
 var to=new mp.Vector3(ox+fx*250,oy+fy*250,oz+fz*250);
 var from=new mp.Vector3(ox,oy,oz);
+/* World, vehicles and objects. Foliage used to be in this mask, and on foot the
+ray runs at eye level straight through the grass around you, so it stopped a
+couple of metres away instead of where you were pointing and flickered as the
+vegetation came and went. Vehicles are in so that aiming at one can be
+recognised as aiming at that vehicle rather than at the ground behind it. */
 try{
-var h=mp.raycasting.testPointToPoint(from,to,mp.players.local,1|16|256);
-if(h&&h.position)return h.position;
+var h=mp.raycasting.testPointToPoint(from,to,mp.players.local,1|2|16);
+if(h&&h.position)return {p:h.position,e:h.entity||null};
 }catch(e){}
 try{
 var p=mp.players&&mp.players.local;
-var ray=mp.game.shapetest.startExpensiveSynchronousShapeTestLosProbe(ox,oy,oz,to.x,to.y,to.z,1|16|256,p?p.handle:0,7);
+var ray=mp.game.shapetest.startExpensiveSynchronousShapeTestLosProbe(ox,oy,oz,to.x,to.y,to.z,1|2|16,p?p.handle:0,7);
 var r=mp.game.shapetest.getShapeTestResult(ray);
 if(r){
 var ok=r[1]||r.hit;
 var pos=r[2]||r.endCoords;
-if(ok&&pos)return pos;
+if(ok&&pos)return {p:pos,e:null};
 }
 }catch(e){}
 return null;
+}
+function isVeh(e){
+try{return !!e&&e.type==='vehicle'&&!!e.handle;}catch(x){}
+return false;
+}
+/* The eight corners in world space, taken through the vehicle's own transform
+so the box follows pitch and roll on a slope instead of only heading. C++ just
+projects them. */
+function vehBox(v){
+try{
+var d=mp.game.gameplay.getModelDimensions(v.model);
+var lo=d&&(d[0]||d.min),hi=d&&(d[1]||d.max);
+if(!lo||!hi)return null;
+var out=[];
+for(var i=0;i<8;i++){
+var w=v.getOffsetFromInWorldCoords(
+(i&1)?hi.x:lo.x,(i&2)?hi.y:lo.y,(i&4)?hi.z:lo.z);
+if(!w||!isFinite(w.x))return null;
+out.push(w.x,w.y,w.z);
+}
+return out;
+}catch(e){}
+return null;
+}
+/* Tri-state on purpose: true occupied, false free, null unknown. Collapsing
+unknown into occupied is what stopped this working, because then every seat
+looked taken and no attempt was ever made. */
+function taken(v,h,i){
+try{if(v&&typeof v.isSeatFree==='function')return !v.isSeatFree(i);}catch(e){}
+try{var q=mp.game.vehicle.getPedInVehicleSeat(h,i);
+if(typeof q==='number')return q!==0;}catch(e){}
+/* Same native by hash. The wrapper above returns nothing usable here, which is
+why every seat read as unknown. */
+try{
+var q2=mp.game.invoke('0xBB40DD2270B65366',h,i,0);
+if(typeof q2==='number')return q2!==0;
+}catch(e){}
+return null;
+}
+/* Three surfaces, and it records which ones even exist. Two of them silently
+did nothing here, and without that record the failure looks the same as "the
+seat was taken". */
+function put(h,i){
+var p=mp.players&&mp.players.local;
+if(!p){g.__bfCw.dbgPut='no local';return null;}
+try{mp.events.call('c:ac:check',3000);}catch(e){}
+var why='';
+try{
+if(typeof p.putIntoVehicle==='function'){p.putIntoVehicle(h,i);return 'put';}
+why+='noPut ';
+}catch(e){why+='putThrew ';}
+try{
+if(mp.game&&mp.game.ped&&
+typeof mp.game.ped.setPedIntoVehicle==='function'){
+mp.game.ped.setPedIntoVehicle(p.handle,h,i);return 'ped';}
+why+='noPed ';
+}catch(e){why+='pedThrew ';}
+try{
+if(mp.game&&typeof mp.game.invoke==='function'){
+mp.game.invoke('0xF75B0D629E1C063D',p.handle,h,i);return 'inv';}
+why+='noInv ';
+}catch(e){why+='invThrew ';}
+g.__bfCw.dbgPut=why;
+return null;
+}
+/* Driver first, then passengers. Seats known to be free are tried before ones
+that could not be read at all. Takes the handle, because that is a number and
+survives being carried between ticks, unlike the entity wrapper. */
+function seat(h,v){
+if(!h){g.__bfCw.dbgGo='no handle';return false;}
+var order=[-1,0,1,2,3];
+var unknown=[];
+for(var k=0;k<order.length;k++){
+var st=taken(v,h,order[k]);
+if(st===false){
+var how=put(h,order[k]);
+if(how){g.__bfCw.dbgGo='seat '+order[k]+' via '+how;return true;}
+}else if(st===null)unknown.push(order[k]);
+}
+for(var u=0;u<unknown.length;u++){
+var how2=put(h,unknown[u]);
+if(how2){g.__bfCw.dbgGo='seat? '+unknown[u]+' via '+how2;return true;}
+}
+g.__bfCw.dbgGo='no seat';
+return false;
 }
 function warp(x,y,z){
 var p=mp.players&&mp.players.local;if(!p)return;
@@ -1626,28 +1768,97 @@ inside that window. A warp that skips it looks exactly like what they hunt. */
 try{mp.events.call('c:ac:check',3000);}catch(e){}
 try{ent.setCoordsNoOffset(x,y,z,false,false,false);}catch(e){}
 }
-function keyDown(vk){
-try{if(mp.keys&&mp.keys.isDown(vk))return true;}catch(e){}
-if(vk===2||vk===1){
-try{if(mp.game.controls.isDisabledControlPressed(0,vk===2?25:24))return true;}catch(e){}
-try{if(mp.game.controls.isControlPressed(0,vk===2?25:24))return true;}catch(e){}
+/* Called by C++ on the click, with the ray of the frame the click happened on.
+The probe is redone here and now rather than reusing the last one: that one is a
+round trip old, and in freecam the view travels far enough in that time to land
+the jump somewhere other than the marker. */
+/* Built here rather than inside the command C++ sends every cycle: inlined
+there the command text ran past its buffer, and sprintf_s answers an overrun by
+killing the process outright. */
+g.__bfCw.rep=function(){
+var s=g.__bfCw;
+if(!s||!s._hAt||Date.now()-s._hAt>600)return '0 0 0 0 0';
+var o='1 '+s._hx.toFixed(3)+' '+s._hy.toFixed(3)+' '+s._hz.toFixed(3);
+if(s._box&&s._box.length===24){
+o+=' 1';
+for(var i=0;i<24;i++)o+=' '+s._box[i].toFixed(2);
+}else o+=' 0';
+return o;
+};
+g.__bfCw.go=function(ox,oy,oz,dx,dy,dz){
+try{
+var s=g.__bfCw;
+s.dbgGo='';
+/* Whatever the render pass last had under the ray, which is at most a frame
+old and, unlike a probe fired from here, carries the entity. */
+var fresh=s._hAt&&Date.now()-s._hAt<600;
+if(fresh&&s._vh){
+/* Re-resolved from the handle. The wrapper the probe handed back does not
+survive into a later tick: reading .type off it here threw, the check read as
+"not a vehicle", and the click silently warped instead of seating. */
+var v=null;
+try{v=mp.vehicles&&mp.vehicles.atHandle?mp.vehicles.atHandle(s._vh):null;}catch(e){}
+if(seat(s._vh,v))return;
 }
-return false;
+var r=hitAt(ox,oy,oz,dx,dy,dz);
+if(r&&fin(r.p)){
+var rh=0;
+try{rh=r.e&&r.e.handle?r.e.handle:0;}catch(e){}
+if(rh&&seat(rh,r.e))return;
+warp(r.p.x,r.p.y,r.p.z+0.6);
+if(!s.dbgGo)s.dbgGo='warp';
+return;
 }
-mp.events.add('render',function(){
+/* No probe of our own: fall back on the highlighted point. */
+if(fresh){warp(s._hx,s._hy,s._hz+0.6);s.dbgGo='warp cached';return;}
+s.dbgGo='no hit';
+}catch(e){g.__bfCw.dbgGo='go threw';}
+};
+g.__bfCwFn=function(){
 var s=g.__bfCw;if(!s||!s.on){s&&(s._was=false);return;}
-var cam=pose();
-var pr=cam.p*0.01745329252,yr=cam.yw*0.01745329252;
-var fx=-Math.sin(yr)*Math.cos(pr),fy=Math.cos(yr)*Math.cos(pr),fz=Math.sin(pr);
-var hit=hitAt(cam.x,cam.y,cam.z,fx,fy,fz);
+var t=Date.now();
+var cam=ray(s);
+var hit=null;
+if(cam){
+var r=hitAt(cam.o.x,cam.o.y,cam.o.z,cam.d.x,cam.d.y,cam.d.z);
+hit=r&&fin(r.p)?r.p:null;
 if(hit){
-mark(hit.x,hit.y,hit.z);
-s._hx=hit.x;s._hy=hit.y;s._hz=hit.z;
+/* Stored raw. Smoothing lived here to fight jitter from a ray derived off
+camera Euler angles; the ray now arrives from the viewport matrix and is
+steady, so filtering here only added latency on top of the round trip. What
+little easing is wanted is done on the depth, on the C++ side. */
+s._hx=hit.x;s._hy=hit.y;s._hz=hit.z;s._hAt=t;
+/* The vehicle is kept, not just its box. The click used to re-probe and
+mp.raycasting only reports an entity from inside this event, so outside it the
+probe fell through to the shape test path and came back with a position and no
+entity, which read as "not a vehicle" every time. Acting on what is highlighted
+is also the behaviour that matches what you see. */
+if(isVeh(r.e)){
+var vh=0;
+try{vh=r.e.handle||0;}catch(e){}
+s._vh=vh;s._box=vehBox(r.e);
+}else{s._vh=0;s._box=null;}
 }
-var down=keyDown(s.key|0);
-if(down&&!s._was&&!s.paused&&hit)warp(hit.x,hit.y,hit.z+0.6);
-s._was=down;
-});
+}
+/* A missed probe keeps the last destination for a moment instead of dropping
+it: grazing ground angles miss constantly, and dropping the point on every miss
+is what made the marker blink. Nothing is drawn from here any more, the overlay
+reprojects this point itself every frame. */
+var live=s._hAt!==undefined&&t-s._hAt<600;
+if(s.dbg){
+try{
+mp.game.graphics.drawText(
+'cw ray='+(cam?'ok':'NULL')+' hit='+(hit?'ok':'MISS')+' live='+(live?1:0)+
+' vh='+(s._vh||0)+' go='+(s.dbgGo||'-')+
+' put='+(s.dbgPut||'-'),
+[0.5,0.74],
+{font:4,centre:true,color:[120,220,255,255],scale:[0.36,0.36],outline:true});
+}catch(e){}
+}
+/* The click is watched by C++, which then calls go() above. Reading the key
+here as well would give two independent triggers for one press. */
+};
+mp.events.add('render',g.__bfCwFn);
 }catch(e){}})();)JS";
         if (!EnqueueClickWarpScript(kHook))
             return false;
@@ -1691,15 +1902,31 @@ s._was=down;
             return true;
         static constexpr char kHook[] = R"JS((function(){try{
 var g=typeof globalThis!=='undefined'?globalThis:this;
-if(g.__bfPlH1)return;
-g.__bfPlH1=true;
 g.__bfPl=g.__bfPl||{};
+/* Removed before being re-added, like the movement and click-warp hooks. The
+guard flag this replaces made re-injection a no-op: the handler from the
+previous payload stayed registered and kept answering with its own logic, so a
+rebuilt hook changed nothing until the whole V8 context was recreated. */
+if(g.__bfPlFn){try{mp.events.remove('render',g.__bfPlFn);}catch(e){}}
 /* Left null until the first render tick, so C++ can tell "the hook is up and
 you are on foot" from "the hook never ran" and keep its own fallback. */
 g.__bfVeh=null;
 function nz(v,d){return (typeof v==='number'&&isFinite(v))?v:d;}
 function cl(v,lo,hi){v=nz(v,lo);return v<lo?lo:(v>hi?hi:v);}
 function inv(){try{return mp.game.invoke.apply(mp.game,arguments);}catch(e){return 0;}}
+/* Which wrappers this build actually exposes, reported once. Upper case means
+present. Guessing native hashes has already cost a "Script Server Error" popup,
+so what exists is measured instead. */
+g.__bfPl.caps=(function(){
+var o='';
+try{o+=(mp.game.ped&&typeof mp.game.ped.setPedCanBeKnockedOffVehicle==='function')?'K':'k';}catch(e){o+='?';}
+try{o+=(mp.game.ped&&typeof mp.game.ped.setPedConfigFlag==='function')?'C':'c';}catch(e){o+='?';}
+try{o+=(mp.game.vehicle&&typeof mp.game.vehicle.getPedInVehicleSeat==='function')?'S':'s';}catch(e){o+='?';}
+try{o+=(mp.game.vehicle&&typeof mp.game.vehicle.setVehicleGravity==='function')?'G':'g';}catch(e){o+='?';}
+try{o+=(mp.game.ui&&typeof mp.game.ui.getFirstBlipInfoId==='function')?'B':'b';}catch(e){o+='?';}
+try{o+=(mp.game.gameplay&&typeof mp.game.gameplay.getGroundZFor3dCoord==='function')?'Z':'z';}catch(e){o+='?';}
+return o;
+})();
 g.__bfAfkPoke=function(){
 try{if(typeof g.antiAFK_sendAction==='function'){g.antiAFK_sendAction();return true;}}catch(e){}
 try{
@@ -1708,7 +1935,7 @@ if(api&&typeof api.antiAFK_sendAction==='function'){api.antiAFK_sendAction();ret
 }catch(e){}
 return false;
 };
-mp.events.add('render',function(){
+g.__bfPlFn=function(){
 var s=g.__bfPl;if(!s)return;
 var p=mp.players&&mp.players.local;if(!p)return;
 var h=0;try{h=p.handle;}catch(e){return;}
@@ -1720,7 +1947,14 @@ var vh=0;try{vh=(v&&v.handle)?v.handle:0;}catch(e){vh=0;}
 var inVeh=!!vh;
 if(!inVeh){try{inVeh=!!p.isInAnyVehicle(false);}catch(e){}}
 var driver=false;
-if(vh){try{driver=(mp.game.vehicle.getPedInVehicleSeat(vh,-1)===h);}catch(e){}}
+if(vh){
+try{driver=(mp.game.vehicle.getPedInVehicleSeat(vh,-1)===h);}catch(e){}
+/* GET_PED_IN_VEHICLE_SEAT through invoke as well: the wrapper above is one of
+the surfaces that does nothing here, and with only that check the driver seat
+always read as taken by someone else, so vehicle features stayed disabled. */
+if(!driver){try{driver=(inv('0xBB40DD2270B65366',vh,-1,0)===h);}catch(e){}}
+if(!driver){try{driver=(p.seat===-1);}catch(e){}}
+}
 var entering=false;try{entering=!!p.isGettingIntoVehicle();}catch(e){}
 g.__bfVeh={in:inVeh,driver:driver,entering:entering,handle:vh};
 
@@ -1852,7 +2086,12 @@ g.__bfTp={seq:tp.seq,state:'noground'};
 
 /* ---- vehicle frame natives (driver only) ---- */
 if(s.vSeatbelt&&inVeh){
-inv('0x7A653569DA385A54',h,1);
+/* Two halves, and both are needed: the config flag stops you leaving through
+the windscreen in a car, the knock-off state stops you being thrown off a bike.
+The hash here used to read 0x7A653569DA385A54, which shares only its first half
+with the real one and is what RAGE answered with "Invalid native has been
+passed"; the canonical value is 0x7A6535691B477C48, state 1 meaning never. */
+inv('0x7A6535691B477C48',h,1);
 inv('0x1913FE4CBF41C463',h,32,false);
 }
 if(s.vSkipAnim&&entering){
@@ -1873,24 +2112,125 @@ inv('0xB59E4BD37AE292DB',s._vs,1);
 s._vs=0;
 }
 if(s.vEngine)inv('0x2497C4717C8B881E',vh,true,false,false);
-if(s.vFly){
-inv('0x4A4722448F18EEF5',vh,false);
-inv('0x89F149B6131E57DA',vh,false);
-s._vf=vh;
-}else if(s._vf){
-inv('0x4A4722448F18EEF5',s._vf,true);
-inv('0x89F149B6131E57DA',s._vf,true);
-s._vf=0;
+/* ---- autopilot to the map waypoint ----
+Lives here because the C++ path is built on native calls and none resolve on
+this target. The blip walk is the same one the waypoint teleport uses: type 4 is
+the waypoint proper, and the loop keeps the last candidate in case only the
+route blips exist. */
+if(s.vAuto&&driver){
+var anow=Date.now();
+if(!s._apAt||anow-s._apAt>1000){
+s._apAt=anow;
+var ax=0,ay=0,agot=false,ablips=0;
+try{
+var ab=mp.game.ui.getFirstBlipInfoId(8);
+while(ab&&mp.game.ui.doesBlipExist(ab)&&ablips<64){
+++ablips;
+var ac=null;try{ac=mp.game.ui.getBlipInfoIdCoord(ab);}catch(e){}
+if(ac&&(ac.x||ac.y)){
+ax=ac.x;ay=ac.y;agot=true;
+var aty=0;try{aty=mp.game.ui.getBlipInfoIdType(ab);}catch(e){}
+if(aty===4)break;
 }
-if(s.vGrav&&!s.vFly){
-var df=(cl(s.vGravMul,1,10)-1)*3;
-if(df>0)inv('0xC5F68BE9613E2D18',vh,1,0,0,-df,0,0,0,0,false,false,true,false,true);
+ab=mp.game.ui.getNextBlipInfoId(8);
 }
-}else if(s._vs||s._vf){
-if(s._vs){inv('0x93A3996368C94158',s._vs,1);inv('0xB59E4BD37AE292DB',s._vs,1);s._vs=0;}
-if(s._vf){inv('0x4A4722448F18EEF5',s._vf,true);inv('0x89F149B6131E57DA',s._vf,true);s._vf=0;}
+}catch(e){g.__bfPl.apdbg='walk threw';}
+g.__bfPl.apdbg='blips='+ablips+(agot?(' at='+ax.toFixed(0)+','+ay.toFixed(0)):' nomark');
+if(agot){
+/* The destination needs a usable height. A map waypoint carries none, and the
+ground probe cannot answer for terrain that is not streamed in yet, so this used
+to hand the task z=0, which is sea level: the target sat below the road, no
+route could be found, and the driver simply held the handbrake. That is exactly
+what the log showed, z=0 on every cycle.
+Preference order is the nearest road node, then the ground probe, then our own
+height, which is wrong by metres rather than by the whole map. */
+var az=0,azsrc='none';
+try{
+var an=mp.game.pathfind&&mp.game.pathfind.getClosestVehicleNode
+?mp.game.pathfind.getClosestVehicleNode(ax,ay,0,1,3.0,0):null;
+var anp=an&&(an.position||an);
+if(anp&&isFinite(anp.z)&&(anp.x||anp.y)){
+ax=anp.x;ay=anp.y;az=anp.z;azsrc='node';
 }
-});
+}catch(e){}
+if(azsrc==='none'){
+try{
+var ag=mp.game.gameplay.getGroundZFor3dCoord(ax,ay,1200,false);
+if(typeof ag==='number'&&isFinite(ag)&&ag>-200&&ag<1000&&ag!==0){
+az=ag;azsrc='ground';
+}
+}catch(e){}
+}
+if(azsrc==='none'){
+try{var mp2=p.position;if(mp2&&isFinite(mp2.z)){az=mp2.z;azsrc='self';}}catch(e){}
+}
+/* Re-issued only when it means something: when the destination has actually
+moved, when nothing is running yet, or when the car has been stationary long
+enough to count as stuck. It used to go out every four seconds regardless, and
+each call restarts the task, which is why the car never built up speed.
+
+The driving style is assembled from the documented flags rather than copied as a
+magic number. Steering around obstacles is in; stopping for cars, for peds and
+at lights is deliberately out, since those are what made it crawl. */
+var amoved=(!s._apx)||Math.abs(ax-s._apx)>5||Math.abs(ay-s._apy)>5;
+/* GET_ENTITY_SPEED, not the velocity property. That property reads back zero
+here, so the stuck detector believed the car was standing still and re-issued
+the task, and every re-issue restarts it: the car crawled because it was never
+allowed to finish accelerating. */
+var aspd=0;
+try{var asv=inv('0xD5037BA82E12416F',vh);
+if(typeof asv==='number'&&isFinite(asv))aspd=asv;}catch(e){}
+if(aspd>1.5)s._apMove=anow;
+var astuck=(anow-(s._apMove||anow))>3000;
+if(amoved||!s._ap||astuck){
+s._apx=ax;s._apy=ay;s._apMove=anow;
+inv('0x158BB33F920D360C',h,vh,ax,ay,az,60.0,
+4|8|16|32|262144|524288,20.0);
+s._ap=1;
+g.__bfPl.apdbg+=' z='+az.toFixed(0)+'/'+azsrc+' sent';
+}else{
+g.__bfPl.apdbg+=' running v='+aspd.toFixed(1);
+}
+/* Re-asserted every cycle: the task otherwise settles back to a cruise speed
+of its own and the requested one is forgotten. */
+inv('0x5C9B84BD7D31D908',h,60.0);
+}
+}
+}else if(s._ap){
+s._ap=0;s._apAt=0;s._apx=0;s._apy=0;s._apMove=0;
+try{p.clearTasks();}catch(e){}
+}
+if(s.vGrav){
+/* Extra gravity as a velocity delta, not a force.
+APPLY_FORCE_TO_ENTITY was applied at the entity origin, which is not the centre
+of mass, so every frame added torque and the car tumbled. It also passed
+isForceRel true, meaning the vector was read in the car's own axes, so "down"
+became "sideways" the moment it tilted and the car was thrown off the road. And
+the magnitude was a fixed multiple per frame, so the whole effect scaled with
+frame rate.
+A velocity delta has no torque, no orientation ambiguity, and scales with real
+time, so the multiplier means the same thing at any frame rate. */
+var mul=cl(s.vGravMul,1,30);
+if(mul>1.01){
+var now2=Date.now();
+var dt=(now2-(s._gt||now2))/1000;
+s._gt=now2;
+if(dt>0.005&&dt<0.05){
+/* A world-space impulse at the centre of mass, which needs no velocity read.
+Reading the velocity property and writing it back was worse than useless here:
+it reports zero on this build, so the write pinned the car to a standstill,
+which is the handbrake feel. Centre of mass means no torque, so no tumbling,
+and world space means "down" stays down whatever the car is doing. */
+inv('0x18FF00FC7EFF559E',vh,1,0,0,-(mul-1)*9.8*dt,
+false,false,false,true);
+}
+}else{s._gt=0;}
+}else{s._gt=0;}
+}else if(s._vs){
+inv('0x93A3996368C94158',s._vs,1);inv('0xB59E4BD37AE292DB',s._vs,1);s._vs=0;
+}
+};
+mp.events.add('render',g.__bfPlFn);
 }catch(e){}})();)JS";
         if (!EnqueuePlayerScript(kHook))
             return false;
@@ -1920,7 +2260,8 @@ if(s._vf){inv('0x4A4722448F18EEF5',s._vf,true);inv('0x89F149B6131E57DA',s._vf,tr
             "s.infAmmo=%s;s.infClip=%s;s.noReload=%s;"
             "s.afk=%s;s.afkMs=%llu;s.tpSeq=%d;"
             "s.vSeatbelt=%s;s.vSkipAnim=%s;s.vSpeed=%s;s.vSpeedMul=%.2f;"
-            "s.vGrav=%s;s.vGravMul=%.2f;s.vFly=%s;s.vEngine=%s;}catch(e){}",
+            "s.vGrav=%s;s.vGravMul=%.2f;s.vEngine=%s;"
+            "s.vAuto=%s;}catch(e){}",
             g_Settings.speedhack ? "true" : "false",
             g_Settings.speedhackValue,
             g_Settings.superJump ? "true" : "false",
@@ -1937,8 +2278,8 @@ if(s._vf){inv('0x4A4722448F18EEF5',s._vf,true);inv('0x89F149B6131E57DA',s._vf,tr
             vm.speedMult,
             vm.gravityEnable ? "true" : "false",
             vm.gravityMult,
-            vm.fly ? "true" : "false",
-            vm.engineForceOn ? "true" : "false");
+            vm.engineForceOn ? "true" : "false",
+            vm.autopilot ? "true" : "false");
 
         if (g_PlJsPushed &&
             std::strcmp(state, g_PlJsLastState) == 0)
@@ -1954,7 +2295,28 @@ if(s._vf){inv('0x4A4722448F18EEF5',s._vf,true);inv('0x89F149B6131E57DA',s._vf,tr
     // Cars page, the on-foot speed skip and teleport all answer from one place.
     void PollVehicleState() noexcept
     {
-        if (!PlayerV8Ready() || !g_PlJsHooked)
+        const bool ready = PlayerV8Ready();
+#if defined(RAGEMP_DIAGNOSTICS)
+        {
+            static ULONGLONG s_lastLog = 0;
+            const ULONGLONG stamp = GetTickCount64();
+            if (stamp - s_lastLog > 2000)
+            {
+                s_lastLog = stamp;
+                char line[128]{};
+                _snprintf_s(
+                    line,
+                    sizeof(line),
+                    _TRUNCATE,
+                    "[Misc] vehq v8=%d hooked=%d id=%llu",
+                    ready ? 1 : 0,
+                    g_PlJsHooked ? 1 : 0,
+                    static_cast<unsigned long long>(g_PlVehQueryId));
+                hooks::HLog(line);
+            }
+        }
+#endif
+        if (!ready || !g_PlJsHooked)
         {
             VehicleMovement::ClearLocalVehicleState();
             return;
@@ -1962,26 +2324,54 @@ if(s._vf){inv('0x4A4722448F18EEF5',s._vf,true);inv('0x89F149B6131E57DA',s._vf,tr
 
         if (g_PlVehQueryId != 0)
         {
+            // Abandoned after a while. A result that never arrives used to park
+            // the id forever, and every later cycle returned right here, so one
+            // lost reply stopped vehicle detection for the rest of the session.
+            const ULONGLONG pendingSince = g_PlVehQueryAt;
+            if (pendingSince != 0 &&
+                GetTickCount64() - pendingSince > 2000)
+            {
+                g_PlVehQueryId = 0;
+                hooks::HLog(
+                    "[Misc] vehicle poll timed out; retrying");
+                return;
+            }
             RageV8Runtime::Result result{};
             if (RageV8Runtime::PollResultFor(g_PlVehQueryId, result))
             {
                 g_PlVehQueryId = 0;
-                int ready = 0;
+                int published = 0;
                 int inVehicle = 0;
                 int driver = 0;
                 int entering = 0;
                 int handle = 0;
-                if (result.success &&
-                    sscanf_s(
-                        result.text,
-                        "%d %d %d %d %d",
-                        &ready,
-                        &inVehicle,
-                        &driver,
-                        &entering,
-                        &handle) == 5)
+                const int parsed = result.success
+                    ? sscanf_s(
+                          result.text,
+                          "%d %d %d %d %d",
+                          &published,
+                          &inVehicle,
+                          &driver,
+                          &entering,
+                          &handle)
+                    : 0;
+#if defined(RAGEMP_DIAGNOSTICS)
                 {
-                    if (ready != 0)
+                    char line[160]{};
+                    _snprintf_s(
+                        line,
+                        sizeof(line),
+                        _TRUNCATE,
+                        "[Misc] vehq reply ok=%d n=%d text=%.140s",
+                        result.success ? 1 : 0,
+                        parsed,
+                        result.text ? result.text : "(null)");
+                    hooks::HLog(line);
+                }
+#endif
+                if (parsed == 5)
+                {
+                    if (published != 0)
                     {
                         VehicleMovement::SetLocalVehicleState(
                             inVehicle != 0,
@@ -2005,12 +2395,21 @@ if(s._vf){inv('0x4A4722448F18EEF5',s._vf,true);inv('0x89F149B6131E57DA',s._vf,tr
             return;
         g_PlVehQueryAt = now;
 
+        // The leading return is load bearing: the runtime wraps a command in a
+        // function and takes that function's return value, so an expression
+        // statement evaluates and is thrown away. Without it this query answered
+        // the string "undefined" on every cycle, the parse found no fields, and
+        // vehicle state was never published at all.
         static constexpr char kQuery[] =
-            "(function(){try{"
+            "return (function(){try{"
             "var g=typeof globalThis!=='undefined'?globalThis:this;"
             "var v=g.__bfVeh;if(!v)return '0 0 0 0 0';"
+            // The trailing capability word is ignored by the numeric parse and
+            // exists only for the diagnostics log.
             "return '1 '+(v.in?1:0)+' '+(v.driver?1:0)+' '+"
-            "(v.entering?1:0)+' '+(v.handle|0);"
+            "(v.entering?1:0)+' '+(v.handle|0)+' '+"
+            "((g.__bfPl&&g.__bfPl.caps)||'-')+' ap['+"
+            "((g.__bfPl&&g.__bfPl.apdbg)||'-')+']';"
             "}catch(e){return '0 0 0 0 0';}})()";
         std::uint64_t id = 0;
         if (RageV8Runtime::Enqueue(kQuery, &id))
@@ -2083,8 +2482,10 @@ if(s._vf){inv('0x4A4722448F18EEF5',s._vf,true);inv('0x89F149B6131E57DA',s._vf,tr
             return;
         g_TpQueryAt = now;
 
+        // Same missing return as the vehicle query above, with the same effect:
+        // the waypoint teleport never learned its own progress.
         static constexpr char kQuery[] =
-            "(function(){try{"
+            "return (function(){try{"
             "var g=typeof globalThis!=='undefined'?globalThis:this;"
             "var t=g.__bfTp;if(!t)return '0 none';"
             "return (t.seq|0)+' '+t.state;"
@@ -2129,15 +2530,22 @@ if(s._vf){inv('0x4A4722448F18EEF5',s._vf,true);inv('0x89F149B6131E57DA',s._vf,tr
             return false;
         if (!g_CwJsHooked && !on)
             return true;
-        char cmd[256]{};
+#if defined(RAGEMP_DIAGNOSTICS)
+        constexpr const char* kDebug = "true";
+#else
+        constexpr const char* kDebug = "false";
+#endif
+        char cmd[288]{};
         sprintf_s(
             cmd,
             "try{var g=typeof globalThis!=='undefined'?globalThis:this;"
             "g.__bfCw=g.__bfCw||{};"
-            "g.__bfCw.on=%s;g.__bfCw.paused=%s;g.__bfCw.key=%d;}catch(e){}",
+            "g.__bfCw.on=%s;g.__bfCw.paused=%s;g.__bfCw.key=%d;"
+            "g.__bfCw.dbg=%s;}catch(e){}",
             on ? "true" : "false",
             paused ? "true" : "false",
-            key);
+            key,
+            kDebug);
         return EnqueueClickWarpScript(cmd);
     }
 
@@ -2172,81 +2580,289 @@ if(s._vf){inv('0x4A4722448F18EEF5',s._vf,true);inv('0x89F149B6131E57DA',s._vf,tr
         }
     }
 
-    // Only the fallback path keeps a hint. While the script hook is live it
-    // raycasts and draws the destination in the world itself, and the estimate
-    // below is not that point: it intersected the look ray with a horizontal
-    // plane at the ped's own Z, then slammed Z onto the ped. On foot that Z
-    // bobs and `look.z` chatters across the threshold every frame, so the
-    // projected pin flew around the screen while the real target sat still.
-    void UpdateClickWarpHint() noexcept
+    // Hands the aim ray to the script hook and takes back the point it probed,
+    // in one command per cycle.
+    //
+    // The ray is read out of the viewport matrix, which is the camera the frame
+    // is drawn with, so it needs no native and cannot disagree with the screen.
+    // The script side used to derive it from GET_GAMEPLAY_CAM_COORD and that
+    // yields nothing usable here: on foot the destination never resolved at all.
+    //
+    // A cycle costs a V8 round trip, so the point arrives tens of milliseconds
+    // old. That does not show, because what is published is a world position and
+    // the overlay reprojects it every frame: it stays welded to the ground while
+    // the camera moves, which is also what stopped it flickering.
+    void PollClickWarpAim() noexcept
     {
-        if (!g_Settings.clickWarp)
+        if (!g_Settings.clickWarp || !g_CwJsOn)
         {
             g_CwHaveHint = false;
+            g_CwHaveBox = false;
+            g_CwAimQueryId = 0;
             return;
         }
-        if (g_CwJsOn)
+
+        const ULONGLONG now = GetTickCount64();
+
+        if (g_CwAimQueryId != 0)
         {
-            // The world marker from the script hook is the destination.
-            g_CwHaveHint = false;
-            return;
+            // Same guard as the vehicle poll: a reply that never lands must not
+            // park the id, or the marker stops updating for good.
+            if (g_CwAimAt != 0 && now - g_CwAimAt > 2000)
+            {
+                g_CwAimQueryId = 0;
+                return;
+            }
+            RageV8Runtime::Result result{};
+            if (RageV8Runtime::PollResultFor(g_CwAimQueryId, result))
+            {
+                g_CwAimQueryId = 0;
+                // Scanned as a plain sequence of numbers rather than through a
+                // format string: the reply carries an optional 24-float box and
+                // a fixed format for that is only a way to get it wrong.
+                float values[32]{};
+                int count = 0;
+                if (result.success)
+                {
+                    const char* cursor = result.text;
+                    while (count < 32)
+                    {
+                        char* end = nullptr;
+                        const float parsed =
+                            std::strtof(cursor, &end);
+                        if (end == cursor)
+                            break;
+                        values[count++] = parsed;
+                        cursor = end;
+                    }
+                }
+                const int ok = count >= 4
+                    ? static_cast<int>(values[0])
+                    : 0;
+                const float x = count >= 4 ? values[1] : 0.f;
+                const float y = count >= 4 ? values[2] : 0.f;
+                const float z = count >= 4 ? values[3] : 0.f;
+
+                g_CwHaveBox = false;
+                if (count >= 29 && values[4] != 0.f)
+                {
+                    bool boxOk = true;
+                    for (int corner = 0; corner < 8; ++corner)
+                    {
+                        const float* v = &values[5 + corner * 3];
+                        if (!std::isfinite(v[0]) ||
+                            !std::isfinite(v[1]) ||
+                            !std::isfinite(v[2]))
+                        {
+                            boxOk = false;
+                            break;
+                        }
+                        g_CwBox[corner] = Vector3(v[0], v[1], v[2]);
+                    }
+                    g_CwHaveBox = boxOk;
+                }
+
+                if (ok != 0 &&
+                    std::isfinite(x) && std::isfinite(y) && std::isfinite(z))
+                {
+                    // Only the distance is taken from the probe. The direction
+                    // is known every frame, so keeping the point itself would
+                    // pin the marker to where the aim was a round trip ago,
+                    // which is the lag this avoids.
+                    const Vector3 hit(x, y, z);
+                    const float distance =
+                        (hit - g_CwAimOrigin).Length();
+                    if (std::isfinite(distance) &&
+                        distance > 0.5f && distance < 400.f)
+                    {
+                        // Eased while the depth creeps, taken outright when it
+                        // jumps: sliding across a 50 m step would look like the
+                        // marker flying off.
+                        g_CwHintDist =
+                            (g_CwHaveHint &&
+                             std::fabs(distance - g_CwHintDist) < 8.f)
+                                ? g_CwHintDist +
+                                      (distance - g_CwHintDist) * 0.5f
+                                : distance;
+                        g_CwHaveHint = true;
+                        g_CwHintAt = now;
+                    }
+                }
+            }
         }
+
+        // The destination survives a few missed cycles. Dropping it the moment
+        // one probe comes back empty is the flicker this replaced.
+        if (g_CwHaveHint && now - g_CwHintAt > 1500)
+        {
+            g_CwHaveHint = false;
+            g_CwHaveBox = false;
+        }
+
+        if (g_CwAimQueryId != 0 || now - g_CwAimAt < 60)
+            return;
 
         Vector3 cam{};
         Vector3 look{};
-        if (g_Settings.freecam && g_FcHavePose)
-        {
-            cam = Vector3(g_FcX, g_FcY, g_FcZ);
-            Vector3 right{};
-            LookVectors(g_FcPitch, g_FcYaw, look, right);
-            (void)right;
-        }
-        else if (!ReadViewportLook(cam, look))
-        {
-            g_CwHaveHint = false;
+        if (!ReadViewportLook(cam, look))
             return;
-        }
+        g_CwAimAt = now;
+        g_CwAimOrigin = cam;
 
-        // Stay on the look ray. A point on the ray is stable under projection;
-        // the previous ground estimate was not.
-        constexpr float kHintDistance = 25.f;
-        g_CwHintX = cam.x + look.x * kHintDistance;
-        g_CwHintY = cam.y + look.y * kHintDistance;
-        g_CwHintZ = cam.z + look.z * kHintDistance;
-        g_CwHaveHint = true;
+        // Truncating rather than sprintf_s: generated script text grows as this
+        // evolves, and an overrun here is not a bad string, it is a __fastfail
+        // that takes the game with it. A truncated command is caught by the
+        // reply parse instead.
+        char cmd[320]{};
+        if (_snprintf_s(
+                cmd,
+                sizeof(cmd),
+                _TRUNCATE,
+                "return (function(){try{"
+                "var g=typeof globalThis!=='undefined'?globalThis:this;"
+                "var s=g.__bfCw;if(!s)return '0 0 0 0 0';"
+                "s.ox=%.3f;s.oy=%.3f;s.oz=%.3f;"
+                "s.dx=%.5f;s.dy=%.5f;s.dz=%.5f;s.rayAt=Date.now();"
+                "return s.rep?s.rep():'0 0 0 0 0';"
+                "}catch(e){return '0 0 0 0 0';}})()",
+                cam.x, cam.y, cam.z, look.x, look.y, look.z) < 0)
+            return;
+        if (!RageV8Runtime::Enqueue(cmd, &g_CwAimQueryId))
+            g_CwAimQueryId = 0;
     }
 
+    // The aimed vehicle, outlined so it is obvious that the click will seat you
+    // rather than drop you on the roof. The corners arrive in world space from
+    // the script side and are reprojected here every frame, so the outline
+    // tracks the car even between probe cycles.
+    void RenderClickWarpVehicleBox(ImDrawList* draw) noexcept
+    {
+        if (!draw || !g_CwHaveBox)
+            return;
+
+        ImVec2 corner[8]{};
+        for (int index = 0; index < 8; ++index)
+        {
+            const auto projected = Game::WorldToScreen(g_CwBox[index]);
+            if (!projected)
+                return;
+            corner[index] = ImVec2(projected->x, projected->y);
+        }
+
+        // Indices differing in exactly one bit share an edge.
+        static constexpr int kEdges[12][2] = {
+            {0, 1}, {2, 3}, {4, 5}, {6, 7},
+            {0, 2}, {1, 3}, {4, 6}, {5, 7},
+            {0, 4}, {1, 5}, {2, 6}, {3, 7},
+        };
+        constexpr ImU32 kLine = IM_COL32(120, 205, 255, 200);
+        constexpr ImU32 kNode = IM_COL32(226, 246, 255, 240);
+        for (const auto& edge : kEdges)
+        {
+            draw->AddLine(
+                corner[edge[0]], corner[edge[1]], kLine, 1.6f);
+        }
+        for (const ImVec2& point : corner)
+            draw->AddCircleFilled(point, 2.f, kNode, 8);
+    }
+
+    // Drawn by the overlay rather than by a world marker native. Reprojecting
+    // one world position every frame is what makes it steady: the script-side
+    // marker was redrawn from a fresh probe each frame and blinked whenever one
+    // missed, and it could not be styled beyond the shapes the game ships.
     void RenderClickWarpMarker() noexcept
     {
         if (!g_Settings.clickWarp || !g_CwHaveHint)
             return;
+        // Placed on this frame's ray at the probed depth, not at the point the
+        // probe returned. The probe is a V8 round trip behind, so pinning the
+        // returned point made the marker trail the crosshair while turning;
+        // only the depth actually needs the probe, and depth changes slowly.
+        Vector3 cam{};
+        Vector3 look{};
+        if (!ReadViewportLook(cam, look))
+            return;
         const auto screen = Game::WorldToScreen(
-            Vector3(g_CwHintX, g_CwHintY, g_CwHintZ + 0.15f));
+            cam + look * g_CwHintDist);
         if (!screen)
             return;
         ImDrawList* draw = Overlay::GetDrawList();
         if (!draw)
             return;
+
         const ImVec2 p(screen->x, screen->y);
-        draw->AddCircleFilled(p, 6.5f, IM_COL32(80, 180, 255, 200), 18);
-        draw->AddCircle(p, 12.f, IM_COL32(255, 255, 255, 230), 18, 2.2f);
+        const float time =
+            static_cast<float>(GetTickCount64() % 6283) * 0.001f;
+
+        constexpr ImU32 kEdge = IM_COL32(120, 205, 255, 235);
+        constexpr ImU32 kCore = IM_COL32(226, 246, 255, 245);
+        constexpr ImU32 kGlow = IM_COL32(80, 170, 255, 60);
+
+        draw->AddCircleFilled(p, 14.f, kGlow, 24);
+        // Three arcs on a slow spin. Continuous motion reads as a live target;
+        // a static ring next to a moving world is what looks broken.
+        for (int arc = 0; arc < 3; ++arc)
+        {
+            const float from =
+                time * 1.6f + static_cast<float>(arc) * 2.0944f;
+            draw->PathArcTo(p, 10.5f, from, from + 1.15f, 12);
+            draw->PathStroke(kEdge, 0, 2.2f);
+        }
+        draw->AddCircleFilled(p, 3.2f, kCore, 12);
+
+        const float bob = std::sin(time * 2.4f) * 2.f;
+        const ImVec2 tip(p.x, p.y - 20.f + bob);
         draw->AddTriangleFilled(
-            ImVec2(p.x, p.y - 20.f),
-            ImVec2(p.x - 8.f, p.y - 7.f),
-            ImVec2(p.x + 8.f, p.y - 7.f),
-            IM_COL32(80, 180, 255, 235));
+            ImVec2(tip.x, tip.y + 7.f),
+            ImVec2(tip.x - 6.f, tip.y - 4.f),
+            ImVec2(tip.x + 6.f, tip.y - 4.f),
+            kEdge);
+
+        RenderClickWarpVehicleBox(draw);
     }
 
     void ApplyClickWarp() noexcept
     {
         SyncClickWarpScript();
-        UpdateClickWarpHint();
+        PollClickWarpAim();
 
         const auto v8 = RageV8Runtime::GetStatus();
         if (v8.state == RageV8Runtime::State::Ready &&
             v8.rootCaptured)
         {
-            g_ClickWarpKeyWasDown = false;
+            // The click is owned here rather than by the script hook, which is
+            // what keeps the jump and the marker agreeing: both are built from
+            // this frame's ray, and the hook re-probes it on arrival instead of
+            // reusing a destination that is a round trip old. Reading it in
+            // both places would also fire two jumps for one press.
+            const int key = g_Settings.clickWarpKey > 0
+                ? g_Settings.clickWarpKey
+                : 0x02;
+            const bool down =
+                g_Settings.clickWarp &&
+                g_CwJsOn &&
+                !Menu::IsVisible() &&
+                (GetAsyncKeyState(key) & 0x8000) != 0;
+            if (down && !g_ClickWarpKeyWasDown)
+            {
+                Vector3 cam{};
+                Vector3 look{};
+                if (ReadViewportLook(cam, look))
+                {
+                    char cmd[288]{};
+                    if (_snprintf_s(
+                            cmd,
+                            sizeof(cmd),
+                            _TRUNCATE,
+                            "try{var g=typeof globalThis!=='undefined'?"
+                            "globalThis:this;var s=g.__bfCw;"
+                            "if(s&&s.go)s.go(%.3f,%.3f,%.3f,%.5f,%.5f,%.5f);"
+                            "}catch(e){}",
+                            cam.x, cam.y, cam.z, look.x, look.y, look.z) >= 0)
+                        EnqueueClickWarpScript(cmd);
+                }
+            }
+            g_ClickWarpKeyWasDown = down;
             return;
         }
 
@@ -3526,7 +4142,6 @@ void Shutdown() noexcept
         auto& vm = VehicleMovement::GetSettings();
         vm.speedEnable = false;
         vm.gravityEnable = false;
-        vm.fly = false;
         vm.seatbelt = false;
         vm.skipEnterAnim = false;
         vm.engineForceOn = false;
@@ -3930,8 +4545,6 @@ bool Export(
             "mf_vehicle_gravity_mult",
             vehicle.gravityMult);
         MF_WRITE("mf_seatbelt", vehicle.seatbelt ? 1 : 0);
-        MF_WRITE("mf_veh_fly", vehicle.fly ? 1 : 0);
-        MF_WRITE("mf_veh_fly_speed", vehicle.flySpeed);
         MF_WRITE("mf_veh_skip_anim", vehicle.skipEnterAnim ? 1 : 0);
         MF_WRITE("mf_veh_autopilot", vehicle.autopilot ? 1 : 0);
         MF_WRITE("mf_veh_engine", vehicle.engineForceOn ? 1 : 0);
@@ -4014,8 +4627,6 @@ void Import(const char* content) noexcept
             "mf_vehicle_gravity_mult",
             vehicle.gravityMult);
         MF_READ_BOOL("mf_seatbelt", vehicle.seatbelt);
-        MF_READ_BOOL("mf_veh_fly", vehicle.fly);
-        MF_READ_FLOAT("mf_veh_fly_speed", vehicle.flySpeed);
         MF_READ_BOOL("mf_veh_skip_anim", vehicle.skipEnterAnim);
         MF_READ_BOOL("mf_veh_autopilot", vehicle.autopilot);
         MF_READ_BOOL("mf_veh_engine", vehicle.engineForceOn);
@@ -4026,12 +4637,10 @@ void Import(const char* content) noexcept
             vehicle.speedMult = 10.f;
         if (!(vehicle.gravityMult >= 1.f))
             vehicle.gravityMult = 1.f;
-        if (vehicle.gravityMult > 10.f)
-            vehicle.gravityMult = 10.f;
-        if (!(vehicle.flySpeed >= 0.2f))
-            vehicle.flySpeed = 0.2f;
-        if (vehicle.flySpeed > 20.f)
-            vehicle.flySpeed = 20.f;
+        if (vehicle.gravityMult >
+            VehicleMovement::Settings::kMaxGravity)
+            vehicle.gravityMult =
+                VehicleMovement::Settings::kMaxGravity;
         vehicle.unlockSpeedLimit = false;
     }
 #undef MF_READ_BOOL

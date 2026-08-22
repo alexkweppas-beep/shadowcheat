@@ -17,13 +17,14 @@ namespace VehicleMovement
         float speedMult{1.5f};
         bool gravityEnable{};
         float gravityMult{1.5f};
+        // Shared by the two menu pages and the clamp, so the ceiling is stated
+        // once rather than repeated as a literal in four places.
+        static constexpr float kMaxGravity = 30.f;
         // Deprecated compatibility field. The max-speed override had no
         // reliable restore value and is intentionally forced off at runtime.
         bool unlockSpeedLimit{};
 
         bool seatbelt{};
-        bool fly{};
-        float flySpeed{1.5f};
         bool skipEnterAnim{};
         bool autopilot{};
         bool engineForceOn{};

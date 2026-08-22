@@ -1270,9 +1270,11 @@ namespace NativeInvoke
             isPed ? 1 : 0);
     }
 
+    // Was 0x7A653569DA385A54, which is not this native: it shares only the top
+    // half of the real hash and RAGE rejects it outright as unknown.
     inline void SetPedCanBeKnockedOffVehicle(int ped, int state) noexcept
     {
-        Invoke<void>(0x7A653569DA385A54ull, ped, state);
+        Invoke<void>(0x7A6535691B477C48ull, ped, state);
     }
 
     inline void SetPedConfigFlag(int ped, int flag, bool value) noexcept

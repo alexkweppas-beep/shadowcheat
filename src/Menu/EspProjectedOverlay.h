@@ -87,6 +87,10 @@ namespace EspProjected
         float interactionAlpha[kElementCount]{};
         std::uint32_t disabledMask{};
         const float* colorOverride = nullptr;
+        // Recolours the box alone. Narrower than colorOverride, which takes
+        // every element at once, and needed because the box is not one of the
+        // ElementId entries and so cannot be addressed through them.
+        const float* boxColorOverride = nullptr;
         // Per-faction text colour for this one player. Narrower than
         // colorOverride, which recolours every element at once.
         const float* factionColorOverride = nullptr;

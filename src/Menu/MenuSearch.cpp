@@ -241,7 +241,7 @@ namespace Menu
         {
             "cars", "Cars", "Машины", "Авто",
             "Misc", "Разное", "Різне",
-            "car vehicle gravity speed repair service fly seatbelt "
+            "car vehicle gravity speed repair service seatbelt "
             "engine autopilot flip crash",
             SearchRouteKind::Main, MainPage::Cars, 0,
             SearchAvailability::Always
