@@ -6,9 +6,10 @@ const fs = require('fs');
 const path = require('path');
 const vm = require('vm');
 
-const source = path.join(
+const sourcePath = path.join(
     __dirname, '..', 'src', 'Features', 'RagePlayerNames.cpp');
-const lines = fs.readFileSync(source, 'utf8').split(/\r?\n/);
+const source = fs.readFileSync(sourcePath, 'utf8');
+const lines = source.split(/\r?\n/);
 
 const begin = lines.findIndex(l => l.includes('const rows=[],seen={};'));
 if (begin < 0)
@@ -53,8 +54,14 @@ const script = unescaped
     .replace(/%s/g, 'adminLevel')
     .replace(/%d/g, '1');
 
-// snprintf writes into a fixed 16 KB buffer and reports failure by truncating.
-const budget = 16384;
+// snprintf writes into a fixed buffer and reports failure by truncating, so the
+// budget is read out of the declaration instead of being restated here: a hard
+// coded copy quietly stops matching the moment the buffer is resized.
+const budgetMatch = source.match(
+    /char\s+g_SnapshotScript\s*\[\s*(\d+)\s*\]/);
+if (!budgetMatch)
+    throw new Error('could not find the g_SnapshotScript declaration');
+const budget = Number(budgetMatch[1]);
 const bytes = Buffer.byteLength(script, 'utf8');
 
 // The script body contains top-level `return`, so it is parsed as a function.

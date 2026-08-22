@@ -38,6 +38,13 @@ namespace Visibility
         std::uint32_t resolved{};
         std::uint32_t dropped{};
         std::uint32_t candidates{};
+        // Per frame: how many peds arrived with an answer differing from the
+        // one on screen, and how many of those actually got through the switch
+        // delay. rawFlips staying high while switches stays near zero is the
+        // signature of a noisy source being damped rather than a world that is
+        // genuinely changing.
+        std::uint32_t rawFlips{};
+        std::uint32_t switches{};
         // False until a probe has actually come back Ready. Present-thread
         // shape tests are expected to work, but if this build of the game
         // disagrees the failure has to be visible rather than silently

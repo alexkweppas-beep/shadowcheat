@@ -6,6 +6,7 @@
 #include <d3d11.h>
 #include <wincodec.h>
 #include <winhttp.h>
+#include <cmath>
 #include <cstdint>
 #include <cstring>
 
@@ -603,6 +604,81 @@ void* GetSilhouetteImGui(
         *outWidth = width;
     if (outHeight)
         *outHeight = height;
+    return reinterpret_cast<void*>(srv);
+}
+
+void* GetGlowImGui() noexcept
+{
+    static ID3D11ShaderResourceView* srv = nullptr;
+    static bool failed = false;
+    if (srv || failed || !g_Device)
+        return reinterpret_cast<void*>(srv);
+
+    constexpr UINT kSize = 64;
+    constexpr UINT stride = kSize * 4;
+    BYTE* pixels = static_cast<BYTE*>(
+        HeapAlloc(GetProcessHeap(), 0, stride * kSize));
+    if (!pixels)
+    {
+        failed = true;
+        return nullptr;
+    }
+
+    const float centre = (kSize - 1) * 0.5f;
+    for (UINT y = 0; y < kSize; ++y)
+    {
+        for (UINT x = 0; x < kSize; ++x)
+        {
+            const float dx = (static_cast<float>(x) - centre) / centre;
+            const float dy = (static_cast<float>(y) - centre) / centre;
+            const float distance = std::sqrt(dx * dx + dy * dy);
+            // Squared falloff, and clamped at the edge so the sprite ends on
+            // exactly zero. A linear ramp leaves a visible disc rim once a few
+            // of these are stacked; a curve that reaches zero reads as light.
+            float alpha = 1.f - distance;
+            alpha = alpha > 0.f ? alpha * alpha * alpha : 0.f;
+            BYTE* p = pixels + y * stride + x * 4;
+            p[0] = 255;
+            p[1] = 255;
+            p[2] = 255;
+            p[3] = static_cast<BYTE>(alpha * 255.f + 0.5f);
+        }
+    }
+
+    D3D11_TEXTURE2D_DESC desc{};
+    desc.Width = kSize;
+    desc.Height = kSize;
+    desc.MipLevels = 1;
+    desc.ArraySize = 1;
+    desc.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
+    desc.SampleDesc.Count = 1;
+    desc.Usage = D3D11_USAGE_DEFAULT;
+    desc.BindFlags = D3D11_BIND_SHADER_RESOURCE;
+
+    D3D11_SUBRESOURCE_DATA sub{};
+    sub.pSysMem = pixels;
+    sub.SysMemPitch = stride;
+
+    ID3D11Texture2D* tex = nullptr;
+    HRESULT hr = g_Device->CreateTexture2D(&desc, &sub, &tex);
+    HeapFree(GetProcessHeap(), 0, pixels);
+    if (FAILED(hr) || !tex)
+    {
+        failed = true;
+        return nullptr;
+    }
+
+    D3D11_SHADER_RESOURCE_VIEW_DESC srvDesc{};
+    srvDesc.Format = desc.Format;
+    srvDesc.ViewDimension = D3D11_SRV_DIMENSION_TEXTURE2D;
+    srvDesc.Texture2D.MipLevels = 1;
+    hr = g_Device->CreateShaderResourceView(tex, &srvDesc, &srv);
+    tex->Release();
+    if (FAILED(hr))
+    {
+        srv = nullptr;
+        failed = true;
+    }
     return reinterpret_cast<void*>(srv);
 }
 

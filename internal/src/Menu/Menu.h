@@ -152,6 +152,8 @@ namespace Menu
         bool staticIdTag{};
         bool showDead{true};
         bool visibleCheck{};
+        // How much of a target behind cover the visible check recolours.
+        int  hiddenStyle{}; // EspHiddenStyle
         bool radarOverlay{};
         // Snap line from a screen edge to the target. Origin is shared by every
         // category so the lines all converge on the same point.
@@ -315,6 +317,8 @@ namespace Menu
         float silentFov{40.f};
         float silentFovColor[3]{0.35f, 0.85f, 1.0f};
         bool  silentMark{};
+        // How the marked target is drawn. See EspTargetMarkStyle.
+        int   silentMarkStyle{};
         bool  silentLock{};
         bool  silentNearest{true};
         bool  silentBoneNearestAny{};

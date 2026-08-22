@@ -305,6 +305,13 @@ namespace Game {
     const FramePedEntry* FindFramePed(
         const CPed* ped) noexcept;
 
+    // Camera position from the view matrix the last frame was drawn with. Read
+    // out of the viewport rather than asked of the game, which is the point:
+    // GET_GAMEPLAY_CAM_COORD is unreliable in this build, and script code that
+    // fell back to the player's own chest when it failed ended up answering a
+    // different question every time the native dropped out.
+    bool LastViewCamera(Vector3& out) noexcept;
+
     // Dev measurement aid: appends N fake peds in front of the camera so the
     // ESP path can be profiled at crowd size without a full server. 0 = off.
     int& SyntheticCrowdCount() noexcept;

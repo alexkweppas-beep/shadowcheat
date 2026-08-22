@@ -19,6 +19,30 @@ enum EspBoxStyle : int
     EspBoxStyleCount
 };
 
+// How the aim target is marked.
+enum EspTargetMarkStyle : int
+{
+    // A single pulsing dot on the aimed-at bone.
+    EspTargetMarkDot = 0,
+    // Particles orbiting the body, each dragging a fading trail. Drawn as
+    // additive glow sprites positioned in the world, so the ring foreshortens
+    // and shrinks with distance on its own.
+    EspTargetMarkOrbits,
+    EspTargetMarkStyleCount
+};
+
+// How much of a target behind cover the visible check recolours.
+enum EspHiddenStyle : int
+{
+    // Box, skeleton and every label take the hidden colour.
+    EspHiddenTintAll = 0,
+    // Only the outline is recoloured. Labels keep their own colours, so a
+    // faction tag stays readable as a faction tag while the shape still reads
+    // as being behind something.
+    EspHiddenTintOutline,
+    EspHiddenStyleCount
+};
+
 enum EspBarStyle : int
 {
     EspBarSolid = 0,

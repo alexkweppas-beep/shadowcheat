@@ -347,7 +347,7 @@ namespace Menu
               "Сила притиску###misc_vehicle_gravity_value"),
             &vm.gravityMult,
             1.f,
-            10.f,
+            VehicleMovement::Settings::kMaxGravity,
             "%.1fx");
         const VehicleMovement::Status motionStatus =
             VehicleMovement::GetStatus();

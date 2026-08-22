@@ -143,6 +143,46 @@ namespace hooks {
 // file writer does not exist here at all and hooks::HLog has nowhere to go.
 // Diagnostics stay in the development tree.
 
+// Manual mapping bypasses the loader, so nothing stops the same payload being
+// mapped into one process twice: injecting again while the game is running
+// leaves both copies live, each with its own Present hook, its own ESP pass and
+// its own independent feature state. The visible result is two overlays drawing
+// the same peds and disagreeing about them, which reads as flicker rather than
+// as the obvious duplicate it is. Later arrivals bail out of DllMain instead.
+//
+// The name carries the process id because the object namespace is per session,
+// not per process: without it, a second game would refuse to be injected at all.
+// The handle is deliberately leaked, since the claim has to outlive DllMain and
+// the image is never unmapped.
+static HANDLE g_InstanceClaim = nullptr;
+
+static bool ClaimSoleInstance() noexcept
+{
+    wchar_t name[64]{};
+    const unsigned long pid = GetCurrentProcessId();
+    wsprintfW(name, L"Local\\shadow_internal_%lu", pid);
+    const HANDLE claim = CreateMutexW(nullptr, FALSE, name);
+    if (!claim)
+        return true;
+    if (GetLastError() == ERROR_ALREADY_EXISTS) {
+        CloseHandle(claim);
+        return false;
+    }
+    g_InstanceClaim = claim;
+    return true;
+}
+
+// Called from the unload path. Once the hooks are off the image is dormant and
+// owns nothing, so holding the claim would only stop a fresh copy from being
+// injected in its place, which is exactly what the unload key exists to allow.
+void ReleaseSoleInstanceClaim() noexcept
+{
+    if (!g_InstanceClaim)
+        return;
+    CloseHandle(g_InstanceClaim);
+    g_InstanceClaim = nullptr;
+}
+
 // -------------------------------------------------------------------
 // Entry point — called by manual-mapper thunk SYNCHRONOUSLY on the
 // hijacked GTA5 thread.
@@ -152,6 +192,9 @@ namespace hooks {
 extern "C" BOOL WINAPI DllMain(HMODULE hModule, DWORD reason, LPVOID lpReserved)
 {
     if (reason == DLL_PROCESS_ATTACH) {
+        if (!ClaimSoleInstance())
+            return FALSE;
+
         // Save module handle for later use (pattern scanning, etc.).
         g_ThisModule = hModule;
 

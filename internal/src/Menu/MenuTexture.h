@@ -16,6 +16,14 @@ namespace MenuTexture
         unsigned* outWidth,
         unsigned* outHeight) noexcept;
 
+    // Soft radial falloff, white with the shape in alpha. Generated rather than
+    // shipped: it is a formula, and a formula is smaller and sharper at any size
+    // than a compressed image of one.
+    //
+    // Meant to be drawn additively, which is what turns overlapping sprites into
+    // a glow instead of a pile of translucent discs.
+    void* GetGlowImGui() noexcept;
+
     // Icons downloaded once from cloud pack (public-assets).
     ID3D11ShaderResourceView* GetWeaponIcon(const char* iconFile) noexcept;
     void* GetWeaponIconImGui(const char* iconFile) noexcept;

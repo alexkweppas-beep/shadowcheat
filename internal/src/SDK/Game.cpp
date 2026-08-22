@@ -3580,6 +3580,17 @@ namespace Game {
         return s_frameContext;
     }
 
+    bool LastViewCamera(Vector3& out) noexcept
+    {
+        if (!s_projectionCache.valid)
+            return false;
+        const float* view = s_projectionCache.view;
+        out = Vector3(view[12], view[13], view[14]);
+        return std::isfinite(out.x) &&
+            std::isfinite(out.y) &&
+            std::isfinite(out.z);
+    }
+
     int& SyntheticCrowdCount() noexcept
     {
         return s_syntheticCrowd;

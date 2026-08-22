@@ -5,6 +5,7 @@
 #include "Friends.h"
 #include "MinimapAnchor.h"
 #include "QuantTools.h"
+#include "TargetGlow.h"
 #include "UkraineTools.h"
 #include "RagePlayerNames.h"
 #include "RageWorldEntities.h"
@@ -616,6 +617,124 @@ namespace Features {
         }
     }
 
+    // Particles orbiting the target, each trailing behind itself.
+    //
+    // The shape is not drawn on the screen and then scaled: each particle has a
+    // world position on a ring around the body, and every sprite is projected
+    // from it. So the ring lies flat in the world, foreshortens when seen from
+    // the side, and needs no distance term to look right.
+    //
+    // Two details do the work. The particle does not sit on its ideal orbit
+    // position, it chases it, which is what produces the lag and the whip when
+    // the target moves. And the trail is a short history of where it has been,
+    // each point dimmer and smaller than the last, drawn additively so the
+    // overlaps brighten into a streak instead of muddying.
+    void DrawAimTargetOrbits(
+        ImDrawList* draw,
+        const Features::AimTargetSnapshot& mark,
+        const float color[3]) noexcept
+    {
+        constexpr int kParticles = 3;
+        constexpr int kTrail = 24;
+        constexpr float kRadius = 0.45f;
+        constexpr float kBob = 0.28f;
+
+        struct Particle final
+        {
+            Vector3 trail[kTrail]{};
+            int count{};
+            Vector3 at{};
+            bool started{};
+        };
+        static Particle s_particles[kParticles]{};
+        static const void* s_target = nullptr;
+        static float s_angle = 0.f;
+
+        // A new target starts from nothing, otherwise the trails whip across the
+        // world from the previous one.
+        if (s_target != mark.ped)
+        {
+            s_target = mark.ped;
+            for (Particle& particle : s_particles)
+                particle = Particle{};
+        }
+
+        const float delta =
+            ImClamp(ImGui::GetIO().DeltaTime, 0.f, 0.05f);
+        s_angle += delta * 200.f;
+        if (s_angle > 360.f)
+            s_angle -= 360.f;
+
+        if (!TargetGlow::Begin(draw))
+            return;
+
+        constexpr float kRadians = 3.14159265f / 180.f;
+        for (int index = 0; index < kParticles; ++index)
+        {
+            Particle& particle = s_particles[index];
+            const float phase =
+                s_angle + static_cast<float>(index) *
+                    (360.f / kParticles);
+            const float radians = phase * kRadians;
+            Vector3 ideal = mark.world;
+            ideal.x += std::sin(radians) * kRadius;
+            ideal.y += std::cos(radians) * kRadius;
+            ideal.z += kBob *
+                std::sin(s_angle * kRadians /
+                    (static_cast<float>(index) + 1.f));
+
+            if (!particle.started)
+            {
+                particle.at = ideal;
+                particle.started = true;
+            }
+            else
+            {
+                // Framerate-independent chase: the same fraction of the gap per
+                // second rather than per frame, so the trail does not tighten
+                // up as the frame rate rises.
+                const float follow =
+                    1.f - std::exp(-delta * 12.f);
+                particle.at.x +=
+                    (ideal.x - particle.at.x) * follow;
+                particle.at.y +=
+                    (ideal.y - particle.at.y) * follow;
+                particle.at.z +=
+                    (ideal.z - particle.at.z) * follow;
+            }
+
+            for (int step = kTrail - 1; step > 0; --step)
+                particle.trail[step] = particle.trail[step - 1];
+            particle.trail[0] = particle.at;
+            if (particle.count < kTrail)
+                ++particle.count;
+
+            for (int step = 0; step < particle.count; ++step)
+            {
+                const float age =
+                    1.f - static_cast<float>(step) /
+                        static_cast<float>(kTrail);
+                const float fade = age * age;
+                TargetGlow::Sprite(
+                    draw,
+                    particle.trail[step],
+                    0.035f + 0.045f * age,
+                    color,
+                    fade * (mark.visible ? 0.85f : 0.4f));
+            }
+            // The head is brighter than anything in its trail, which is what
+            // makes the direction of travel readable.
+            TargetGlow::Sprite(
+                draw,
+                particle.at,
+                0.10f,
+                color,
+                mark.visible ? 1.35f : 0.6f);
+        }
+
+        TargetGlow::End(draw);
+    }
+
     // Aim target marker: one glowing dot that breathes. A ring or a reticle
     // covers the part of the ped you are aiming at, which is the one place you
     // are looking; a dot marks the spot and stays out of the way. The pulse is
@@ -1217,10 +1336,17 @@ namespace Features {
         if (aimProf.silentMark) {
             AimTargetSnapshot mark{};
             if (CopyDisplayTarget(mark) && mark.valid) {
-                DrawAimTargetReticle(
-                    drawList,
-                    mark,
-                    Menu::s_Aim_MarkColor);
+                if (aimProf.silentMarkStyle ==
+                    EspTargetMarkOrbits)
+                    DrawAimTargetOrbits(
+                        drawList,
+                        mark,
+                        Menu::s_Aim_MarkColor);
+                else
+                    DrawAimTargetReticle(
+                        drawList,
+                        mark,
+                        Menu::s_Aim_MarkColor);
             }
         }
 
@@ -1410,6 +1536,11 @@ namespace Features {
                     profile.visibleCheck,
                     frameEntry.visibleZoneKnown,
                     frameEntry.visibleZoneMask);
+
+            // Whether the labels take the hidden colour along with the outline,
+            // or only the outline does.
+            const bool tintLabels = hidden &&
+                profile.hiddenStyle == EspHiddenTintAll;
 
             ++pedCount;
 
@@ -1799,6 +1930,8 @@ namespace Features {
 
                 EspProjected::DrawOptions drawOptions{};
                 drawOptions.colorOverride =
+                    tintLabels ? profile.hiddenColor : nullptr;
+                drawOptions.boxColorOverride =
                     hidden ? profile.hiddenColor : nullptr;
                 // Colour the faction tag by the faction itself. Only asked for
                 // when the tag is actually drawn, and the key is the server's
@@ -1885,6 +2018,8 @@ namespace Features {
                     1.f,
                     &drawOptions);
 
+                // Recoloured with the box in both styles: the skeleton is part
+                // of the outline, not a label.
                 if (profile.skeleton) {
                     RUNTIME_PROFILE_BEGIN(skeletonTimer);
                     ++skeletonExpected;
