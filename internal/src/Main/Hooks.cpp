@@ -4,6 +4,7 @@
 #include <dxgi.h>
 #include <dxgi1_2.h>
 #include "Hooks.h"
+#include "Diagnostics.h"
 #include "../Helpers/d3d11_helpers.h"
 #include "../imgui/imgui.h"
 #include "../imgui/imgui_impl_dx11.h"
@@ -1186,6 +1187,9 @@ namespace hooks
         g_VtableHookInstalled = false;
         g_InlineHookInstalled = false;
         HLog("Shutdown: hooks removed; manual-map image left dormant");
+        // Last, so everything above is still recorded. No-op in a build
+        // without RAGEMP_DIAGNOSTICS.
+        Diagnostics::Shutdown();
     }
 
     // ------------------------------------------------------------
@@ -1574,20 +1578,36 @@ namespace hooks
                          activeAim.triggerEnabled);
                     std::uint32_t
                         espBoneProfileMask = 0;
+                    bool visibilityDemand = false;
                     for (int profile = 0;
                          profile < static_cast<int>(
                              Menu::EspProfileId::Count);
                          ++profile)
                     {
+                        if (!Menu::s_EspProfiles[profile].
+                                enabled)
+                            continue;
                         if (Menu::s_EspProfiles[profile].
-                                enabled &&
-                            Menu::s_EspProfiles[profile].
                                 skeleton)
                         {
                             espBoneProfileMask |=
                                 1u << profile;
                         }
+                        if (Menu::s_EspProfiles[profile].
+                                visibleCheck)
+                            visibilityDemand = true;
                     }
+                    // Wallshot ignores the visible check outright, so silent aim
+                    // in that mode is not a reason to spend physics queries.
+                    if (aimNeedsBones &&
+                        ((activeAim.vecEnabled &&
+                          activeAim.vecVisible) ||
+                         (activeAim.silentEnabled &&
+                          activeAim.silentVisible &&
+                          !activeAim.silentWallshot) ||
+                         (activeAim.triggerEnabled &&
+                          activeAim.triggerVisible)))
+                        visibilityDemand = true;
                     profileStart =
                         RuntimeProfiler::Begin();
                     __try {
@@ -1595,6 +1615,7 @@ namespace hooks
                             g_FrameCount,
                             aimNeedsBones,
                             espBoneProfileMask,
+                            visibilityDemand,
                             Menu::s_AdminLevelThreshold);
                         const auto& frame =
                             Game::GetFramePedContext();

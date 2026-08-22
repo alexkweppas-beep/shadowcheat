@@ -50,13 +50,20 @@ namespace VisualPolicy
         return Profile::Players;
     }
 
+    // Fed by Features/Visibility zone masks. "No fresh answer" used to mean
+    // hidden here while the aimbot read the same state as visible, so a ped the
+    // prober had not reached yet was drawn behind cover and shot at anyway.
+    // Unknown now means unknown in both places, and unknown draws normally: an
+    // overloaded probe budget must not paint someone standing in the open as
+    // being behind a wall.
     constexpr bool UseHiddenPalette(
         bool visibleCheck,
-        bool hasSnapshot,
-        bool visible) noexcept
+        unsigned char visibleZoneKnown,
+        unsigned char visibleZoneMask) noexcept
     {
         return visibleCheck &&
-            (!hasSnapshot || !visible);
+            visibleZoneKnown != 0 &&
+            (visibleZoneMask & visibleZoneKnown) == 0;
     }
 
     constexpr bool IsBonePlausible(

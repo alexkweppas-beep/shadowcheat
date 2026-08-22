@@ -1095,6 +1095,21 @@ namespace
     void InvalidateRoot(
         const char* message) noexcept
     {
+        {
+            // The fatal sequence starts with a generation change, which only
+            // happens here, and the fault lands on a thread that is not the
+            // pump's. Naming the caller and its thread is what ties the two
+            // together instead of guessing at the link.
+            char line[224]{};
+            _snprintf(
+                line,
+                sizeof(line) - 1,
+                "V8pump: InvalidateRoot thread=%lu owner=%lu reason=%s",
+                GetCurrentThreadId(),
+                g_Api.ownerThreadId,
+                message ? message : "?");
+            hooks::HLog(line);
+        }
         SetState(
             RageV8Runtime::State::WaitingForApi,
             message);
@@ -2226,6 +2241,7 @@ namespace
         auto state = static_cast<RageV8Runtime::State>(
             InterlockedCompareExchange(&g_State, 0, 0));
 
+
         // Soft-pause only blocks work. Never InvalidateRoot / touch V8
         // on the F1 edge — RAGE tears the context down concurrently and
         // that race is what lands in ntdll+0x33FFA.
@@ -2527,6 +2543,20 @@ namespace
             g_Api.isolate);
         g_TaskRunner = sharedRunner[0];
         g_TaskRunnerControl = sharedRunner[1];
+        {
+            char line[160]{};
+            _snprintf(
+                line,
+                sizeof(line) - 1,
+                "V8pump: runner=%p platform=%p isolate=%p owner=%lu "
+                "caller=%lu",
+                g_TaskRunner,
+                g_Api.platform,
+                g_Api.isolate,
+                g_Api.ownerThreadId,
+                GetCurrentThreadId());
+            hooks::HLog(line);
+        }
         if (!g_TaskRunner)
             return false;
 

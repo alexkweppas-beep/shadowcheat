@@ -17,6 +17,15 @@ endif()
 file(GLOB_RECURSE SHADOW_INTERNAL_SOURCES CONFIGURE_DEPENDS
     "${CMAKE_CURRENT_SOURCE_DIR}/src/*.cpp")
 
+# Off for anything a user ever runs: it writes a crash log to disk, which the
+# shipping payload must never do. This is the switch Hooks.h already checks to
+# un-stub HLog, so turning it on lights up the breadcrumbs that are already in
+# the code and points them at src/Main/Diagnostics.cpp. Deliberately not
+# RAGEMP_DEV_BUILD, which gates development-tree code that does not exist here.
+option(SHADOW_INTERNAL_DIAGNOSTICS
+    "Write a crash log and record exception addresses" OFF)
+
+
 # MinHook is vendored: it is three C files plus the length disassembler, and
 # fetching it at configure time would make an offline build impossible.
 set(SHADOW_MINHOOK_DIR "${CMAKE_CURRENT_SOURCE_DIR}/third_party/minhook")
@@ -52,6 +61,11 @@ target_compile_definitions(internal PRIVATE
     UNICODE
     _UNICODE)
 
+if(SHADOW_INTERNAL_DIAGNOSTICS)
+    target_compile_definitions(internal PRIVATE RAGEMP_DIAGNOSTICS)
+endif()
+
+
 target_compile_options(internal PRIVATE
     /utf-8
     /W3
@@ -80,10 +94,20 @@ target_link_libraries(internal PRIVATE
     libvcruntime
     legacy_stdio_definitions)
 
-# DllMain runs on the thread the mapper hijacks, so it is the entry point
-# directly: there is no CRT startup stub in a manually mapped image.
+# Entry point: the CRT's own startup stub, which initialises the static CRT and
+# then calls DllMain with the same three arguments.
+#
+# This used to be /ENTRY:DllMain, on the reasoning that a manually mapped image
+# has no CRT startup stub. The static CRT does contain one, and skipping it left
+# the UCRT uninitialised, which was not a theoretical problem: measured in game,
+# the render thread took an access violation inside ntdll writing to 0x24 with
+# internal_get_ptd_head_slow and __acrt_lock_table on its stack. That is the CRT
+# trying to build per-thread data through a lock that was never constructed, and
+# it killed the game a couple of seconds later every single time RAGE's V8
+# runtime came up. Entering here fixed that and, with it, RP name and identity
+# resolution, which had been reporting zeroes.
 target_link_options(internal PRIVATE
-    /ENTRY:DllMain
+    /ENTRY:_DllMainCRTStartup
     /SUBSYSTEM:WINDOWS)
 
 set_target_properties(internal PROPERTIES
