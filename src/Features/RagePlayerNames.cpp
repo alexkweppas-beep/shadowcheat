@@ -234,9 +234,19 @@ namespace
             "Number.isFinite(Number(v.y))&&"
             "Number.isFinite(Number(v.z))&&"
             "(Number(v.x)!==0||Number(v.y)!==0||Number(v.z)!==0);"
-            "let localHead=null;"
-            "if(local&&valid(local.position)){const p=local.position;"
-            "localHead={x:Number(p.x),y:Number(p.y),z:Number(p.z)+0.8};}"
+            // Rays start at the camera, not at the local ped's chest. In third
+            // person the camera sits metres behind and above the body, so a
+            // chest-to-chest ray answered a question nobody asked: it called
+            // targets hidden that were plainly on screen, and visible ones the
+            // player could not see past their own cover.
+            "const eyeOf=()=>{try{const cam=rage.game&&rage.game.cam;"
+            "const cp=cam&&typeof cam.getGameplayCamCoord==='function'"
+            "?cam.getGameplayCamCoord():null;"
+            "if(valid(cp))return{x:Number(cp.x),y:Number(cp.y),z:Number(cp.z)};}"
+            "catch(_){}return null;};"
+            "let localEye=eyeOf();"
+            "if(!localEye&&local&&valid(local.position)){const p=local.position;"
+            "localEye={x:Number(p.x),y:Number(p.y),z:Number(p.z)+0.8};}"
             "const cache=root.__butterflyNameCache||"
             "(root.__butterflyNameCache={chars:{},families:{},pendingFam:{}});"
             "const cleanLabel=(v,id)=>{let s=String(v==null?'':v).trim();"
@@ -313,7 +323,8 @@ namespace
             "const me=rage.players&&rage.players.local;"
             "if(!me)return;const lp=me.position;"
             "if(!lp||!Number.isFinite(Number(lp.x)))return;"
-            "const from={x:Number(lp.x),y:Number(lp.y),z:Number(lp.z)+0.8};"
+            "let from=eyeOf();"
+            "if(!from)from={x:Number(lp.x),y:Number(lp.y),z:Number(lp.z)+0.8};"
             "const mine=Number(me.handle)||0;const now=Date.now();"
             // The roster is rebuilt twice a second instead of every frame:
             // walking it 144 times a second is pure garbage for no new data.
@@ -350,12 +361,14 @@ namespace
             "if(!tp||!Number.isFinite(Number(tp.x)))continue;"
             "const to={x:Number(tp.x),y:Number(tp.y),z:Number(tp.z)+0.8};"
             "vis.busy[key]=now;++started;"
-            "Promise.resolve(rc0.testPointToPointAsync(from,to,mine,31))"
-            ".then(hit=>{vis.busy[key]=0;let v=true;"
-            "if(hit){const e=hit.entity!==undefined?hit.entity:hit.entityHit;"
-            "const hh=e&&typeof e==='object'?Number(e.handle):Number(e);"
-            "v=Number.isFinite(hh)&&hh===h;}"
-            "vis.map[key]={v:v,t:Date.now()};})"
+            // Flags 17 = world geometry | objects. Peds and ragdolls used to be
+            // in the mask, which is what made a crowd hide everyone in it, and
+            // once they are out the ray can no longer terminate on the target
+            // itself: any hit at all is something in the way, so the entity
+            // comparison this used to do is both unnecessary and wrong.
+            "Promise.resolve(rc0.testPointToPointAsync(from,to,mine,17))"
+            ".then(hit=>{vis.busy[key]=0;"
+            "vis.map[key]={v:!hit,t:Date.now()};})"
             ".catch(_=>{vis.busy[key]=0;});"
             "}}catch(_){}};"
             "try{rage.events.add('render',tick);}catch(_){vis.worker=0;}}"
@@ -370,7 +383,7 @@ namespace
             "let visIndex=0;const visStart=Number(vis.cursor)||0;"
             "const clear=(target,end)=>{const idx=visIndex++;"
             "if(!needVis)return true;"
-            "if(!localHead||!end)return false;"
+            "if(!localEye||!end)return false;"
             "const key=String(Number(target.handle)||0);"
             "if(local&&Number(local.handle)===Number(target.handle))"
             "{vis.map[key]={v:true,t:Date.now()};return true;}"
@@ -381,11 +394,15 @@ namespace
             // a whole cycle.
             "if(!vis.worker&&rc0&&typeof rc0.testPointToPoint==='function'"
             "&&idx>=visStart&&idx<visStart+visBudget){try{"
-            "const hit=rc0.testPointToPoint(localHead,end,local,31);"
-            "const v=!hit||(!!hit.entity&&"
-            "Number(hit.entity.handle)===Number(target.handle));"
+            "const hit=rc0.testPointToPoint(localEye,end,local,17);"
+            "const v=!hit;"
             "vis.map[key]={v:v,t:Date.now()};return v;}catch(_){}}"
-            "return rec&&Date.now()-rec.t<5000?!!rec.v:true;};"
+            // A record was trusted for five seconds, which is long enough to
+            // walk out of cover and back in twice. Beyond the short window the
+            // answer is unknown, and unknown reports visible: this flag is only
+            // read at all when the Present-thread prober never worked, and the
+            // one thing it must not do is hide someone standing in the open.
+            "return rec&&Date.now()-rec.t<400?!!rec.v:true;};"
             "const emit=(e,kind,isLocal)=>{if(!e)return;"
             "const id=Number(e.remoteId),h=Number(e.handle);"
             "if(!Number.isFinite(h)||h<=0||seen[h])return;"

@@ -215,6 +215,14 @@ namespace Game {
         Vector2 coarseScreen{};
         Vector2 projectedBones[kVisualBoneCount]{};
         std::uint32_t projectedBoneMask{};
+        // Camera line-of-sight per body zone, owned by Features/Visibility.
+        // Kept on the frame entry rather than on the snapshot-derived visual
+        // data because it is measured here, keyed on this ped pointer, and has
+        // nothing to do with what the RAGE snapshot reported.
+        // A zone absent from visibleZoneKnown has no fresh answer, which every
+        // consumer must read as "assume visible", not as "hidden".
+        std::uint8_t visibleZoneMask{};
+        std::uint8_t visibleZoneKnown{};
         float health{};
         float maxHealth{200.f};
         float armor{};
@@ -284,10 +292,14 @@ namespace Game {
 
     // Shared read-only frame snapshot consumed by ESP, radar and Aimbot.
     // Must be built once from Present after RefreshPlayerCache().
+    // visibilityDemand arms the line-of-sight prober. Nothing reads the zone
+    // masks unless some ESP profile or aim mode has its visible check on, and
+    // the probes are real physics queries, so they are not spent otherwise.
     void BuildFramePedContext(
         std::uint64_t frameId,
         bool aimNeedsBones,
         std::uint32_t espBoneProfileMask,
+        bool visibilityDemand,
         int adminThreshold) noexcept;
     const FramePedContext& GetFramePedContext() noexcept;
     const FramePedEntry* FindFramePed(

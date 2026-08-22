@@ -1,6 +1,8 @@
 #pragma once
 
+#include <cstddef>
 #include <cstdint>
+#include <cstdio>
 #include <cstring>
 #include <type_traits>
 #include <Windows.h>
@@ -28,10 +30,29 @@ namespace NativeInvoke
     inline GetNativeHandlerFn g_getHandler = nullptr;
     inline void (*g_fixVectors)(ScrNativeCallContext*) = nullptr;
     inline bool g_initialized = false;
+    // Resolution is attempted exactly once. Without this a failed attempt left
+    // g_initialized false, and Lookup calls Init whenever that is false, so
+    // every single native call re-scanned the whole game module for the
+    // pattern. That is tens of megabytes per call, several calls a frame.
+    inline bool g_initTried = false;
+    inline uintptr_t g_moduleBase = 0;
+    inline size_t g_moduleSize = 0;
 
     // CBlipList* — array of blip object pointers (Menyoo / SHVDN style).
     inline void** g_blipList = nullptr;
     inline bool g_blipListTried = false;
+
+    // Set by the diagnostics build so resolution can report what it found.
+    // A function pointer rather than an include so this header keeps no
+    // dependency on the logging side.
+    using DiagFn = void (*)(const char*);
+    inline DiagFn g_diag = nullptr;
+
+    inline void Diag(const char* message) noexcept
+    {
+        if (g_diag && message)
+            g_diag(message);
+    }
 
     inline uintptr_t FindPattern(uintptr_t base, size_t size, const char* pattern)
     {
@@ -118,24 +139,51 @@ namespace NativeInvoke
     {
         if (g_initialized)
             return true;
+        if (g_initTried)
+            return false;
+        g_initTried = true;
 
         HMODULE gta = GetModuleHandleA(nullptr);
         if (!gta)
+        {
+            Diag("NativeInvoke: GetModuleHandle(nullptr) failed");
             return false;
+        }
 
         MODULEINFO mi{};
         if (!GetModuleInformation(GetCurrentProcess(), gta, &mi, sizeof(mi)))
+        {
+            Diag("NativeInvoke: GetModuleInformation failed");
             return false;
+        }
 
         const uintptr_t base = reinterpret_cast<uintptr_t>(mi.lpBaseOfDll);
         const size_t size = mi.SizeOfImage;
+        g_moduleBase = base;
+        g_moduleSize = size;
+
+        {
+            char line[128]{};
+            sprintf_s(
+                line,
+                "NativeInvoke: module %016llX size 0x%zX",
+                static_cast<unsigned long long>(base),
+                size);
+            Diag(line);
+        }
 
         const uintptr_t addr = FindPattern(
             base,
             size,
             "48 8D 0D ? ? ? ? 48 8B 14 FA E8 ? ? ? ? 48 85 C0 75 0A");
         if (!addr)
+        {
+            // Used to return false without a word, which is why every native
+            // silently did nothing: callers only ever saw a zero result and
+            // read it as "the game ignored us on this thread".
+            Diag("NativeInvoke: GetNativeHandler pattern NOT FOUND");
             return false;
+        }
 
         g_nativeTable = reinterpret_cast<void*>(RipRel(addr, 3));
         g_getHandler = reinterpret_cast<GetNativeHandlerFn>(RipRel(addr, 12));
@@ -156,6 +204,22 @@ namespace NativeInvoke
         }
 
         g_initialized = (g_nativeTable != nullptr && g_getHandler != nullptr);
+        {
+            char line[160]{};
+            sprintf_s(
+                line,
+                "NativeInvoke: pattern at %016llX table=%016llX "
+                "getHandler=%016llX fixVectors=%016llX ready=%d",
+                static_cast<unsigned long long>(addr),
+                static_cast<unsigned long long>(
+                    reinterpret_cast<uintptr_t>(g_nativeTable)),
+                static_cast<unsigned long long>(
+                    reinterpret_cast<uintptr_t>(g_getHandler)),
+                static_cast<unsigned long long>(
+                    reinterpret_cast<uintptr_t>(g_fixVectors)),
+                g_initialized ? 1 : 0);
+            Diag(line);
+        }
         return g_initialized;
     }
 
@@ -176,6 +240,24 @@ namespace NativeInvoke
         }
     }
 
+    // Every native call on this target resolves to null, and the reason is not
+    // the pattern above: it matches, and the pointers it yields look sane.
+    //
+    // Measured in game on RAGE MP's GTA5.exe (build 1.0.231.0, module
+    // 0x950C000 bytes). The bucket array the pattern resolves to holds values
+    // like 000000003C7F4E40 rather than 00007FF6-style addresses, walking it
+    // faults immediately, and not one of four hashes taken from the wrappers in
+    // this very file appears anywhere in the module's committed data. Both the
+    // registration pointers and the hashes are encrypted in this build, so
+    // GetNativeHandler reads ciphertext and a plaintext scan cannot find
+    // anything either.
+    //
+    // Consequence: no C++ native works here, and none can until the
+    // build-specific decryption is implemented. Anything that needs a native
+    // has to go through the RAGE script runtime, which is why the trigger,
+    // waypoint teleport, ammo, super jump and anti-AFK all ended up in V8. That
+    // was read as "natives are ignored on the Present thread"; the thread was
+    // never the problem.
     inline ScrNativeHandler Lookup(ScrNativeHash hash) noexcept
     {
         if ((!g_initialized && !Init()) || !g_nativeTable || !g_getHandler)
@@ -188,6 +270,13 @@ namespace NativeInvoke
         {
             return nullptr;
         }
+    }
+
+    inline bool NativesAvailable() noexcept
+    {
+        // PLAYER_PED_ID: cheapest thing to ask for, and a real handler for it
+        // would mean the table became readable.
+        return Lookup(0xD80958FC74E988A6ull) != nullptr;
     }
 
     template <typename Ret>
@@ -767,6 +856,75 @@ namespace NativeInvoke
         outX = *reinterpret_cast<float*>(&endSlot[0]);
         outY = *reinterpret_cast<float*>(&endSlot[1]);
         outZ = *reinterpret_cast<float*>(&endSlot[2]);
+        return true;
+    }
+
+    // START_SHAPE_TEST_LOS_PROBE (0x7EE9F5D83DD4F90E) is deliberately absent.
+    // It returns a null handle on every call from the Present thread, measured
+    // over hundreds of attempts in game: the shape test manager will not
+    // reserve a cross-frame slot for a thread that does not own the script
+    // runtime. Only the expensive synchronous variant above is usable here,
+    // because it completes inside the call.
+
+    enum class ShapeTestStatus : int
+    {
+        // Handle was never valid, or has already been consumed.
+        Invalid = 0,
+        // Physics has not answered yet; poll again next frame.
+        Pending = 1,
+        // Result is filled in and the handle is now spent.
+        Ready = 2
+    };
+
+    struct ShapeTestResult
+    {
+        bool hit = false;
+        float x = 0.f;
+        float y = 0.f;
+        float z = 0.f;
+        int entity = 0;
+        // Whatever the native left in the return slot. Recorded for
+        // diagnostics only; see below for why it cannot gate success.
+        int status = 0;
+    };
+
+    // GET_SHAPE_TEST_RESULT. Returns false only when the native could not be
+    // dispatched at all, and hands back entityHit instead of discarding it.
+    //
+    // Success is deliberately not gated on the returned status. NativeContext
+    // aliases the return slot onto the first argument, so a native that writes
+    // no return value leaves the ray handle sitting in it, and a handle is
+    // never 2. Gating on status == Ready therefore rejected every completed
+    // probe, which is measurable: 3 probes a frame, 3 dropped, none resolved.
+    // GetShapeTestHitCoords above has always trusted only the hit flag, for
+    // the same reason.
+    inline bool GetShapeTestResult(
+        int rayHandle,
+        ShapeTestResult& out) noexcept
+    {
+        out = ShapeTestResult{};
+        if (!rayHandle)
+            return false;
+        int hit = 0;
+        // Vector3 returns use 3x8-byte slots.
+        alignas(16) std::uint64_t endSlot[3]{};
+        alignas(16) std::uint64_t normalSlot[3]{};
+        int entityHit = 0;
+        NativeContext ctx;
+        ctx.Push(rayHandle);
+        ctx.Push(&hit);
+        ctx.Push(endSlot);
+        ctx.Push(normalSlot);
+        ctx.Push(&entityHit);
+        const ScrNativeHandler handler = Lookup(0x3D87450E45143FDCull);
+        if (!CallHandler(handler, ctx))
+            return false;
+        out.status = ctx.Result<int>();
+        out.hit = hit != 0;
+        out.entity = entityHit;
+        out.x = *reinterpret_cast<float*>(&endSlot[0]);
+        out.y = *reinterpret_cast<float*>(&endSlot[1]);
+        out.z = *reinterpret_cast<float*>(&endSlot[2]);
         return true;
     }
 

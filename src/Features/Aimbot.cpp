@@ -3,6 +3,7 @@
 #include "MiscFeatures.h"
 #include "NativeInvoke.hpp"
 #include "RagePlayerNames.h"
+#include "Visibility.h"
 #include "VisualPolicy.h"
 #include "../SDK/Game.h"
 #include "../SDK/Math.h"
@@ -134,6 +135,48 @@ bool PedPassesBasicFilters(
     return std::isfinite(entry.livePosition.x) &&
         std::isfinite(entry.livePosition.y) &&
         std::isfinite(entry.livePosition.z);
+}
+
+// "Ignore invisible" means ignore peds we know are behind something, not peds
+// we know nothing about, so a zone with no fresh probe answer never rejects.
+//
+// Coarse gate only: it drops a ped whose every measured zone is occluded. Which
+// part of a half-covered target may be shot at is decided per hitbox, because a
+// torso answer must not authorise a shot at an exposed head and an exposed head
+// must not authorise one at a covered torso.
+bool RejectedByVisibility(
+    const Game::FramePedEntry& entry,
+    const ModeSettings& settings) noexcept
+{
+    if (settings.wallshot || !settings.visibleCheck)
+        return false;
+    if (!entry.visibleZoneKnown)
+        return false;
+    return (entry.visibleZoneMask &
+        entry.visibleZoneKnown) == 0;
+}
+
+// Whether the zone covering this bone has line of sight. Unknown counts as
+// visible for the same reason as above.
+bool HitboxVisible(
+    const Game::FramePedEntry& entry,
+    int bone) noexcept
+{
+    const std::uint8_t zone =
+        Visibility::ZoneForBone(bone);
+    if (!zone || !(entry.visibleZoneKnown & zone))
+        return true;
+    return (entry.visibleZoneMask & zone) != 0;
+}
+
+bool HitboxRejectedByVisibility(
+    const Game::FramePedEntry& entry,
+    const ModeSettings& settings,
+    int bone) noexcept
+{
+    if (settings.wallshot || !settings.visibleCheck)
+        return false;
+    return !HitboxVisible(entry, bone);
 }
 
 bool PedRejectedByTypeFilter(
@@ -314,6 +357,13 @@ bool EvaluateHitboxCandidate(
     {
         if (!settings.bones[index])
             continue;
+        // A covered zone loses the capsule contest outright. Without this, a
+        // target crouched behind a wall with only the head exposed still let
+        // the crosshair land on the torso silhouette and the trigger fired into
+        // the wall.
+        if (HitboxRejectedByVisibility(
+                entry, settings, index))
+            continue;
         HitboxCapsule capsule = kHitboxCapsules[index];
         // Neck and Chest both hang off Spine. When the engine hands back a rig
         // without it, aiming at the torso used to match nothing at all, so both
@@ -382,31 +432,14 @@ bool EvaluateHitboxCandidate(
     output.crosshairDistanceSq = bestRatio * bestRatio;
     output.rageHandle = entry.visual.rageHandle;
     output.hitbox = bestHitbox;
-    output.visible =
-        entry.visualValid &&
-        entry.visual.visible;
+    output.visible = HitboxVisible(entry, anchor);
     output.valid = true;
     return true;
 }
 
-// "Ignore invisible" means ignore peds we know are behind something, not peds
-// we know nothing about. Visibility comes from the RAGE snapshot, and a ped that
-// never got matched to a snapshot entry has visualValid false — treating that as
-// hidden silently dropped every unmatched target, which is why aiming straight
-// at a player could produce no shot at all.
-bool RejectedByVisibility(
-    const Game::FramePedEntry& entry,
-    const ModeSettings& settings) noexcept
-{
-    if (settings.wallshot || !settings.visibleCheck)
-        return false;
-    if (!entry.visualValid)
-        return false;
-    return !entry.visual.visible;
-}
-
 bool EvaluateCandidate(
     const Game::FramePedEntry& entry,
+    const ModeSettings& settings,
     Hitbox hitbox,
     float fovPixelsSq,
     const ImVec2& center,
@@ -427,6 +460,12 @@ bool EvaluateCandidate(
         ++g_Diagnostics.projectionRejects;
         return false;
     }
+    if (HitboxRejectedByVisibility(
+            entry, settings, bone))
+    {
+        ++g_Diagnostics.visibilityRejects;
+        return false;
+    }
     const Vector2 screen =
         entry.projectedBones[bone];
     const float dx = screen.x - center.x;
@@ -445,9 +484,7 @@ bool EvaluateCandidate(
     output.rageHandle =
         entry.visual.rageHandle;
     output.hitbox = static_cast<int>(hitbox);
-    output.visible =
-        entry.visualValid &&
-        entry.visual.visible;
+    output.visible = HitboxVisible(entry, bone);
     output.valid = true;
     return true;
 }
@@ -547,6 +584,7 @@ bool SelectTarget(
                 TargetCandidate lockedCandidate{};
                 if (EvaluateCandidate(
                         *lockedEntry,
+                        settings,
                         preferred,
                         fovPixelsSq,
                         center,
@@ -561,6 +599,7 @@ bool SelectTarget(
                     TargetCandidate candidate{};
                     if (!EvaluateCandidate(
                             *lockedEntry,
+                            settings,
                             enabled[index],
                             fovPixelsSq,
                             center,
@@ -654,6 +693,7 @@ bool SelectTarget(
         {
             EvaluateCandidate(
                 entry,
+                settings,
                 static_cast<Hitbox>(locked->hitbox),
                 fovPixelsSq,
                 center,
@@ -665,6 +705,7 @@ bool SelectTarget(
             TargetCandidate candidate{};
             if (!EvaluateCandidate(
                     entry,
+                    settings,
                     enabled[index],
                     fovPixelsSq,
                     center,

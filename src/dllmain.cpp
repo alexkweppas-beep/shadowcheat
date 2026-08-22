@@ -19,6 +19,11 @@
  *   code must avoid relying on C++ dynamic initializers. Lumin singletons
  *   and embedded fonts are lazy/POD-backed, and ImGui uses a private heap
  *   via SetAllocatorFunctions.
+ *
+ *   The image is entered through _DllMainCRTStartup rather than here, so the
+ *   static CRT does initialise; see the entry point comment in CMakeLists.txt
+ *   for what skipping it cost. The heap overrides below are kept anyway: they
+ *   are correct either way and route every allocation through the process heap.
  */
 
 #define WIN32_LEAN_AND_MEAN
@@ -26,6 +31,7 @@
 #include <malloc.h>
 #include <new>
 
+#include "Main/Diagnostics.h"
 #include "Main/Hooks.h"
 #include "Features/CloudStorage.h"
 #include "Features/ModelPreview.h"
@@ -165,6 +171,12 @@ extern "C" BOOL WINAPI DllMain(HMODULE hModule, DWORD reason, LPVOID lpReserved)
         // uses __try/__except; otherwise even a guarded access violation is
         // process-fatal because the dispatcher cannot unwind this image.
         RegisterMappedExceptionTable(hModule);
+
+        // After the unwind table, because the recorder reads this image's
+        // header under __try, and before anything that touches game memory, so
+        // the first fault is already being recorded. Compiled out entirely
+        // unless the build defines RAGEMP_DIAGNOSTICS.
+        Diagnostics::Initialize();
 
         // Capture SizeOfImage/SizeOfHeaders while the header is still intact;
         // both are zeroed below at the end of DllMain.

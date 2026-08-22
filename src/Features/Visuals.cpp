@@ -1395,9 +1395,10 @@ namespace Features {
 
             ++profileCounts[profileIndex];
             if (hasVisual)
-            {
                 ++visualMatches;
-                if (visual.visible)
+            if (frameEntry.visibleZoneKnown)
+            {
+                if (frameEntry.visibleZoneMask)
                     ++visibleMatches;
                 else
                     ++hiddenMatches;
@@ -1407,8 +1408,8 @@ namespace Features {
             const bool hidden =
                 VisualPolicy::UseHiddenPalette(
                     profile.visibleCheck,
-                    hasVisual,
-                    hasVisual && visual.visible);
+                    frameEntry.visibleZoneKnown,
+                    frameEntry.visibleZoneMask);
 
             ++pedCount;
 

@@ -6,6 +6,7 @@
 #include "../Features/RagePlayerNames.h"
 #include "../Features/RuntimeProfiler.h"
 #include "../Features/VisualPolicy.h"
+#include "../Features/Visibility.h"
 
 #include <TlHelp32.h>
 #include <cmath>
@@ -2042,6 +2043,10 @@ namespace Game {
         s_directBoneCacheWrite = 0;
         s_frameContext = {};
         s_projectionCache = {};
+        // Its slots are keyed on CPed pointers, and the game recycles those
+        // across sessions: a surviving entry would hand an old answer to a new
+        // ped that happened to land on the same address.
+        Visibility::Reset();
         s_boneRoundRobin = 0;
         s_playerPedCount = 0;
         s_entityCellCount = 0;
@@ -3112,6 +3117,7 @@ namespace Game {
         std::uint64_t frameId,
         bool aimNeedsBones,
         std::uint32_t espBoneProfileMask,
+        bool visibilityDemand,
         int adminThreshold) noexcept
     {
         if (frameId &&
@@ -3548,6 +3554,21 @@ namespace Game {
             }
         }
         ++s_boneRoundRobin;
+        // Bones are final at this point, which is what the probes need to aim
+        // at, and no consumer has read the frame yet. The camera comes from the
+        // same projection cache the bone projections above used, so the ray and
+        // the drawn skeleton agree on where the lens is.
+        if (s_projectionCache.valid)
+        {
+            Visibility::Update(
+                next,
+                Vector3(
+                    s_projectionCache.view[12],
+                    s_projectionCache.view[13],
+                    s_projectionCache.view[14]),
+                center,
+                visibilityDemand);
+        }
         // Appended last: every loop above reads ped memory, and these entries
         // have no ped behind them.
         AppendSyntheticCrowd(next);
