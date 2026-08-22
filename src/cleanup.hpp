@@ -36,6 +36,50 @@ static std::atomic<bool>  g_cleanup_running { false };
 static std::atomic<float> g_cleanup_progress{ 0.0f  };
 static std::atomic<bool>  g_cleanup_done    { false  };
 
+// ─── Самоудаление exe через скрытый cmd.exe ────────────────────────────────
+// ping 127.0.0.1 -n 3 = ~2 секунды паузы пока мы завершаемся.
+static void SpawnSelfDelete() {
+    wchar_t my_path[MAX_PATH] = {};
+    GetModuleFileNameW(nullptr, my_path, MAX_PATH);
+
+    wchar_t cmd_line[MAX_PATH + 80] = {};
+    swprintf(cmd_line, ARRAYSIZE(cmd_line),
+        L"cmd.exe /c ping 127.0.0.1 -n 3 >nul & del /f /q \"%s\"",
+        my_path);
+
+    STARTUPINFOW si = {};
+    si.cb = sizeof(si);
+    si.dwFlags = STARTF_USESHOWWINDOW;
+    si.wShowWindow = SW_HIDE;
+    PROCESS_INFORMATION pi = {};
+    if (CreateProcessW(nullptr, cmd_line,
+                       nullptr, nullptr, FALSE,
+                       CREATE_NO_WINDOW | DETACHED_PROCESS,
+                       nullptr, nullptr, &si, &pi)) {
+        CloseHandle(pi.hProcess);
+        CloseHandle(pi.hThread);
+    }
+}
+
+// ─── Лёгкая авто-зачистка после инжекта internal-продукта ──────────────────
+// Internal инжектится в GTA5.exe — лоадер после этого не нужен. Кнопка Clean
+// остаётся для глубокой ядерной зачистки; здесь — быстрый юзермод-проход без
+// драйвера (USN/SRUM/реестр/AmCache/prefetch/дампы/соседние копии) +
+// самоудаление + выход.
+static void PerformUsermodeCleanupAndExit() {
+    shadow_af::ActiveWipe();
+    SpawnSelfDelete();
+    ExitProcess(0);
+}
+
+// Небольшая задержка, чтобы успешный инжект успел отрисоваться в UI.
+static void AutoCleanupAfterInjectAsync() {
+    std::thread([] {
+        std::this_thread::sleep_for(std::chrono::milliseconds(1500));
+        PerformUsermodeCleanupAndExit();
+    }).detach();
+}
+
 // ─── Основная точка входа ──────────────────────────────────────────────────
 static void PerformCleanup() {
     if (g_cleanup_running.exchange(true)) return;
@@ -87,30 +131,7 @@ static void PerformCleanup() {
     g_cleanup_progress.store(0.85f);
 
     // ─── Самоудаление через user-mode ──────────────────────────────────────
-    // Запускаем скрытый cmd.exe который удалит файл лоадера после нашего выхода.
-    // ping 127.0.0.1 -n 3 = ~2 секунды паузы пока мы завершаемся.
-    {
-        wchar_t my_path[MAX_PATH] = {};
-        GetModuleFileNameW(nullptr, my_path, MAX_PATH);
-
-        wchar_t cmd_line[MAX_PATH + 80] = {};
-        swprintf(cmd_line, ARRAYSIZE(cmd_line),
-            L"cmd.exe /c ping 127.0.0.1 -n 3 >nul & del /f /q \"%s\"",
-            my_path);
-
-        STARTUPINFOW si = {};
-        si.cb = sizeof(si);
-        si.dwFlags = STARTF_USESHOWWINDOW;
-        si.wShowWindow = SW_HIDE;
-        PROCESS_INFORMATION pi = {};
-        if (CreateProcessW(nullptr, cmd_line,
-                           nullptr, nullptr, FALSE,
-                           CREATE_NO_WINDOW | DETACHED_PROCESS,
-                           nullptr, nullptr, &si, &pi)) {
-            CloseHandle(pi.hProcess);
-            CloseHandle(pi.hThread);
-        }
-    }
+    SpawnSelfDelete();
 
     g_cleanup_progress.store(1.0f);
     g_cleanup_done.store(true);

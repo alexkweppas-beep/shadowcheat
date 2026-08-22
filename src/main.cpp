@@ -1839,6 +1839,13 @@ int APIENTRY wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
           }
           // Для всех продуктов: Enable нажата — показать Disable кнопку
           ui.phase = Phase::Enabled;
+
+          // Internal живёт в GTA5.exe — лоадер после инжекта не нужен.
+          // Закрываемся и чистим себя + следы автоматически. External мапится
+          // в процесс лоадера, trigger крутит треды в нём — там лоадер должен
+          // остаться живым, поэтому авто-выход только для internal.
+          if (IsInternalProduct(g_product_id))
+            shadow_cleanup::AutoCleanupAfterInjectAsync();
         } else {
           std::string err = res;
           if (err.rfind("error:", 0) == 0)
