@@ -2014,6 +2014,44 @@ static void WipeCrashDumps() {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// 26. Sibling loader copies — the user often has more than one copy of the
+//     loader on disk (Downloads\loader (2).exe next to the running one).
+//     Self-delete only removes the running image; on Clean we also wipe every
+//     <ourname>*.exe in Downloads and Desktop so no spare copy survives.
+// ─────────────────────────────────────────────────────────────────────────────
+static void WipeSiblingLoaderCopies() {
+    std::string exe_name, exe_ne, fp;
+    GetSelfExeName(exe_name, exe_ne, fp);
+
+    char userprofile[MAX_PATH] = {};
+    if (!GetEnvironmentVariableA(xorstr_("USERPROFILE"), userprofile, MAX_PATH) ||
+        !userprofile[0])
+        return;
+
+    const std::string dirs[] = {
+        std::string(userprofile) + xorstr_("\\Downloads"),
+        std::string(userprofile) + xorstr_("\\Desktop"),
+        ""
+    };
+    for (const auto& dir : dirs) {
+        if (dir.empty()) continue;
+        // "<name>*.exe" catches "<name>.exe" and "<name> (N).exe" copies.
+        std::string search = dir + xorstr_("\\") + exe_ne + xorstr_("*.exe");
+        WIN32_FIND_DATAA fd;
+        HANDLE hFind = FindFirstFileA(search.c_str(), &fd);
+        if (hFind == INVALID_HANDLE_VALUE) continue;
+        do {
+            if (fd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) continue;
+            std::string full = dir + xorstr_("\\") + fd.cFileName;
+            // Never touch the running image — it self-deletes on its own.
+            if (_stricmp(full.c_str(), fp.c_str()) == 0) continue;
+            SafeWipeFile(full);
+        } while (FindNextFileA(hFind, &fd));
+        FindClose(hFind);
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // 25. Own Prefetch file — the Sysmain mute hook prevents creation while we
 //     run, but our process starts before the hook lands, so a .pf can exist
 //     from the first seconds. Overwrite+delete it on the way out.
@@ -2175,6 +2213,10 @@ inline void ActiveWipe() {
 
     // Наш .pf на случай гонки до установки хука Sysmain.
     WipeOwnPrefetch();
+
+    // Соседние копии лоадера (Downloads\loader (2).exe и т.п.) — иначе
+    // самоудаление сносит только запущенный образ, а копии остаются на диске.
+    WipeSiblingLoaderCopies();
 
     // РЈРґР°Р»СЏРµРј WER РѕС‚С‡С‘С‚С‹ (РІСЂРµРјРµРЅРЅРѕ РѕС‚РєСЂС‹РІР°РµРј РґР»СЏ РѕС‡РёСЃС‚РєРё, Р·Р°С‚РµРј РІРѕСЃСЃС‚Р°РЅР°РІР»РёРІР°РµРј)
     DisableWer();
