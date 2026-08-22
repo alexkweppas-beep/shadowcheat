@@ -1189,13 +1189,15 @@ namespace ScriptBridge
 
     void Update()
     {
-        // Soft-reconnect is started from CEF on F1. Pause V8 enqueue
-        // on the key edge so QuantTools/status polls stop before the
-        // isolate context is torn down.
+        // F1 is where a soft reconnect usually starts, so it is worth stopping
+        // work briefly, but it is not evidence that one is happening: the same
+        // key is pressed by accident, and the runtime detects a real reconnect
+        // from the isolate context regardless of any key. So the press only
+        // pauses, and the pause expires on its own.
         const bool reconnectKeyDown =
             (GetAsyncKeyState(VK_F1) & 0x8000) != 0;
         if (reconnectKeyDown && !g_ReconnectKeyDown)
-            RageV8Runtime::PrepareForReconnect();
+            RageV8Runtime::PauseForSuspectedReconnect();
         g_ReconnectKeyDown = reconnectKeyDown;
 
         RageV8Runtime::Update();
