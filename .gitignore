@@ -75,3 +75,11 @@ __pycache__/
 # memory, which makes them development instruments rather than part of the
 # payload: useful while working out an offset, worthless to anyone building it.
 internal/tools/*.py
+internal/tools/inject_on_launch.ps1
+
+# The developer half: crash log, exception recorder, frame profiler. Not part of
+# what a user runs, and not published. The build is arranged so this can be
+# absent: the headers carry inline no-ops, so the user variant compiles and links
+# with the directory missing entirely. Configuring with -DSHADOW_DEV=ON without
+# it fails with a message saying so rather than a wall of linker errors.
+internal/src/Dev/

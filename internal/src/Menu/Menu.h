@@ -225,6 +225,7 @@ namespace Menu
         bool distance{true};
         bool remoteId{};
         bool health{};
+        bool trunk{};
         bool showOccupied{true};
         bool showEmpty{true};
         bool showCars{true};

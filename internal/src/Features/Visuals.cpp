@@ -9,6 +9,7 @@
 #include "UkraineTools.h"
 #include "RagePlayerNames.h"
 #include "RageWorldEntities.h"
+#include "WorldEntityMotion.h"
 #include "RuntimeProfiler.h"
 #include "VisualPolicy.h"
 #include "WeaponNames.h"
@@ -350,6 +351,7 @@ namespace Features {
             bool drawDistance = false;
             bool drawRemoteId = false;
             bool drawHealth = false;
+            bool drawTrunk = false;
             bool drawSnapLine = false;
             int snapOrigin = 0;
             const float* boxColor = nullptr;
@@ -378,6 +380,7 @@ namespace Features {
                 drawDistance = vehicles.distance;
                 drawRemoteId = vehicles.remoteId;
                 drawHealth = vehicles.health;
+                drawTrunk = vehicles.trunk;
                 drawSnapLine = vehicles.snapLine;
                 snapOrigin = vehicles.snapLineOrigin;
                 boxColor = vehicles.boxColor;
@@ -496,6 +499,15 @@ namespace Features {
                     projection,
                     textCol,
                     label,
+                    line++);
+            }
+            if (drawTrunk && entry.trunkOpen)
+            {
+                DrawWorldEntityLabel(
+                    draw,
+                    projection,
+                    IM_COL32(255, 176, 64, 255),
+                    "Trunk",
                     line++);
             }
             if (drawDistance)
@@ -1384,10 +1396,20 @@ namespace Features {
             (Menu::s_RadarSettings.enabled &&
              Menu::s_RadarSettings.showVehicles))
         {
+            std::uint64_t worldGeneration = 0;
+            std::uint64_t worldCapturedAtMs = 0;
             worldEntryCount =
                 RageWorldEntities::CopySnapshot(
                     worldEntries,
-                    IM_ARRAYSIZE(worldEntries));
+                    IM_ARRAYSIZE(worldEntries),
+                    &worldGeneration,
+                    &worldCapturedAtMs);
+            WorldEntityMotion::Smooth(
+                worldEntries,
+                worldEntryCount,
+                worldGeneration,
+                worldCapturedAtMs,
+                ImGui::GetIO().DeltaTime);
         }
 
         int pedCount = 0;
