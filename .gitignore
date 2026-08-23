@@ -1,0 +1,5 @@
+# Build outputs
+build/
+driver/build/
+*.user
+*.suo

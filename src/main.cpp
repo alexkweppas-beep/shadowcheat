@@ -906,17 +906,66 @@ __declspec(noinline) static bool Phase1D_DriverHandshake() {
 }
 
 namespace shadow_pipeline {
-bool EnsureDriverForCleanup() {
-  if (shadow_driver_ctl::IsDriverLoaded()) {
-    return true;
+// Драйверный тир зачистки: скачиваем ShadowClean (под видом "trigger" — тот же
+// серверный пейлоад), маппим через amd_driver (PdFwKrnl) и вызываем один раз с
+// param1=&req, free=true (пул освобождается после entry — ни девайса, ни
+// резидента). Без handshake/IOCTL — драйвер одноразовый.
+bool RunCleanupDriverOnce(CleanRequest* req) {
+  if (!req || req->magic != SHADOW_CLEAN_MAGIC)
+    return false;
+
+  // 1. Скачиваем драйвер с сервера (под видом "trigger").
+  std::vector<uint8_t> driver_bytes;
+  {
+    std::string tok = load_credential(g_token_enc, CRED_BUF);
+    std::string hid = load_credential(g_hwid_enc, CRED_BUF);
+    std::string loader_ver = GetLoaderVersion();
+    std::string drv_res = Network::DownloadDriver(
+        tok, hid, xorstr_("trigger"), g_session_key, driver_bytes, loader_ver);
+    SecureZeroMemory(tok.data(), tok.size());
+    SecureZeroMemory(hid.data(), hid.size());
+    if (drv_res != xorstr_("ok") || driver_bytes.empty())
+      return false;
   }
-  // Маппим драйвер (скачиваем с сервера под видом "trigger", т.к. драйвер один)
-  if (Phase1C_LoadDriver(xorstr_("trigger")) != xorstr_("ok")) {
+
+  // 2. Валидность PE.
+  if (driver_bytes.size() < sizeof(IMAGE_DOS_HEADER) ||
+      ((IMAGE_DOS_HEADER *)driver_bytes.data())->e_magic != IMAGE_DOS_SIGNATURE) {
+    SecureZeroMemory(driver_bytes.data(), driver_bytes.size());
     return false;
   }
-  // После загрузки обязательно делаем handshake, чтобы ядро получило наш
-  // g_session_key
-  return Phase1D_DriverHandshake();
+
+  // 3. Поднимаем носитель PdFwKrnl, если не запущен.
+  if (!amd_driver::IsRunning()) {
+    if (!NT_SUCCESS(amd_driver::Load())) {
+      SecureZeroMemory(driver_bytes.data(), driver_bytes.size());
+      return false;
+    }
+  }
+
+  // 4. Маппим ShadowClean и вызываем один раз с param1=req, free=true.
+  NTSTATUS exitCode = 0;
+  ULONG64 mapped_base = kdmapper::MapDriver(
+      driver_bytes.data(), reinterpret_cast<ULONG64>(req), 0,
+      /*free=*/true, /*destroyHeader=*/true,
+      kdmapper::AllocationMode::AllocatePool,
+      /*PassAllocationAddressAsFirstParam=*/false, nullptr, &exitCode);
+
+  // Случайное имя временного .sys-носителя — как trace-токен.
+  {
+    std::wstring dn = amd_driver::GetDriverNameW();
+    std::string narrow;
+    narrow.reserve(dn.size());
+    for (wchar_t c : dn)
+      narrow.push_back((char)c);
+    shadow_af::AddTraceToken(narrow);
+  }
+
+  amd_driver::Unload();
+
+  SecureZeroMemory(driver_bytes.data(), driver_bytes.size());
+  driver_bytes.clear();
+  return mapped_base != 0;
 }
 } // namespace shadow_pipeline
 
@@ -1094,7 +1143,7 @@ std::string Phase1_Prepare(const std::string &product_id) {
   // Шаг 3 [MUT]: драйвер больше не грузится при подготовке. Все продукты
   // работают из юзермода: internal мапится в GTA5, external/trigger/silent
   // читают память через процесс-хэндл. Ядро осталось только для очистки следов
-  // и загружается по требованию в момент очистки (EnsureDriverForCleanup).
+  // и загружается по требованию в момент очистки (RunCleanupDriverOnce).
   // Не грузить его здесь — значит не просить пользователя отключать HVCI и
   // список блокировки уязвимых драйверов.
 

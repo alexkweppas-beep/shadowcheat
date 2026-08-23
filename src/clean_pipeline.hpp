@@ -1,33 +1,34 @@
 #pragma once
 /*
- *  clean_pipeline.hpp — единый упорядоченный пайплайн зачистки.
+ *  clean_pipeline.hpp — driver-first пайплайн зачистки (переписан с нуля).
  *
- *  Заменяет cleanup.hpp. Надёжность прежде всего:
- *    1. Один поток на прогон, шаги упорядочены и идемпотентны.
- *    2. Никакого ExitProcess с рабочего треда: пайплайн выставляет
- *       g_exit_requested, а процесс завершает главный цикл (WinMain return).
- *       Зачистка никогда не обрывается посередине кадром UI.
- *    3. USN journal удаляется ПОСЛЕДНИМ среди файловых операций и
- *       верифицируется перечитыванием.
- *    4. Self-delete без гонки по таймингу: дочерний cmd крутит del в
- *       bounded retry-loop до тех пор, пока файл не исчезнет.
- *    5. Ядро просим только о том, что юзермод не может: event-логи (.evtx)
- *       и ключи System Informer/Process Hacker. BAM/USN/DNS/Prefetch покрыты
- *       юзермодом и у ядра больше не запрашиваются.
+ *  Архитектура:
+ *    1. Юзермод заполняет CleanRequest (инфо о лоадере + точные пути файлов
+ *       для force-delete) в своей памяти.
+ *    2. Драйвер ShadowClean маппится через amd_driver (PdFwKrnl, KDU #44) и
+ *      вызывается один раз с param1=&req: USN journal, event-логи .evtx,
+ *      реестр (HKLM+HKCU), force-delete файлов — всё в Ring-0, невидимо для
+ *      юзермод-наблюдателей. Пул освобождается сразу (free=true) — ни девайса,
+ *      ни резидента.
+ *    3. Юзермод-хвост — только то, что ядром не зачистить: SRUM (ESE),
+ *       AmCache (RegLoadKey). Превенция (Init/Shutdown) — отдельно.
+ *    4. Self-delete (retry-loop) + выход через главный цикл (без ExitProcess
+ *       с рабочего треда).
  *
- *  Режимы:
- *    AutoAfterInject — после успешного инжекта internal (лоадер не нужен):
- *                      юзермод-проход + самоудаление, без ядра.
- *    ManualDeep      — кнопка Clean: юзермод-проход + ядерный тир.
+ *  Фолбэк: если драйвер недоступен (HVCI и т.п.) — юзермод-примитивы покрывают
+ *  реестр/USN/файлы сами (хуже по stealth, но следы не остаются).
  */
 
 #include <windows.h>
+#include <sddl.h>
 #include <atomic>
 #include <thread>
 #include <cstring>
+#include <vector>
+#include <string>
 #include "xorstr.hpp"
-#include "driver_ctl.hpp"
 #include "anti_forensics.hpp"
+#include "../driver/clean_request.h"
 
 namespace shadow_pipeline {
 
@@ -38,17 +39,133 @@ static std::atomic<bool>  g_running { false };
 static std::atomic<float> g_progress{ 0.0f  };
 static std::atomic<bool>  g_done    { false  };
 
-// Координация выхода: пайплайн никогда не зовёт ExitProcess сам. Он выставляет
-// g_exit_requested, а главный цикл завершает WinMain штатно.
+// Координация выхода: пайплайн не зовёт ExitProcess сам — выставляет
+// g_exit_requested, а процесс завершает главный цикл (WinMain return).
 static std::atomic<bool> g_exit_requested{ false };
 
-// Ядерный тир поднимается по требованию (скачивание+мап через PdFwKrnl) —
-// реализация в main.cpp.
-extern bool EnsureDriverForCleanup();
+// Драйверный тир: скачать ShadowClean + смапить с param1=&req + free=true.
+// Реализация в main.cpp. Возвращает false, если драйвер недоступен (HVCI и
+// т.п.) — тогда юзермод-фолбэк покрывает реестр/USN/файлы сам.
+extern bool RunCleanupDriverOnce(CleanRequest* req);
+
+// ─── Сборка CleanRequest ───────────────────────────────────────────────────
+
+static void GetCurrentUserSidW(wchar_t* out, size_t cap) {
+    out[0] = 0;
+    HANDLE tok = nullptr;
+    if (!OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &tok)) return;
+    DWORD sz = 0;
+    GetTokenInformation(tok, TokenUser, nullptr, 0, &sz);
+    if (GetLastError() == ERROR_INSUFFICIENT_BUFFER && sz) {
+        std::vector<uint8_t> buf(sz);
+        if (GetTokenInformation(tok, TokenUser, buf.data(), sz, &sz)) {
+            TOKEN_USER* tu = reinterpret_cast<TOKEN_USER*>(buf.data());
+            wchar_t* sidStr = nullptr;
+            if (ConvertSidToStringSidW(tu->User.Sid, &sidStr)) {
+                wcsncpy_s(out, cap, sidStr, _TRUNCATE);
+                LocalFree(sidStr);
+            }
+        }
+    }
+    CloseHandle(tok);
+}
+
+static void AddFileToRequest(CleanRequest& req, const std::wstring& path) {
+    if (req.file_count >= SC_MAX_FILES) return;
+    // Не добавляем запущенный образ — его сносит юзермод self-delete.
+    if (req.loader_path[0] &&
+        _wcsicmp(path.c_str(), req.loader_path) == 0)
+        return;
+    wcsncpy_s(req.file_paths[req.file_count], SC_PATH_LEN, path.c_str(), _TRUNCATE);
+    ++req.file_count;
+}
+
+// Перечислить файлы по маске в каталоге в req.file_paths (без удаления).
+static void EnumerateIntoRequest(CleanRequest& req, const std::wstring& dir,
+                                 const std::wstring& pattern) {
+    std::wstring search = dir + L"\\" + pattern;
+    WIN32_FIND_DATAW fd;
+    HANDLE h = FindFirstFileW(search.c_str(), &fd);
+    if (h == INVALID_HANDLE_VALUE) return;
+    do {
+        if (fd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) continue;
+        AddFileToRequest(req, dir + L"\\" + fd.cFileName);
+    } while (FindNextFileW(h, &fd));
+    FindClose(h);
+}
+
+static void FillCleanRequest(CleanRequest& req) {
+    req = {};
+    req.magic = SHADOW_CLEAN_MAGIC;
+    req.flags = SC_DO_ALL;
+    req.loader_pid = GetCurrentProcessId();
+
+    GetCurrentUserSidW(req.user_sid, RTL_NUMBER_OF(req.user_sid));
+
+    // Тома: системный + том лоадера.
+    wchar_t win[MAX_PATH]{};
+    if (GetWindowsDirectoryW(win, MAX_PATH) && win[0]) {
+        req.system_volume[0] = win[0];
+        req.system_volume[1] = L':';
+        req.system_volume[2] = 0;
+    }
+    wchar_t self[MAX_PATH]{};
+    GetModuleFileNameW(nullptr, self, MAX_PATH);
+    if (self[0]) {
+        req.loader_volume[0] = self[0];
+        req.loader_volume[1] = L':';
+        req.loader_volume[2] = 0;
+    }
+
+    // Путь/каталог/имя лоадера.
+    wcsncpy_s(req.loader_path, self, _TRUNCATE);
+    std::wstring sp(self);
+    size_t sl = sp.find_last_of(L'\\');
+    std::wstring dir = (sl != std::wstring::npos) ? sp.substr(0, sl) : sp;
+    std::wstring name = (sl != std::wstring::npos) ? sp.substr(sl + 1) : sp;
+    wcsncpy_s(req.loader_dir, dir.c_str(), _TRUNCATE);
+    std::wstring base = name;
+    size_t dot = base.find_last_of(L'.');
+    if (dot != std::wstring::npos) base = base.substr(0, dot);
+    wcsncpy_s(req.loader_base, base.c_str(), _TRUNCATE);
+
+    // %USERPROFILE% для sibling-копий.
+    wchar_t up[MAX_PATH]{};
+    DWORD uplen = GetEnvironmentVariableW(L"USERPROFILE", up, MAX_PATH);
+    if (uplen && uplen < MAX_PATH)
+        wcsncpy_s(req.user_profile, up, _TRUNCATE);
+
+    wcsncpy_s(req.dns_domain, L"shadowcheats.cc", _TRUNCATE);
+
+    // Перечисляем файлы для kernel force-delete (точные пути, без удаления).
+    // 1. Свой .pf в Prefetch.
+    {
+        wchar_t windir[MAX_PATH]{};
+        if (GetWindowsDirectoryW(windir, MAX_PATH) && windir[0]) {
+            std::wstring pf = std::wstring(windir) + L"\\Prefetch";
+            EnumerateIntoRequest(req, pf, base + L"*.pf");
+        }
+    }
+    // 2. Crash dumps: %LOCALAPPDATA%\CrashDumps\<base>*.dmp
+    {
+        wchar_t local[MAX_PATH]{};
+        DWORD l = GetEnvironmentVariableW(L"LOCALAPPDATA", local, MAX_PATH);
+        if (l && l < MAX_PATH)
+            EnumerateIntoRequest(req, std::wstring(local) + L"\\CrashDumps",
+                                 base + L"*.dmp");
+    }
+    // 3. Sibling-копии: Downloads/Desktop/каталог лоадера — <base>*.exe.
+    if (req.user_profile[0]) {
+        EnumerateIntoRequest(req, std::wstring(req.user_profile) + L"\\Downloads",
+                             base + L"*.exe");
+        EnumerateIntoRequest(req, std::wstring(req.user_profile) + L"\\Desktop",
+                             base + L"*.exe");
+    }
+    if (req.loader_dir[0])
+        EnumerateIntoRequest(req, req.loader_dir, base + L"*.exe");
+}
 
 // ─── Самоудаление exe: bounded retry-loop вместо ping-гонки ────────────────
-// Ребёнок крутит del до 50 раз с ~1с паузой между попытками и выходит, как
-// только файл исчез — не зависит от того, как быстро умирает родитель.
 static bool SpawnSelfDelete() {
     wchar_t my_path[MAX_PATH] = {};
     GetModuleFileNameW(nullptr, my_path, MAX_PATH);
@@ -73,70 +190,24 @@ static bool SpawnSelfDelete() {
     return true;
 }
 
-// ─── Упорядоченные юзермод-шаги (примитивы живут в anti_forensics.hpp) ─────
-static void RunUsermodeSteps() {
-    // 1. Реестр (AeLookupSvc уже остановлен превенцией).
-    g_progress.store(0.10f);
-    shadow_af::WipeAmCacheEntry();
+// ─── Юзермод-фолбэк (драйвер недоступен — HVCI и т.п.) ─────────────────────
+// Покрывает то, что драйвер делал бы, но из юзермода. Хуже по stealth, но
+// следы не остаются. Вызывается только при фейле драйверного тира.
+static void RunUsermodeFallback(const CleanRequest& req) {
+    (void)req;
+    shadow_af::WipeBamEntry();
     shadow_af::WipeUserAssist();
     shadow_af::WipeMuiCacheEntry();
-    shadow_af::WipeBamEntry();
-    shadow_af::WipeLnkEntries();
     shadow_af::WipeRecentDocsRegistry();
     shadow_af::WipeAppCompatFlags();
     shadow_af::WipeShellBagsSelective();
     shadow_af::WipeExplorerMRUKeys();
-    shadow_af::WipeJumpLists();
     shadow_af::WipeNetworkListEntries();
-
-    // 2. DNS.
-    g_progress.store(0.30f);
-    shadow_af::WipeDnsCache();
-
-    // 3. SRUM — только если DPS подтверждённо остановлен (превенция держит
-    //    его стопнутым всю сессию; проверка — страховка от частичного старта).
-    g_progress.store(0.45f);
-    if (!shadow_af::IsServiceRunning(xorstr_("DPS")))
-        shadow_af::WipeSrumRecords();
-
-    // 4. Crash dumps / WER archives.
-    g_progress.store(0.55f);
-    shadow_af::WipeCrashDumps();
-
-    // 5. Файлы: свой .pf + соседние копии лоадера.
-    g_progress.store(0.65f);
-    shadow_af::WipeOwnPrefetch();
-    shadow_af::WipeSiblingLoaderCopies();
-
-    // 6. USN journal — ПОСЛЕДНИМ среди файловых операций, с верификацией.
-    //    После удаления журнала последующие файловые операции не журналируются.
-    g_progress.store(0.80f);
     shadow_af::DeleteUsnJournal();
     shadow_af::VerifyUsnJournalDeleted();
-}
-
-// ─── Ядерный тир (только ManualDeep): event-логи + System Informer ключи ───
-static void RunKernelDeepStep() {
-    if (!shadow_driver_ctl::OpenDriver()) {
-        if (!EnsureDriverForCleanup())
-            return; // ядро недоступно — юзермод уже покрыл всё остальное
-    }
-
-    driver::CleanupRequest req{};
-    req.session_key = shadow_driver_ctl::g_driver_session_key;
-    req.request_id  = shadow_driver_ctl::next_request_id();
-    // Только то, что юзермод не может. BAM/USN/DNS/Prefetch покрыты юзермодом
-    // и у ядра больше не запрашиваются; SELF_DELETE никогда не шлём в IOCTL.
-    req.flags = driver::CLEANUP_FLAG_EVENT_LOG | driver::CLEANUP_FLAG_SYSINFO;
-
-    DWORD bytes = 0;
-    DeviceIoControl(
-        shadow_driver_ctl::g_driver_handle,
-        SHADOW_CODE_CLEANUP,
-        &req, sizeof(req),
-        nullptr, 0,
-        &bytes, nullptr);
-    SecureZeroMemory(&req, sizeof(req));
+    shadow_af::WipeOwnPrefetch();
+    shadow_af::WipeSiblingLoaderCopies();
+    shadow_af::WipeCrashDumps();
 }
 
 // ─── Точка входа. Никогда не вызывает ExitProcess. ─────────────────────────
@@ -147,21 +218,35 @@ static void Run(Mode mode) {
     g_done.store(false);
     g_progress.store(0.05f);
 
-    RunUsermodeSteps();
+    // 1. Заполнить CleanRequest (инфо + точные пути файлов).
+    CleanRequest req{};
+    FillCleanRequest(req);
+    g_progress.store(0.15f);
 
-    if (mode == Mode::ManualDeep) {
-        g_progress.store(0.88f);
-        RunKernelDeepStep();
-    }
+    // 2. Драйверный тир: ShadowClean в Ring-0 (USN/event-логи/реестр/файлы).
+    bool driverOk = RunCleanupDriverOnce(&req);
+    g_progress.store(0.65f);
 
-    // Самоудаление — последним, до сигнала выхода.
+    // 2b. Фолбэк на HVCI/фейл драйвера: юзермод покрывает сам.
+    if (!driverOk)
+        RunUsermodeFallback(req);
+
+    // 3. Юзермод-хвост: то, что ядром не зачистить.
+    //    SRUM — только при подтверждённо остановленном DPS; AmCache — RegLoadKey.
+    g_progress.store(0.75f);
+    if (!shadow_af::IsServiceRunning(xorstr_("DPS")))
+        shadow_af::WipeSrumRecords();
+    g_progress.store(0.85f);
+    shadow_af::WipeAmCacheEntry();
+
+    // 4. Самоудаление — последним, до сигнала выхода.
     g_progress.store(0.95f);
     SpawnSelfDelete();
 
     g_progress.store(1.0f);
     g_done.store(true);
 
-    // Просим главный цикл завершить WinMain штатно (там же restore превенции).
+    // Просим главный цикл завершить WinMain штатно (там restore превенции).
     g_exit_requested.store(true);
 }
 
