@@ -784,6 +784,7 @@ namespace Menu
         CFG_WRITE("vehicle_vis_distance", s_VehicleVisualSettings.distance);
         CFG_WRITE("vehicle_vis_remote_id", s_VehicleVisualSettings.remoteId);
         CFG_WRITE("vehicle_vis_health", s_VehicleVisualSettings.health);
+        CFG_WRITE("vehicle_vis_trunk", s_VehicleVisualSettings.trunk);
         CFG_WRITE("vehicle_vis_occupied", s_VehicleVisualSettings.showOccupied);
         CFG_WRITE("vehicle_vis_empty", s_VehicleVisualSettings.showEmpty);
         CFG_WRITE("vehicle_vis_cars", s_VehicleVisualSettings.showCars);
@@ -1531,6 +1532,7 @@ namespace Menu
         CFG_READ_BOOL("vehicle_vis_distance", s_VehicleVisualSettings.distance);
         CFG_READ_BOOL("vehicle_vis_remote_id", s_VehicleVisualSettings.remoteId);
         CFG_READ_BOOL("vehicle_vis_health", s_VehicleVisualSettings.health);
+        CFG_READ_BOOL("vehicle_vis_trunk", s_VehicleVisualSettings.trunk);
         CFG_READ_BOOL("vehicle_vis_occupied", s_VehicleVisualSettings.showOccupied);
         CFG_READ_BOOL("vehicle_vis_empty", s_VehicleVisualSettings.showEmpty);
         CFG_READ_BOOL("vehicle_vis_cars", s_VehicleVisualSettings.showCars);

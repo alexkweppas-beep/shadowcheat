@@ -483,6 +483,9 @@ namespace Menu
             T("Remote ID", "Remote ID", "Remote ID"), &visual.remoteId, visual.textColor, false);
         VisualsRow("vehicle_health", ICON_FA_HEART,
             T("Health", "Прочность", "Міцність"), &visual.health, visual.textColor, false);
+        VisualsRow("vehicle_trunk", ICON_FA_BOX_OPEN,
+            T("Open trunk", "Открытый багажник", "Відкритий багажник"),
+            &visual.trunk, visual.textColor, false);
         VisualsRow("vehicle_snapline", ICON_FA_ARROWS_UP_DOWN,
             T("Snap line", "Снеп-линия", "Снеп-лінія"),
             &visual.snapLine, visual.snapLineColor, true);

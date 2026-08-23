@@ -1266,6 +1266,31 @@ namespace
             return true;
         static constexpr char kHook[] = R"JS((function(){try{
 var g=typeof globalThis!=='undefined'?globalThis:this;
+/* Whatever the previous handler left applied to the game, undone once, before
+anything else.
+A reconnect replaces the V8 context, and the handler registered in the old one
+dies with it, mid-flight. Everything it had asserted stays asserted: the ped
+frozen, its collision off, every control disabled, and the render switch still
+pointing at a script camera that no longer exists. None of it can be undone from
+the dead context, and the fresh state object here starts with _on false, so the
+teardown branch below never fires and never cleans it up.
+The camera one is what made this look like the game refusing to reconnect: the
+frame keeps being rendered from a camera that is gone. */
+if(!g.__bfMv){
+try{mp.game.cam.renderScriptCams(false,false,0,true,false,0);}catch(e){}
+try{var lp0=mp.players&&mp.players.local;
+if(lp0){
+try{lp0.freezePosition(false);}catch(e){}
+try{lp0.setCollision(true,true);}catch(e){}
+try{var v0=lp0.vehicle;
+if(v0){v0.freezePosition(false);v0.setCollision(true,true);}}catch(e){}
+}}catch(e){}
+try{
+if(mp.game.controls&&typeof mp.game.controls.enableAllControlActions==='function')
+mp.game.controls.enableAllControlActions(0);
+else mp.game.invoke('0xA5FFE9B05F199DE7',0);
+}catch(e){}
+}
 g.__bfMv=g.__bfMv||{freecam:false,noclip:false,paused:false,fcSpeed:1.5,ncSpeed:1.5};
 /* Re-registering used to be blocked by a one-shot guard flag. The V8 context
 outlives a payload unload, so the handler from the previous injection stayed
@@ -1313,16 +1338,28 @@ return;
 }
 if(!p)return;
 s._on=true;
-try{p.freezePosition(true);p.setVelocity(0,0,0);}catch(e){}
+/* Freezing blocks weapons outright, so noclip does not freeze. It does not need
+to: the position is written every frame below, and zeroing the velocity with it
+holds the entity just as still without taking the gun away. Freecam still
+freezes, because there the player is not where the camera is and should not be
+acting at all. */
+try{p.freezePosition(!!s.freecam);p.setVelocity(0,0,0);}catch(e){}
 /* Whatever actually has to be moved. Seated, the player cannot be: the seat
 puts them back every frame, so noclip did nothing at all inside a vehicle. */
 var nv=null;
 try{if(p.vehicle&&p.vehicle.handle)nv=p.vehicle;}catch(e){nv=null;}
 s._nv=nv?nv.handle:0;
-if(nv){try{nv.freezePosition(true);nv.setVelocity(0,0,0);}catch(e){}}
+if(nv){try{nv.freezePosition(!!s.freecam);nv.setVelocity(0,0,0);}catch(e){}}
+/* Freecam takes every control except the two look axes, which is right when the
+player is somewhere else entirely. Noclip leaves them alone: that blanket is
+what killed shooting, since it covers attack and aim along with everything else,
+and movement never needed disabling because the position is overwritten every
+frame regardless of what the ped tries to do. */
+if(s.freecam){
 for(var i=0;i<350;i++){
 if(i===1||i===2)continue;
 try{mp.game.controls.disableControlAction(0,i,true);}catch(e){}
+}
 }
 if(s.freecam){
 if(!s._cam){
@@ -1985,8 +2022,20 @@ try{mp.game.controls.setControlNormal(0,24,1.0);}catch(e){}
 
 /* ---- super jump: a this-frame flag, so it needs every render ---- */
 if(s.jump){
-try{mp.game.gameplay.setSuperJumpThisFrame();}catch(e){
-inv('0x57FFF03E423A4C0B',mp.game.player.playerId());}
+/* The native takes a player index, and so does the wrapper. Called with no
+argument it did nothing and threw nothing, which is the worst of both: the
+feature was dead and the fallback below never ran because there was no
+exception to trigger it. */
+var pid=-1;try{pid=mp.game.player.playerId();}catch(e){pid=-1;}
+if(!(pid>=0))pid=-1;
+if(pid>=0){
+var jok=false;
+try{
+if(mp.game.gameplay&&typeof mp.game.gameplay.setSuperJumpThisFrame==='function'){
+mp.game.gameplay.setSuperJumpThisFrame(pid);jok=true;}
+}catch(e){}
+if(!jok)inv('0x57FFF03E423A4C0B',pid);
+}
 }
 if(s.stamina){try{mp.game.player.restoreStamina(1);}catch(e){}}
 
@@ -2094,11 +2143,52 @@ passed"; the canonical value is 0x7A6535691B477C48, state 1 meaning never. */
 inv('0x7A6535691B477C48',h,1);
 inv('0x1913FE4CBF41C463',h,32,false);
 }
-if(s.vSkipAnim&&entering){
-/* p.vehicle is still null while the enter animation runs, so the target
-has to come from the "trying to enter" native, not from vh. */
+if(s.vSkipAnim){
+/* Not gated on the `entering` flag any more. That came from
+p.isGettingIntoVehicle(), one of the wrappers that answers nothing here, so it
+read false forever and this never ran at all. The native below returns zero when
+nobody is getting in, which gates it just as well and does not depend on a
+surface that may not exist.
+p.vehicle is still null while the enter animation plays, so the target has to
+come from the "trying to enter" native rather than from vh. */
+if(!inVeh){
 var tv=inv('0x814FA8BE84158326',h);
-if(tv)inv('0xF75B0D629E1C063D',h,tv,-1);
+if(tv){
+/* The seat the game was actually taking. Forcing -1 put you behind the wheel of
+a car you were boarding as a passenger, and did nothing at all when the driver
+seat was occupied. */
+var ts=inv('0x6F4C85ACD641BCD2',h);
+if(!(ts>=-1&&ts<=15))ts=-1;
+inv('0xF75B0D629E1C063D',h,tv,ts);
+}
+}else{
+/* The exit half, which the label promised and the code never had. Clearing the
+ped's tasks while seated drops you out on the spot, so all this needs is to
+notice the exit being requested. Both control surfaces are consulted because
+servers disable the stock one. */
+var wantOut=false;
+try{
+var c=mp.game.controls;
+if(c){
+if(typeof c.isControlJustPressed==='function')
+wantOut=wantOut||!!c.isControlJustPressed(0,75);
+if(typeof c.isDisabledControlJustPressed==='function')
+wantOut=wantOut||!!c.isDisabledControlJustPressed(0,75);
+}
+}catch(e){}
+if(!wantOut){
+wantOut=!!inv('0x580417101DDB492F',0,75)||
+!!inv('0x91AEF906BCA88877',0,75);
+}
+if(wantOut){
+var cok=false;
+try{
+if(mp.game.ped&&typeof mp.game.ped.clearPedTasksImmediately==='function'){
+mp.game.ped.clearPedTasksImmediately(h);cok=true;}
+}catch(e){}
+if(!cok)inv('0xAAA34F8A7CB32098',h);
+}
+}
 }
 if(vh&&driver){
 if(s.vSpeed){
@@ -4267,7 +4357,8 @@ bool RequestAttackBurst(int milliseconds) noexcept
 void RenderPlayersOverlay() noexcept
 {
     RenderClickWarpMarker();
-    if (!g_Settings.showPlayers && !g_Settings.showAdmins)
+    if (!g_Settings.showPlayers && !g_Settings.showAdmins &&
+        !g_Settings.showAdminList)
         return;
 
     RagePlayerNames::SnapshotEntry entries[128]{};
@@ -4434,7 +4525,7 @@ void RenderPlayersOverlay() noexcept
 
     // Server-wide admins by name. This list is not limited to the stream, so
     // it is the only place an admin outside render range shows up at all.
-    if (g_Settings.showAdmins) {
+    if (g_Settings.showAdminList) {
         FiveRpAdminScan::Entry admins[FiveRpAdminScan::kCapacity]{};
         const int adminCount = FiveRpAdminScan::CopyList(
             admins,
@@ -4522,6 +4613,7 @@ bool Export(
     MF_WRITE("mf_aspect", g_Settings.aspectRatio);
     MF_WRITE("mf_show_players", g_Settings.showPlayers ? 1 : 0);
     MF_WRITE("mf_show_admins", g_Settings.showAdmins ? 1 : 0);
+    MF_WRITE("mf_show_admin_list", g_Settings.showAdminList ? 1 : 0);
     MF_WRITE("mf_players_dist", g_Settings.playersDistance);
     MF_WRITE("mf_around_x", g_Settings.aroundPosX);
     MF_WRITE("mf_around_y", g_Settings.aroundPosY);
@@ -4604,6 +4696,7 @@ void Import(const char* content) noexcept
     MF_READ_FLOAT("mf_aspect", g_Settings.aspectRatio);
     MF_READ_BOOL("mf_show_players", g_Settings.showPlayers);
     MF_READ_BOOL("mf_show_admins", g_Settings.showAdmins);
+    MF_READ_BOOL("mf_show_admin_list", g_Settings.showAdminList);
     MF_READ_FLOAT("mf_players_dist", g_Settings.playersDistance);
     MF_READ_FLOAT("mf_around_x", g_Settings.aroundPosX);
     MF_READ_FLOAT("mf_around_y", g_Settings.aroundPosY);

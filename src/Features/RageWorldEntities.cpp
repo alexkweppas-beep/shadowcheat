@@ -1,5 +1,7 @@
 #include "RageWorldEntities.h"
 
+#include "WorldEntityMotion.h"
+
 #include "RageV8Runtime.h"
 
 #include <Windows.h>
@@ -11,7 +13,7 @@ namespace
 {
     constexpr ULONGLONG kRefreshIntervalMs = 150;
     constexpr ULONGLONG kRequestTimeoutMs = 1500;
-    constexpr int kFieldCount = 15;
+    constexpr int kFieldCount = 16;
 
     // Every payload field is an integer. Positions/headings/extents are scaled
     // by 100 and health values by 10, which keeps parsing locale-independent.
@@ -131,6 +133,32 @@ health=number(vehicleApi.getBodyHealth(handle));
 }catch(_){}
 return clamp(health,-100000,100000,fallback);
 };
+// The server owns the trunk state and syncs it as a shared entity variable, so
+// trust that over the physical door. A boot knocked ajar in a crash is not an
+// open trunk. Only when the variable is absent entirely does the server not use
+// this system, and the door angle is the best remaining guess.
+const trunkOpen=(entity,handle)=>{
+let flag;
+try{
+if(typeof entity.getVariable==='function')
+flag=entity.getVariable('trunkStatus');
+}catch(_){}
+if(flag!==undefined&&flag!==null)return !!flag;
+let ratio=NaN;
+try{
+if(typeof entity.getDoorAngleRatio==='function')
+ratio=number(entity.getDoorAngleRatio(5));
+}catch(_){}
+try{
+if(!Number.isFinite(ratio)){
+const vehicleApi=mp&&mp.game&&mp.game.vehicle;
+if(vehicleApi&&typeof vehicleApi.getDoorAngleRatio==='function')
+ratio=number(vehicleApi.getDoorAngleRatio(handle,5));
+}
+}catch(_){}
+if(!Number.isFinite(ratio))return false;
+return ratio>0.1;
+};
 const isOccupied=(entity,handle)=>{
 try{
 if(typeof entity.getNumberOfPassengers==='function'&&
@@ -211,12 +239,14 @@ const heading=headingOf(entity);
 let health=healthOf(entity,handle);
 let bodyHealth=0;
 let occupied=false;
+let trunk=false;
 let vehicleClass=4;
 if(kind===0){
 vehicleClass=classifyVehicle(entity);
 bodyHealth=bodyHealthOf(entity,handle,health);
 if(!health&&bodyHealth)health=bodyHealth;
 occupied=isOccupied(entity,handle);
+trunk=trunkOpen(entity,handle);
 }
 const halfExtents=dimensions(model,kind,vehicleClass);
 append([
@@ -226,7 +256,8 @@ quantize(heading,100),quantize(health,10),
 quantize(bodyHealth,10),occupied?1:0,vehicleClass,
 quantize(halfExtents[0],100),
 quantize(halfExtents[1],100),
-quantize(halfExtents[2],100)
+quantize(halfExtents[2],100),
+trunk?1:0
 ]);
 };
 const visit=(pool,kind)=>{
@@ -394,7 +425,8 @@ return 'RWE1\t'+String(rows.length)+(body?'\n'+body:'');
             values[11] < 0 || values[11] > 4 ||
             values[12] < 1 || values[12] > 100000 ||
             values[13] < 1 || values[13] > 100000 ||
-            values[14] < 1 || values[14] > 100000)
+            values[14] < 1 || values[14] > 100000 ||
+            values[15] < 0 || values[15] > 1)
             return false;
 
         const auto kind = static_cast<
@@ -402,7 +434,7 @@ return 'RWE1\t'+String(rows.length)+(body?'\n'+body:'');
         const auto vehicleClass = static_cast<
             RageWorldEntities::VehicleClass>(values[11]);
         if (kind != RageWorldEntities::EntityKind::Vehicle &&
-            (values[10] != 0 ||
+            (values[10] != 0 || values[15] != 0 ||
              vehicleClass !=
                 RageWorldEntities::VehicleClass::Other))
             return false;
@@ -429,6 +461,7 @@ return 'RWE1\t'+String(rows.length)+(body?'\n'+body:'');
         entry.bodyHealth =
             static_cast<float>(values[9]) / 10.0f;
         entry.occupied = values[10] != 0;
+        entry.trunkOpen = values[15] != 0;
         entry.vehicleClass = vehicleClass;
         entry.halfExtentX =
             static_cast<float>(values[12]) / 100.0f;
@@ -651,6 +684,10 @@ namespace RageWorldEntities
         g_PendingCommand = 0;
         g_LastRequest = 0;
         ClearPublishedSnapshot();
+        // Tracks are keyed by handle, and handles are only meaningful inside one
+        // session. Carrying them across a reconnect would interpolate a new
+        // vehicle from wherever the old owner of that handle happened to be.
+        WorldEntityMotion::Reset();
     }
 
     int CopySnapshot(

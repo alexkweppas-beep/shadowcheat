@@ -33,6 +33,7 @@
 #include "../Features/CloudStorage.h"
 #include "../Features/RageV8Runtime.h"
 #include "../Features/FeatureBinds.h"
+#include "../Features/EventLogger.h"
 #include "../Features/ObsBypass.h"
 #include "../Features/Overlay.h"
 #include "../Features/WorldOverlay.h"
@@ -791,6 +792,8 @@ namespace hooks
         ScriptBridge::Initialize();
         HLog("InitImGui: step 3.F - ScriptBridge::Initialize DONE");
         AntiCheatShield::Initialize();
+        // Compiles to nothing in a user build.
+        EventLogger::Initialize();
         QuantTools::Initialize();
         UkraineTools::Initialize();
         FiveRpFarmBot::Initialize();
@@ -1101,6 +1104,7 @@ namespace hooks
         HLog("Shutdown: begin");
         g_MenuOpen = false;
 
+        EventLogger::Shutdown();
         ObsBypass::Shutdown();
         MiscFeatures::Shutdown();
         WorldOverlay::Shutdown();
@@ -1538,6 +1542,15 @@ namespace hooks
             ObsBypass::Tick();
 
             if (!cefDumpBusy) {
+                // Compiles to nothing in a user build. Guarded like everything
+                // else here because it instruments the game's V8 and a fault in
+                // it must not take the frame with it.
+                __try {
+                    EventLogger::Update();
+                } __except (SafeFilter(GetExceptionInformation(), "hkPresent:EventLogger")) {
+                    HLog("hkPresent: EventLogger::Update FAULTED");
+                }
+
                 profileStart = RuntimeProfiler::Begin();
                 __try {
                     MiscFeatures::Update();
@@ -1555,6 +1568,7 @@ namespace hooks
                     Features::g_AimbotEnabled ||
                     miscSettings.showPlayers ||
                     miscSettings.showAdmins ||
+                    miscSettings.showAdminList ||
                     Menu::NeedsPlayerCache();
                 if (playerCacheDemand)
                 {

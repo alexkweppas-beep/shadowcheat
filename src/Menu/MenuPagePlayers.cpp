@@ -80,6 +80,11 @@ namespace Menu
             ICON_FA_USER_SHIELD,
             T("Admins around", "Админы рядом", "Адміни поруч"),
             &s.showAdmins);
+        MiscRow(
+            "players_show_admin_list",
+            ICON_FA_LIST,
+            T("Admin list", "Список админов", "Список адмінів"),
+            &s.showAdminList);
         gui->slider_float_icon(
             ICON_FA_RULER,
             T("Overlay range###players_overlay_distance",

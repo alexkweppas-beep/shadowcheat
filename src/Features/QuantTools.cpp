@@ -3408,6 +3408,13 @@ namespace QuantTools
 
     void RenderWidgets()
     {
+        // Developer builds only. These are floating panels that sit on screen
+        // permanently and report what the bridge is doing on this particular
+        // server, which is instrumentation rather than a feature: the user
+        // version has no need of them and no room for them.
+#if !defined(RAGEMP_DIAGNOSTICS)
+        return;
+#endif
         if (g_ServerKind != ServerKind::Quant)
             return;
 

@@ -63,7 +63,12 @@ namespace MiscFeatures
 
         // Players panel
         bool showPlayers{};
+        // Two separate things, because they answer different questions. The
+        // count is "is anyone watching me right now", which is a glance. The
+        // roster is "who is on duty at all", which is a read, and it is the only
+        // place an admin outside render range appears.
         bool showAdmins{};
+        bool showAdminList{};
         float playersDistance{300.f};
         // Negative means "never moved": the panel then uses its default spot.
         // ImGui's own ini is disabled in this build, so the position has to be
