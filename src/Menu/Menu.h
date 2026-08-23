@@ -167,6 +167,11 @@ namespace Menu
         int distancePos{1};  // EspTagSide (default Below)
         int weaponTagPos{1}; // EspTagSide
         int boxStyle{};     // EspBoxStyle
+        // Corner radius in pixels, shared by all three box styles. Zero is the
+        // square box every build shipped with, so nobody's saved look changes.
+        float boxRounding{};
+        float boxThickness{1.8f};
+        float skeletonThickness{1.5f};
         int healthStyle{};  // EspBarStyle
         int armorStyle{};   // EspBarStyle
         int weaponDisplay{}; // EspWeaponDisplay

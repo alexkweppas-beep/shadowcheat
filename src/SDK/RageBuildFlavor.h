@@ -19,7 +19,13 @@
 // through a vectored exception handler and runs a disk writer. Its sources live
 // in src/Dev and are not published with the user tree, so this follows the same
 // switch that decides whether src/Dev is compiled at all.
-#if defined(RAGEMP_DIAGNOSTICS)
+//
+// It can also be left out of a developer build on its own, with
+// -DSHADOW_EVENT_LOGGER=OFF. That is worth having because the logger is the
+// heaviest thing in the tree and reaches deepest into the game, so when the
+// work is on something else it is one less variable in the frame and one less
+// suspect when the game misbehaves.
+#if defined(RAGEMP_DIAGNOSTICS) && !defined(RAGEMP_EVENT_LOGGER_OFF)
 #  define RAGEMP_EVENT_LOGGER 1
 #else
 #  define RAGEMP_EVENT_LOGGER 0

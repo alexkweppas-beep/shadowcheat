@@ -688,6 +688,9 @@ namespace Menu
             PROFILE_WRITE("distance_pos", profile.distancePos);
             PROFILE_WRITE("weapon_pos", profile.weaponTagPos);
             PROFILE_WRITE("box_style", profile.boxStyle);
+            PROFILE_WRITE("box_rounding", profile.boxRounding);
+            PROFILE_WRITE("box_thickness", profile.boxThickness);
+            PROFILE_WRITE("skeleton_thickness", profile.skeletonThickness);
             PROFILE_WRITE("health_style", profile.healthStyle);
             PROFILE_WRITE("armor_style", profile.armorStyle);
             PROFILE_WRITE("weapon_disp", profile.weaponDisplay);
@@ -1383,6 +1386,14 @@ namespace Menu
             PROFILE_READ("distance_pos", CFG_READ_INT, profile.distancePos);
             PROFILE_READ("weapon_pos", CFG_READ_INT, profile.weaponTagPos);
             PROFILE_READ("box_style", CFG_READ_INT, profile.boxStyle);
+            PROFILE_READ(
+                "box_rounding", CFG_READ_FLOAT, profile.boxRounding);
+            PROFILE_READ(
+                "box_thickness", CFG_READ_FLOAT, profile.boxThickness);
+            PROFILE_READ(
+                "skeleton_thickness",
+                CFG_READ_FLOAT,
+                profile.skeletonThickness);
             PROFILE_READ("health_style", CFG_READ_INT, profile.healthStyle);
             PROFILE_READ("armor_style", CFG_READ_INT, profile.armorStyle);
             PROFILE_READ("weapon_disp", CFG_READ_INT, profile.weaponDisplay);

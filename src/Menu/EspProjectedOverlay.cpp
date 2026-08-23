@@ -397,7 +397,14 @@ static OverlayRects DrawPlayerOverlayImpl(
             outlineOverride ? outlineOverride : local.boxFillColor;
         const ImU32 fillCol = EspRgba(fillSrc, drawOpacity * 0.22f);
         EspDrawBoxStyled(
-            draw, boxMin, boxMax, boxCol, local.boxStyle, fillCol, 1.8f);
+            draw,
+            boxMin,
+            boxMax,
+            boxCol,
+            local.boxStyle,
+            fillCol,
+            local.boxThickness,
+            local.boxRounding);
         RUNTIME_PROFILE_ACCUM(EspBoxes, boxTimer);
     }
 

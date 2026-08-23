@@ -26,6 +26,11 @@ endif()
 option(SHADOW_DEV
     "Build development tooling: crash log, profiler, event logger" OFF)
 
+# The event logger alone, so a developer build can drop the heaviest and most
+# invasive piece while keeping the crash log and the profiler.
+option(SHADOW_EVENT_LOGGER
+    "Instrument the game's V8 and write an event log" ON)
+
 file(GLOB_RECURSE SHADOW_INTERNAL_SOURCES CONFIGURE_DEPENDS
     "${CMAKE_CURRENT_SOURCE_DIR}/src/*.cpp")
 if(SHADOW_DEV)
@@ -76,6 +81,9 @@ target_compile_definitions(internal PRIVATE
 
 if(SHADOW_DEV)
     target_compile_definitions(internal PRIVATE RAGEMP_DIAGNOSTICS)
+    if(NOT SHADOW_EVENT_LOGGER)
+        target_compile_definitions(internal PRIVATE RAGEMP_EVENT_LOGGER_OFF)
+    endif()
 endif()
 
 

@@ -16,6 +16,51 @@ namespace WorldProbe
 {
     namespace
     {
+#if defined(RAGEMP_DIAGNOSTICS)
+        // Anything past this is not slow, it is blocked: a shape test submit is
+        // a pointer handoff into a pool and should never be measurable.
+        constexpr double kStallMilliseconds = 40.0;
+
+        std::int64_t StallClock() noexcept
+        {
+            LARGE_INTEGER now{};
+            QueryPerformanceCounter(&now);
+            return now.QuadPart;
+        }
+
+        void ReportStall(std::int64_t start, const char* what) noexcept
+        {
+            static LARGE_INTEGER frequency{};
+            if (!frequency.QuadPart)
+                QueryPerformanceFrequency(&frequency);
+            if (!frequency.QuadPart)
+                return;
+
+            LARGE_INTEGER now{};
+            QueryPerformanceCounter(&now);
+            const double milliseconds =
+                static_cast<double>(now.QuadPart - start) * 1000.0 /
+                static_cast<double>(frequency.QuadPart);
+            if (milliseconds < kStallMilliseconds)
+                return;
+
+            char line[128]{};
+            _snprintf_s(
+                line,
+                sizeof(line),
+                _TRUNCATE,
+                "WorldProbe: %s BLOCKED for %.0f ms",
+                what,
+                milliseconds);
+            hooks::HLog(line);
+        }
+#else
+        // The timer itself costs two counter reads per probe, and the user
+        // build has nowhere to report to, so it compiles away entirely.
+        constexpr std::int64_t StallClock() noexcept { return 0; }
+        inline void ReportStall(std::int64_t, const char*) noexcept {}
+#endif
+
         // WorldProbe::CShapeTestManager::SubmitProbe. Twelve arguments, four in
         // registers and eight on the stack; the two vectors are loaded with
         // movaps, so both must be 16-byte aligned or the call faults.
@@ -366,6 +411,7 @@ namespace WorldProbe
         {
             if (!manager || !g_release)
                 return;
+            const std::int64_t releaseStart = StallClock();
             __try
             {
                 g_release(manager, handle);
@@ -376,6 +422,7 @@ namespace WorldProbe
                 // its own timeout, so the pool recovers without us.
                 Log("WorldProbe: release faulted");
             }
+            ReportStall(releaseStart, "release");
         }
     }
 
@@ -409,6 +456,13 @@ namespace WorldProbe
         std::memset(results, 0, kResultSize);
         const void* exclude = ignoreEntity;
 
+        // The game's shape test manager is shared with the game's own threads.
+        // Calling it from the render thread means taking whatever lock it uses,
+        // and if the holder is itself waiting on this thread the frame stops
+        // dead. That is the shape of the stalls being chased, so the call is
+        // timed and anything long enough to be noticed is named.
+        const std::int64_t submitStart = StallClock();
+
         int handle = -1;
         __try
         {
@@ -432,6 +486,8 @@ namespace WorldProbe
             Log("WorldProbe: submit faulted, disabling");
             return -1;
         }
+
+        ReportStall(submitStart, "submit");
 
         if (handle == -1)
         {

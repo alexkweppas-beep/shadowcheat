@@ -447,12 +447,22 @@ namespace
                 ImGui::Combo(
                     "Style", &profile.boxStyle,
                     "Full\0Corners\0Filled\0");
+                ImGui::SliderFloat(
+                    "Rounding", &profile.boxRounding, 0.f, 16.f, "%.1f");
+                ImGui::SliderFloat(
+                    "Thickness", &profile.boxThickness, 0.5f, 8.f, "%.1f");
             } else if (g_Settings.kind == SettingsKind::Skeleton) {
                 ImGui::TextUnformatted("Skeleton");
                 ImGui::ColorEdit4(
                     "Color",
                     profile.skeletonColor,
                     ImGuiColorEditFlags_NoInputs | ImGuiColorEditFlags_AlphaBar);
+                ImGui::SliderFloat(
+                    "Thickness",
+                    &profile.skeletonThickness,
+                    0.5f,
+                    8.f,
+                    "%.1f");
             } else if (g_Settings.kind == SettingsKind::Element) {
                 ImGui::TextUnformatted(
                     EspProjected::ElementLabel(g_Settings.element));
@@ -638,6 +648,30 @@ void RenderIntoScene(
         return outer.Contains(pos) && !inner.Contains(pos);
     };
 
+    // The wheel already resizes whatever it is pointing at, so it keeps that
+    // meaning here: on the frame it thickens the frame, inside it thickens the
+    // skeleton. Same gesture as right-click, which opens the settings for
+    // whichever of the two the cursor is over.
+    if (interactive && hovered &&
+        hoveredEl == EspProjected::ElementId::None) {
+        const float wheel = ImGui::GetIO().MouseWheel;
+        if (std::fabs(wheel) > 0.001f) {
+            constexpr float kThicknessStep = 0.2f;
+            if (profile.box && boxEdgeContains(mouse)) {
+                profile.boxThickness = std::clamp(
+                    profile.boxThickness + wheel * kThicknessStep,
+                    0.5f,
+                    8.f);
+            } else if (profile.skeleton &&
+                       ImRect(boxMin, boxMax).Contains(mouse)) {
+                profile.skeletonThickness = std::clamp(
+                    profile.skeletonThickness + wheel * kThicknessStep,
+                    0.5f,
+                    8.f);
+            }
+        }
+    }
+
     if (interactive && hovered && ImGui::IsMouseClicked(ImGuiMouseButton_Right)) {
         if (hoveredEl != EspProjected::ElementId::None) {
             g_Settings = { true, true, SettingsKind::Element, hoveredEl, mouse };
@@ -717,7 +751,7 @@ void RenderIntoScene(
             boxMin,
             boxMax,
             EspRgba(profile.skeletonColor, tintA / 255.f),
-            1.8f);
+            profile.skeletonThickness);
     }
 
     EspProjected::PlayerData player{};

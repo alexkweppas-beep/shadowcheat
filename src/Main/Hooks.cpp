@@ -80,6 +80,15 @@ namespace hooks {
     IDXGISwapChain* g_BackBufferRtvSwap = nullptr;
     bool    g_InlineHookInstalled = false;
     bool    g_VtableHookInstalled = false;
+#if defined(RAGEMP_DIAGNOSTICS)
+    // Which part of our frame was running last. A device that dies takes the
+    // whole renderer with it and leaves no stack to read, so the breadcrumb is
+    // the only thing that says which of our blocks it died under.
+    const char* g_PresentStage = nullptr;
+#  define PRESENT_STAGE(name) (g_PresentStage = (name))
+#else
+#  define PRESENT_STAGE(name) ((void)0)
+#endif
     void*   g_PresentFunc         = nullptr;
     // After Present/device faults: skip overlay+V8 for a short window and
     // suppress F4 edge so modal dialog focus regain cannot force-open the menu.
@@ -792,8 +801,9 @@ namespace hooks
         ScriptBridge::Initialize();
         HLog("InitImGui: step 3.F - ScriptBridge::Initialize DONE");
         AntiCheatShield::Initialize();
-        // Compiles to nothing in a user build.
+#if RAGEMP_EVENT_LOGGER
         EventLogger::Initialize();
+#endif
         QuantTools::Initialize();
         UkraineTools::Initialize();
         FiveRpFarmBot::Initialize();
@@ -1104,7 +1114,9 @@ namespace hooks
         HLog("Shutdown: begin");
         g_MenuOpen = false;
 
+#if RAGEMP_EVENT_LOGGER
         EventLogger::Shutdown();
+#endif
         ObsBypass::Shutdown();
         MiscFeatures::Shutdown();
         WorldOverlay::Shutdown();
@@ -1417,6 +1429,7 @@ namespace hooks
         }
 
         const bool logFrame = g_FrameCount <= 8;
+        PRESENT_STAGE("NewFrame");
 
         // --- NewFrame block: ImGui backend + frame start.
         bool newFrameOk = false;
@@ -1499,6 +1512,7 @@ namespace hooks
 
             profileStart = RuntimeProfiler::Begin();
             __try {
+            PRESENT_STAGE("ScriptBridge");
                 ScriptBridge::Update();
             } __except (SafeFilter(GetExceptionInformation(), "hkPresent:ScriptBridge")) {
                 HLog("hkPresent: ScriptBridge::Update FAULTED");
@@ -1545,9 +1559,6 @@ namespace hooks
 #if RAGEMP_EVENT_LOGGER
                 // Guarded like everything else here because it instruments the
                 // game's V8 and a fault in it must not take the frame with it.
-                // Compiled out entirely rather than left wrapping a call that
-                // does nothing: the filter's tag is an ordinary argument, so the
-                // guard alone would leave the logger's name in a user build.
                 __try {
                     EventLogger::Update();
                 } __except (SafeFilter(GetExceptionInformation(), "hkPresent:EventLogger")) {
@@ -1557,6 +1568,7 @@ namespace hooks
 
                 profileStart = RuntimeProfiler::Begin();
                 __try {
+                PRESENT_STAGE("MiscFeatures");
                     MiscFeatures::Update();
                 } __except (SafeFilter(GetExceptionInformation(), "hkPresent:MiscFeatures")) {
                     HLog("hkPresent: MiscFeatures::Update FAULTED");
@@ -1633,6 +1645,7 @@ namespace hooks
                     profileStart =
                         RuntimeProfiler::Begin();
                     __try {
+                        PRESENT_STAGE("FramePeds");
                         Game::BuildFramePedContext(
                             g_FrameCount,
                             aimNeedsBones,
@@ -1661,6 +1674,7 @@ namespace hooks
                 if (Features::g_AimbotEnabled && !g_MenuOpen) {
                     profileStart = RuntimeProfiler::Begin();
                     __try {
+                        PRESENT_STAGE("Aimbot");
                         Features::RunAimbot();
                     } __except (SafeFilter(GetExceptionInformation(), "hkPresent:Aimbot")) {
                         HLog("hkPresent: Aimbot FAULTED");
@@ -1676,6 +1690,7 @@ namespace hooks
                     profileStart = RuntimeProfiler::Begin();
                     __try {
                         if (logFrame) HLog("hkPresent: RenderESP BEGIN");
+                        PRESENT_STAGE("ESP");
                         Features::RenderESP(Overlay::GetDrawList());
                         if (logFrame) HLog("hkPresent: RenderESP DONE");
                     } __except (SafeFilter(GetExceptionInformation(), "hkPresent:ESP")) {
@@ -1698,6 +1713,7 @@ namespace hooks
             profileStart = RuntimeProfiler::Begin();
             __try {
                 if (logFrame) HLog("hkPresent: Menu::Render BEGIN");
+                PRESENT_STAGE("Menu");
                 Menu::Render(g_MenuOpen);
                 if (logFrame) HLog("hkPresent: Menu::Render DONE");
             } __except (SafeFilter(GetExceptionInformation(), "hkPresent:Menu")) {
@@ -1709,6 +1725,7 @@ namespace hooks
 
             profileStart = RuntimeProfiler::Begin();
             __try {
+                PRESENT_STAGE("PlayersOverlay");
                 MiscFeatures::RenderPlayersOverlay();
             } __except (SafeFilter(GetExceptionInformation(), "hkPresent:PlayersOverlay")) {
             }
@@ -1721,6 +1738,7 @@ namespace hooks
             RuntimeProfiler::Begin();
         __try {
             if (logFrame) HLog("hkPresent: ImGui::EndFrame");
+            PRESENT_STAGE("ImGuiRender");
             ImGui::EndFrame();
             if (logFrame) HLog("hkPresent: ImGui::Render");
             ImGui::Render();
@@ -1759,6 +1777,42 @@ namespace hooks
         RuntimeProfiler::TickReport();
     }
 
+#if defined(RAGEMP_DIAGNOSTICS)
+    // RAGE puts up its "game renderer has crashed" box off the device's own
+    // state, not off what our Present returns, so suppressing the error code
+    // there hides the symptom and not the cause. This reads the reason
+    // straight from the device and names it the first time it appears.
+    static void ReportDeviceHealth() noexcept
+    {
+        if (!g_Device)
+            return;
+        static HRESULT s_Reported = S_OK;
+        const HRESULT reason = g_Device->GetDeviceRemovedReason();
+        if (reason == S_OK || reason == s_Reported)
+            return;
+        s_Reported = reason;
+
+        const char* name = "unknown";
+        switch (reason) {
+        case DXGI_ERROR_DEVICE_HUNG:   name = "DEVICE_HUNG"; break;
+        case DXGI_ERROR_DEVICE_REMOVED: name = "DEVICE_REMOVED"; break;
+        case DXGI_ERROR_DEVICE_RESET:  name = "DEVICE_RESET"; break;
+        case DXGI_ERROR_DRIVER_INTERNAL_ERROR:
+            name = "DRIVER_INTERNAL_ERROR"; break;
+        case DXGI_ERROR_INVALID_CALL:  name = "INVALID_CALL"; break;
+        default: break;
+        }
+        char buf[160];
+        wsprintfA(
+            buf,
+            "hkPresent: DEVICE LOST %s (0x%08X) at stage %s",
+            name,
+            static_cast<unsigned>(reason),
+            g_PresentStage ? g_PresentStage : "none");
+        HLog(buf);
+    }
+#endif
+
     // Wall clock between two Present calls, i.e. the real frame time. Our
     // own scopes only cover CPU work we do; comparing this against them says
     // whether a lost frame is ours at all.
@@ -1795,6 +1849,9 @@ namespace hooks
         }
 
         MeasureFrameInterval();
+#if defined(RAGEMP_DIAGNOSTICS)
+        ReportDeviceHealth();
+#endif
         ObsBypass::BeginPresent();
         RenderFrame(pSwap, "hkPresent");
         if (IsUnloadRequested())

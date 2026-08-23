@@ -293,7 +293,8 @@ inline void EspDrawCornerBox(
     const ImVec2& boxMin,
     const ImVec2& boxMax,
     ImU32 color,
-    float thickness = 1.5f)
+    float thickness = 1.5f,
+    float rounding = 0.f)
 {
     if (!draw)
         return;
@@ -303,18 +304,69 @@ inline void EspDrawCornerBox(
     if (len < 4.f) len = 4.f;
     if (len > 18.f) len = 18.f;
 
-    // Top-left
-    draw->AddLine(boxMin, ImVec2(boxMin.x + len, boxMin.y), color, thickness);
-    draw->AddLine(boxMin, ImVec2(boxMin.x, boxMin.y + len), color, thickness);
-    // Top-right
-    draw->AddLine(ImVec2(boxMax.x, boxMin.y), ImVec2(boxMax.x - len, boxMin.y), color, thickness);
-    draw->AddLine(ImVec2(boxMax.x, boxMin.y), ImVec2(boxMax.x, boxMin.y + len), color, thickness);
-    // Bottom-left
-    draw->AddLine(ImVec2(boxMin.x, boxMax.y), ImVec2(boxMin.x + len, boxMax.y), color, thickness);
-    draw->AddLine(ImVec2(boxMin.x, boxMax.y), ImVec2(boxMin.x, boxMax.y - len), color, thickness);
-    // Bottom-right
-    draw->AddLine(boxMax, ImVec2(boxMax.x - len, boxMax.y), color, thickness);
-    draw->AddLine(boxMax, ImVec2(boxMax.x, boxMax.y - len), color, thickness);
+    // A corner cannot round further than the arm that carries it, or the two
+    // arcs would cross and the bracket would fold in on itself.
+    float radius = rounding;
+    const float limit = len * 0.9f;
+    if (radius > limit)
+        radius = limit;
+
+    if (radius <= 0.5f) {
+        // Top-left
+        draw->AddLine(boxMin, ImVec2(boxMin.x + len, boxMin.y), color, thickness);
+        draw->AddLine(boxMin, ImVec2(boxMin.x, boxMin.y + len), color, thickness);
+        // Top-right
+        draw->AddLine(ImVec2(boxMax.x, boxMin.y), ImVec2(boxMax.x - len, boxMin.y), color, thickness);
+        draw->AddLine(ImVec2(boxMax.x, boxMin.y), ImVec2(boxMax.x, boxMin.y + len), color, thickness);
+        // Bottom-left
+        draw->AddLine(ImVec2(boxMin.x, boxMax.y), ImVec2(boxMin.x + len, boxMax.y), color, thickness);
+        draw->AddLine(ImVec2(boxMin.x, boxMax.y), ImVec2(boxMin.x, boxMax.y - len), color, thickness);
+        // Bottom-right
+        draw->AddLine(boxMax, ImVec2(boxMax.x - len, boxMax.y), color, thickness);
+        draw->AddLine(boxMax, ImVec2(boxMax.x, boxMax.y - len), color, thickness);
+        return;
+    }
+
+    // Each bracket is one stroke: arm, arc, arm. Drawn as a path so the joins
+    // stay clean instead of showing the seams three separate primitives leave.
+    // Angles are the ImGui convention, measured clockwise from pointing right.
+    const auto bracket = [&](
+        const ImVec2& centre,
+        float fromDegrees,
+        const ImVec2& armStart,
+        const ImVec2& armEnd)
+    {
+        draw->PathLineTo(armStart);
+        draw->PathArcTo(
+            centre,
+            radius,
+            fromDegrees * (3.14159265f / 180.f),
+            (fromDegrees + 90.f) * (3.14159265f / 180.f),
+            8);
+        draw->PathLineTo(armEnd);
+        draw->PathStroke(color, 0, thickness);
+    };
+
+    bracket(
+        ImVec2(boxMin.x + radius, boxMin.y + radius),
+        180.f,
+        ImVec2(boxMin.x, boxMin.y + len),
+        ImVec2(boxMin.x + len, boxMin.y));
+    bracket(
+        ImVec2(boxMax.x - radius, boxMin.y + radius),
+        270.f,
+        ImVec2(boxMax.x - len, boxMin.y),
+        ImVec2(boxMax.x, boxMin.y + len));
+    bracket(
+        ImVec2(boxMax.x - radius, boxMax.y - radius),
+        0.f,
+        ImVec2(boxMax.x, boxMax.y - len),
+        ImVec2(boxMax.x - len, boxMax.y));
+    bracket(
+        ImVec2(boxMin.x + radius, boxMax.y - radius),
+        90.f,
+        ImVec2(boxMin.x + len, boxMax.y),
+        ImVec2(boxMin.x, boxMax.y - len));
 }
 
 inline void EspDrawBoxStyled(
@@ -324,21 +376,35 @@ inline void EspDrawBoxStyled(
     ImU32 outlineColor,
     int style,
     ImU32 fillColor = IM_COL32(0, 0, 0, 0),
-    float thickness = 1.5f)
+    float thickness = 1.5f,
+    float rounding = 0.f)
 {
     if (!draw)
         return;
+    // A radius wider than half the shorter side has no room to close, and ImGui
+    // draws the result as a malformed shape rather than clamping it.
+    const float width = boxMax.x - boxMin.x;
+    const float height = boxMax.y - boxMin.y;
+    const float shorter = width < height ? width : height;
+    if (rounding > shorter * 0.5f)
+        rounding = shorter * 0.5f;
+    if (rounding < 0.f)
+        rounding = 0.f;
+
     switch (style) {
     case EspBoxCorners:
-        EspDrawCornerBox(draw, boxMin, boxMax, outlineColor, thickness);
+        EspDrawCornerBox(
+            draw, boxMin, boxMax, outlineColor, thickness, rounding);
         break;
     case EspBoxFilled:
-        draw->AddRectFilled(boxMin, boxMax, fillColor);
-        draw->AddRect(boxMin, boxMax, outlineColor, 0.f, 0, thickness);
+        draw->AddRectFilled(boxMin, boxMax, fillColor, rounding);
+        draw->AddRect(
+            boxMin, boxMax, outlineColor, rounding, 0, thickness);
         break;
     case EspBoxFull:
     default:
-        draw->AddRect(boxMin, boxMax, outlineColor, 0.f, 0, thickness);
+        draw->AddRect(
+            boxMin, boxMax, outlineColor, rounding, 0, thickness);
         break;
     }
 }

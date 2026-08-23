@@ -15,6 +15,7 @@
 #include "EspDrawHelpers.h"
 #include "EspProjectedOverlay.h"
 #include "FactionColors.h"
+#include "../SDK/RageBuildFlavor.h"
 #include "MenuTexture.h"
 #include "MenuUiHelpers.h"
 #include "MenuState.h"
@@ -850,6 +851,16 @@ namespace Menu
                             T("Box Fill", "Заливка рамки", "Заливка рамки"),
                             profile.boxFillColor);
                     }
+            gui->slider_float(
+                T("Rounding", "Скругление", "Заокруглення"),
+                &profile.boxRounding,
+                0.f,
+                16.f);
+            gui->slider_float(
+                T("Thickness", "Толщина", "Товщина"),
+                &profile.boxThickness,
+                0.5f,
+                8.f);
             MenuUi::EndOverflowPopup();
         }
         VisualsRow(
@@ -858,7 +869,16 @@ namespace Menu
             T("Skeleton", "Скелет", "Скелет"),
             &profile.skeleton,
             profile.skeletonColor,
-            false);
+            true);
+        if (MenuUi::BeginOverflowPopup("skeleton"))
+        {
+            gui->slider_float(
+                T("Thickness", "Толщина", "Товщина"),
+                &profile.skeletonThickness,
+                0.5f,
+                8.f);
+            MenuUi::EndOverflowPopup();
+        }
         VisualsRow(
             "snapline",
             ICON_FA_ARROWS_UP_DOWN,

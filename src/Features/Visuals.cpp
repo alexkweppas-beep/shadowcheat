@@ -2069,7 +2069,7 @@ namespace Features {
                                 bonePts,
                                 boneOk,
                                 skCol,
-                                1.5f);
+                                profile.skeletonThickness);
                         skeletonSegments += segments;
                         if (segments > 0)
                             ++skeletonDrawn;
