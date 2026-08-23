@@ -23,8 +23,8 @@
 #include <vector>
 #include <string>
 
-// Общий header с cheat-side (вкладывается через relative path)
-#include "../../external/shadow cheats/src/driver/ioctl_codes.hpp"
+// IOCTL-контракт с драйвером — локальная копия (launcher самодостаточен).
+#include "driver_ioctl.hpp"
 
 namespace shadow_driver_ctl {
 
