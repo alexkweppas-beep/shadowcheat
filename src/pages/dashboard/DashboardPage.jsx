@@ -46,10 +46,6 @@ export default function DashboardPage() {
   const [loaderCustomName, setLoaderCustomName] = useState('');
   const [useCustomLoaderName, setUseCustomLoaderName] = useState(false);
 
-  const handleEmailChangeClick = () => {
-    alert("Временно недоступна");
-  };
-
   const handleTopup = async () => {
     const amount = parseInt(topupAmount);
     if (isNaN(amount) || amount < 100) return alert('Мин. 100 рублей');
@@ -212,34 +208,6 @@ export default function DashboardPage() {
 
         {/* Top Section (From Screenshot 2) */}
         <div className="dash-top-section">
-          {/* Balance Card */}
-          <div className="dash-card balance-card">
-            <div className="balance-header">
-              <div className="balance-info">
-                <span className="balance-label">
-                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="12" cy="12" r="10"></circle><path d="M12 8v8M8 12h8"></path></svg>
-                  Баланс аккаунта
-                </span>
-                <span className="balance-value">{user ? user.balance : 0} рублей</span>
-              </div>
-              <button className="dash-btn btn-glass" onClick={() => setIsTopUpOpen(true)}>Пополнить баланс</button>
-            </div>
-
-            <div className="balance-amounts">
-              <button className="amount-btn">+100 рублей</button>
-              <button className="amount-btn">+300 рублей</button>
-              <button className="amount-btn">+500 рублей</button>
-            </div>
-
-            <div className="promo-section">
-              <div className="promo-input-wrapper">
-                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M20.59 13.41l-7.17 7.17a2 2 0 0 1-2.83 0L2 12V2h10l8.59 8.59a2 2 0 0 1 0 2.82z"></path><line x1="7" y1="7" x2="7.01" y2="7"></line></svg>
-                <input type="text" placeholder="Промокод" className="promo-input" />
-              </div>
-              <button className="promo-btn">ПРИМЕНИТЬ</button>
-            </div>
-          </div>
-
           {/* Subscriptions Card */}
           <div className="dash-card subs-card">
             <div className="subs-header">
@@ -345,8 +313,8 @@ export default function DashboardPage() {
             <button className="dash-btn btn-dark" onClick={() => setIsPasswordModalOpen(true)}>Изменить пароль</button>
           </div>
           <div className="dash-card action-card-horizontal">
-            <h3 className="action-title mb-0">Изменить почту</h3>
-            <button className="dash-btn btn-dark" onClick={handleEmailChangeClick}>Изменить почту</button>
+            <h3 className="action-title mb-0">Пополнить баланс</h3>
+            <button className="dash-btn btn-dark" onClick={() => setIsTopUpOpen(true)}>Пополнить баланс</button>
           </div>
         </div>
 
