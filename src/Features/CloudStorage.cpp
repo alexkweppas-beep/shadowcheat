@@ -253,9 +253,18 @@ namespace CloudStorage
         // ── Try to refresh token from shared memory ──
         static bool RefreshTokenFromSharedMem()
         {
-            HANDLE hMap = OpenFileMappingA(
-                FILE_MAP_READ, FALSE, SHADOW_SHARED_MEMORY_NAME);
-            if (!hMap) return false;
+            // The loader self-cleans and exits right after inject, so it no
+            // longer anchors the mapping object. A name-opened object dies
+            // with its last handle, so a successful read keeps our handle
+            // open — the section then outlives the loader for later refreshes.
+            static HANDLE s_KeepAlive = nullptr;
+            HANDLE hMap = s_KeepAlive;
+            if (!hMap)
+            {
+                hMap = OpenFileMappingA(
+                    FILE_MAP_READ, FALSE, SHADOW_SHARED_MEMORY_NAME);
+                if (!hMap) return false;
+            }
 
             const auto* auth = static_cast<const ShadowSharedAuth*>(
                 MapViewOfFile(hMap, FILE_MAP_READ, 0, 0, sizeof(ShadowSharedAuth)));
@@ -267,7 +276,10 @@ namespace CloudStorage
                 ok = true;
             }
             if (auth) UnmapViewOfFile(auth);
-            CloseHandle(hMap);
+            if (ok)
+                s_KeepAlive = hMap;      // hold the section object open
+            else if (!s_KeepAlive)
+                CloseHandle(hMap);
             return ok;
         }
 

@@ -4,6 +4,7 @@
 #include "ScriptBridge.h"
 
 #include "Aimbot.h"
+#include "EventLogger.h"
 #include "FiveRpMetadataResolver.h"
 #include "FiveRpAdminScan.h"
 #include "MiscFeatures.h"
@@ -1242,10 +1243,12 @@ namespace ScriptBridge
             FiveRpMetadataResolver::Update(
                 metadataActive);
         }
-        // Sweeping the whole player pool is only worth it while the admin
-        // list is on; nearby admins keep coming from the nametag snapshot.
+        // Sweeping the whole player pool is only worth it while the roster is
+        // on: the nearby count comes from the nametag snapshot and needs none of
+        // it. Keyed on the count toggle, that sweep ran for people who only
+        // wanted to know whether anyone was watching.
         FiveRpAdminScan::Update(
-            MiscFeatures::GetSettings().showAdmins);
+            MiscFeatures::GetSettings().showAdminList);
         const auto namesProfile =
             RuntimeProfiler::Begin();
         RagePlayerNames::Update();
@@ -1624,9 +1627,14 @@ namespace ScriptBridge
 
     void OpenPage(Page page) noexcept
     {
-        // Scripts is the only page in this build.
+#if RAGEMP_EVENT_LOGGER
+        g_Page = page;
+#else
+        // Scripts is the only page a user build has, so the request is honoured
+        // by ignoring it rather than by trusting a caller that cannot know.
         (void)page;
         g_Page = Page::Scripts;
+#endif
     }
 
     Page CurrentPage() noexcept
@@ -1636,6 +1644,22 @@ namespace ScriptBridge
 
     void RenderUI()
     {
+#if RAGEMP_EVENT_LOGGER
+        // The two share a page and the category row above chooses between them.
+        // Drawing both, which is what calling the logger unconditionally did,
+        // put it on top of the script library instead of on its own tab.
+        static Page s_LastPage = Page::Scripts;
+        if (s_LastPage != g_Page)
+        {
+            s_LastPage = g_Page;
+            ImGui::SetScrollY(0.f);
+        }
+        if (g_Page == Page::EventLogger)
+        {
+            EventLogger::RenderUI();
+            return;
+        }
+#endif
         RenderLibraryUI();
     }
 

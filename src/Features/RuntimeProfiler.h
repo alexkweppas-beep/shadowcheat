@@ -69,6 +69,12 @@ namespace RuntimeProfiler
         std::uint32_t skeletonsExpected{};
     };
 
+    // Part of the developer half of this tree: the implementation lives in
+    // src/Dev and is compiled only with -DSHADOW_DEV=ON. Without it these are
+    // inline no-ops, so the call sites scattered through the codebase compile
+    // and cost nothing, and the user build can be published with src/Dev absent.
+#if defined(RAGEMP_DIAGNOSTICS)
+
     bool Enabled() noexcept;
     std::int64_t Begin() noexcept;
     void End(Scope scope, std::int64_t started) noexcept;
@@ -95,6 +101,37 @@ namespace RuntimeProfiler
     WorkCounters GetWorkCounters() noexcept;
     void TickReport() noexcept;
     void Reset() noexcept;
+
+#else
+
+    inline bool Enabled() noexcept { return false; }
+    inline std::int64_t Begin() noexcept { return 0; }
+    inline void End(Scope, std::int64_t) noexcept {}
+    inline void Accumulate(Scope, std::int64_t) noexcept {}
+    inline void FlushFrame() noexcept {}
+    inline Stats GetStats(Scope) noexcept { return Stats{}; }
+    inline const char* Name(Scope) noexcept { return ""; }
+    inline void SetFrameWork(
+        std::uint32_t,
+        std::uint32_t,
+        std::uint32_t,
+        std::uint32_t) noexcept {}
+    inline void SetDrawnPeds(std::uint32_t) noexcept {}
+    inline void SetDrawWork(
+        std::uint32_t,
+        std::uint32_t) noexcept {}
+    inline void SetSkeletonWork(
+        std::uint32_t,
+        std::uint32_t) noexcept {}
+    inline void RecordVisibilitySamples(std::uint32_t) noexcept {}
+    inline WorkCounters GetWorkCounters() noexcept
+    {
+        return WorkCounters{};
+    }
+    inline void TickReport() noexcept {}
+    inline void Reset() noexcept {}
+
+#endif
 }
 
 #if defined(RAGEMP_DIAGNOSTICS)

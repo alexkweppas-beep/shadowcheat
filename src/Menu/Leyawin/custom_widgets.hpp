@@ -49,6 +49,10 @@ public:
 
     bool                    keybind(const char* label, int* key, const char* icon = nullptr);
 
+    // Printable name of a virtual key, for callers that show a bind next to the
+    // control it belongs to. Returns nullptr when there is nothing to show.
+    const char*             key_name(int vk);
+
     bool                    dropdown(const char* label, int* current_item, const char* const items[], int items_count, int max_count = 5);
     void                    multi_dropdown(const char* label, bool variable[], const char* labels[], int count, int max_count = 5);
 

@@ -37,6 +37,10 @@ namespace RageWorldEntities
         float health{};
         float bodyHealth{};
         bool occupied{};
+        // Server-owned trunk state, synced as the "trunkStatus" entity variable.
+        // A boot knocked ajar in a crash is not an open trunk, so the physical
+        // door only answers for servers that do not use that variable.
+        bool trunkOpen{};
         VehicleClass vehicleClass{VehicleClass::Other};
         float halfExtentX{};
         float halfExtentY{};

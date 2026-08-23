@@ -8,7 +8,10 @@ namespace ScriptBridge
     // and the bridge is the thing that decides which one is showing.
     enum class Page : std::uint8_t
     {
-        Scripts = 0
+        Scripts = 0,
+        // Reachable only in a developer build, but declared in both so the
+        // menu's dev branches compile against one enum rather than two.
+        EventLogger = 1
     };
 
     bool Initialize();

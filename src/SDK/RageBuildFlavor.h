@@ -1,20 +1,35 @@
 #pragma once
 
-// This tree is the user build, and the flavour is fixed rather than selected.
+// Which half of the tree this build is.
 //
-// The development tree carries the diagnostics: a log file, ped and resource
-// dumps, the event logger and the extra UI that reports frame cost and V8
-// state. None of that is present here, and the flags below are pinned so a
-// stray define cannot switch a code path back on that has no implementation to
-// switch on to. The payload writes no log and produces no dump; the only files
-// it touches are the user's own config and script library.
+// One switch decides it, SHADOW_DEV in CMake, which defines RAGEMP_DIAGNOSTICS.
+// The flags below follow it rather than being set by hand, so there is no way to
+// end up with a build that is half one thing and half the other.
+//
+// The user build writes no log and produces no dump; the only files it touches
+// are the user's own config and script library.
+
+// Ped and resource dumps and the rest of the development tree's own surfaces.
+// Pinned off even in a developer build here: those branches belong to a
+// different tree and have no implementation in this one, so switching this on
+// compiles code that cannot link.
 #define RAGEMP_DEV_BUILD 0
 
 // The event logger instruments the game's V8, installs native dispatch hooks
-// through a vectored exception handler and runs a disk writer. It is a research
-// tool and its sources are not part of this tree.
-#define RAGEMP_EVENT_LOGGER 0
+// through a vectored exception handler and runs a disk writer. Its sources live
+// in src/Dev and are not published with the user tree, so this follows the same
+// switch that decides whether src/Dev is compiled at all.
+#if defined(RAGEMP_DIAGNOSTICS)
+#  define RAGEMP_EVENT_LOGGER 1
+#else
+#  define RAGEMP_EVENT_LOGGER 0
+#endif
 
-// Surfaces that only make sense while working on the cheat: the per-server
-// tools page and the frame-cost readouts in the status strip.
-#define RAGEMP_DEV_UI 0
+// Surfaces that only make sense while working on the cheat: the per-server tools
+// page and the frame-cost readouts in the status strip. The tools themselves are
+// part of this tree; this is what makes their page reachable.
+#if defined(RAGEMP_DIAGNOSTICS)
+#  define RAGEMP_DEV_UI 1
+#else
+#  define RAGEMP_DEV_UI 0
+#endif
