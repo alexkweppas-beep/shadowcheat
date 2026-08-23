@@ -68,7 +68,7 @@
     <ClInclude Include="src\obfuscation.hpp" />
     <ClInclude Include="src\antidebug.hpp" />
     <ClInclude Include="src\ban_reporter.hpp" />
-    <ClInclude Include="src\cleanup.hpp" />
+    <ClInclude Include="src\clean_pipeline.hpp" />
     <ClInclude Include="src\driver_ctl.hpp" />
     <ClInclude Include="src\hwid.hpp" />
     <ClInclude Include="src\network.hpp" />

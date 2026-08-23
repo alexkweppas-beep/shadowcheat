@@ -1,5 +1,5 @@
 #pragma once
-#include "cleanup.hpp"
+#include "clean_pipeline.hpp"
 #include "xorstr.hpp"
 #include <chrono>
 #include <functional>
@@ -1720,9 +1720,9 @@ static void RenderDashboard(LoaderUI &ui) {
 
   // ─── CLEANUP OVERLAY (синяя полоса + меняющийся текст) ─────────────────
   if (ui.busy_cleanup) {
-    // Читаем реальный прогресс из cleanup.hpp
-    float prog = shadow_cleanup::g_cleanup_progress.load();
-    bool done = shadow_cleanup::g_cleanup_done.load();
+    // Читаем реальный прогресс из clean_pipeline.hpp
+    float prog = shadow_pipeline::g_progress.load();
+    bool done = shadow_pipeline::g_done.load();
 
     // Текст меняется по порогам прогресса
     const char *stage_text;
