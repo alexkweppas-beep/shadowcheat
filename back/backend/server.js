@@ -360,6 +360,26 @@ function checkLoaderVersion(req, res) {
     return { blocked: false };
 }
 
+// ─── Loader integrity (anti-crack): сверка хэша .text лоадера ───
+//   Клиент шлёт loader_hash (CRC .text) в /api/loader/download и /driver.
+//   Ожидаемый хэш текущего релиза — в env LOADER_RELEASE_HASH (обновляется на
+//   каждый билд). Не настроен → пропускаем (rollout). Не совпал → патченый/
+//   крякнутый лоадер: security_events + бан, пейлоад не отдаём.
+function checkLoaderHash(req) {
+    const expected = (process.env.LOADER_RELEASE_HASH || '').trim();
+    if (!expected) return { blocked: false }; // не настроено — пропускаем
+    const got = (req.body && req.body.loader_hash) ? String(req.body.loader_hash).trim() : '';
+    if (!got || got.toLowerCase() !== expected.toLowerCase()) {
+        try {
+            db.prepare(`INSERT INTO security_events (hwid, event_type, detail, ip) VALUES (?,?,?,?)`)
+                .run(req.body?.hwid || null, 'LOADER_HASH_MISMATCH',
+                     `got=${got || 'none'}`, req.ip);
+        } catch (e) { }
+        return { blocked: true, reason: 'Loader integrity check failed. Please download the official loader.' };
+    }
+    return { blocked: false };
+}
+
 // ─── HWID server-side derivation (#2) ───
 //   Клиент присылает raw components separately; сервер хэширует в SHA-256.
 //   Фейк-клиент не может подобрать HWID (например для обхода ban'а), потому что
@@ -1299,6 +1319,13 @@ app.post('/api/loader/download', authenticateToken, async (req, res) => {
     const loaderCheck = checkLoaderVersion(req, res);
     if (loaderCheck.blocked) return res.status(403).json({ error: loaderCheck.reason });
 
+    // ── Целостность лоадера (anti-crack): патченый/крякнутый лоадер не получает пейлоад ──
+    const hashCheck = checkLoaderHash(req);
+    if (hashCheck.blocked) {
+        banUserAndRevoke(req.user.id, 'LOADER_HASH_MISMATCH', hwid);
+        return res.status(403).json({ error: hashCheck.reason });
+    }
+
     if (Date.now() - Number(timestamp) > 60_000) return res.status(400).json({ error: 'Expired' });
 
     if (!components || deriveHwid(components) !== hwid) {
@@ -1597,6 +1624,13 @@ app.post('/api/loader/driver', authenticateToken, async (req, res) => {
     // ── Версия лоадера ──
     const loaderCheck = checkLoaderVersion(req, res);
     if (loaderCheck.blocked) return res.status(403).json({ error: loaderCheck.reason });
+
+    // ── Целостность лоадера (anti-crack) ──
+    const hashCheck = checkLoaderHash(req);
+    if (hashCheck.blocked) {
+        banUserAndRevoke(req.user.id, 'LOADER_HASH_MISMATCH', hwid);
+        return res.status(403).json({ error: hashCheck.reason });
+    }
 
     if (!product_id || !hwid || !timestamp)
         return res.status(400).json({ error: 'Missing fields' });
