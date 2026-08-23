@@ -5,6 +5,10 @@
 #include <Windows.h>
 
 #include <cmath>
+#include <cstdio>
+
+#include "../Main/Hooks.h"
+#include "../SDK/RageBuildFlavor.h"
 
 namespace
 {
@@ -12,11 +16,22 @@ namespace
     constexpr int kSlots = 1024;
     constexpr int kProbeWindow = 8;
 
-    // Snapshots arrive about every 150 ms. Predicting a little past that covers
-    // ordinary jitter in the reply; predicting much further would let the box
-    // sail off on its own whenever a car stops dead, so the pose freezes at the
-    // cap instead and waits to be told where the car actually is.
-    constexpr float kMaxPredictSeconds = 0.22f;
+    // How far past the last sample the pose may be carried, as a multiple of
+    // the interval actually being observed.
+    //
+    // This used to be a fixed 0.22 s, chosen against the 150 ms request
+    // throttle. That was the wrong number: 150 ms is how often a snapshot is
+    // asked for, not how often one lands, and the reply has a script-thread
+    // round trip on top. Whenever the real gap ran past the cap the pose froze,
+    // waited, then jumped when the next sample arrived, which is the stepping
+    // this was supposed to remove. The interval is measured instead.
+    constexpr float kPredictIntervals = 1.6f;
+    constexpr float kMinPredictSeconds = 0.10f;
+    constexpr float kMaxPredictSeconds = 0.80f;
+
+    // Smoothed interval between accepted samples. One number for the whole
+    // snapshot: every entity in it arrives on the same reply.
+    float g_sampleInterval = 0.15f;
 
     // Time constant of the ease toward the predicted pose. Small enough that the
     // box stays on the car, large enough to swallow the correction that lands
@@ -124,7 +139,8 @@ namespace WorldEntityMotion
         int count,
         std::uint64_t generation,
         std::uint64_t capturedAtMs,
-        float deltaSeconds) noexcept
+        float deltaSeconds,
+        bool vehiclesAreLive) noexcept
     {
         if (!entries || count <= 0)
             return;
@@ -141,10 +157,55 @@ namespace WorldEntityMotion
         const float alpha =
             1.f - std::exp(-deltaSeconds / kSmoothSeconds);
 
+        // Measured once per snapshot rather than per entity, and eased so one
+        // late reply does not swing the horizon.
+        static std::uint64_t s_lastGeneration = 0;
+        static ULONGLONG s_lastArrival = 0;
+        if (generation != s_lastGeneration)
+        {
+            if (s_lastArrival != 0 && now > s_lastArrival)
+            {
+                const float observed =
+                    static_cast<float>(now - s_lastArrival) / 1000.f;
+                if (observed > 0.01f && observed < 2.f)
+                    g_sampleInterval +=
+                        (observed - g_sampleInterval) * 0.25f;
+            }
+            s_lastGeneration = generation;
+            s_lastArrival = now;
+
+#if defined(RAGEMP_DIAGNOSTICS)
+            static ULONGLONG s_lastReport = 0;
+            if (now - s_lastReport >= 3000)
+            {
+                s_lastReport = now;
+                char line[128]{};
+                _snprintf_s(
+                    line,
+                    sizeof(line),
+                    _TRUNCATE,
+                    "WorldEntityMotion: snapshot every %.0f ms, "
+                    "predicting up to %.0f ms",
+                    g_sampleInterval * 1000.f,
+                    g_sampleInterval * kPredictIntervals * 1000.f);
+                hooks::HLog(line);
+            }
+#endif
+        }
+
+        float horizon = g_sampleInterval * kPredictIntervals;
+        if (horizon < kMinPredictSeconds)
+            horizon = kMinPredictSeconds;
+        else if (horizon > kMaxPredictSeconds)
+            horizon = kMaxPredictSeconds;
+
         for (int index = 0; index < count; ++index)
         {
             RageWorldEntities::Entry& entry = entries[index];
             if (!entry.valid || entry.handle == 0)
+                continue;
+            if (vehiclesAreLive &&
+                entry.kind == RageWorldEntities::EntityKind::Vehicle)
                 continue;
             if (!std::isfinite(entry.x) ||
                 !std::isfinite(entry.y) ||
@@ -240,8 +301,8 @@ namespace WorldEntityMotion
             float age = now > track->stamp
                 ? static_cast<float>(now - track->stamp) / 1000.f
                 : 0.f;
-            if (age > kMaxPredictSeconds)
-                age = kMaxPredictSeconds;
+            if (age > horizon)
+                age = horizon;
 
             const float targetX =
                 track->sampleX + track->velocityX * age;

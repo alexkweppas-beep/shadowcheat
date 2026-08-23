@@ -91,6 +91,11 @@ namespace MiscFeatures
     void RequestRespawn() noexcept;
     // Queued once and executed by the RAGE script thread.
     void RequestRepairVehicle() noexcept;
+
+    // Opens the inventory of the vehicle the camera is pointing at, preferring
+    // one with its trunk open. Server-specific: GTA5RP carries this over its
+    // own RPC bridge.
+    void RequestOpenTrunkInventory() noexcept;
     // Queue an asynchronous ground-resolved GPS waypoint teleport.
     bool RequestTeleportWaypoint() noexcept;
 

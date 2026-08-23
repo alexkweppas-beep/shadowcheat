@@ -5,6 +5,7 @@
 #include "QuantTools.h"
 #include "RagePlayerNames.h"
 #include "RageV8Runtime.h"
+#include "RageWorldEntities.h"
 #include "VehicleMovement.h"
 #include "../Menu/Menu.h"
 #include "../SDK/Game.h"
@@ -45,6 +46,7 @@ namespace
     bool g_PendingArmor = false;
     bool g_PendingRespawn = false;
     bool g_PendingRepairVehicle = false;
+    bool g_PendingOpenTrunk = false;
     bool g_PendingTpWaypoint = false;
     bool g_NoclipKeyWasDown = false;
     bool g_FreecamKeyWasDown = false;
@@ -1901,6 +1903,137 @@ mp.events.add('render',g.__bfCwFn);
             return false;
         g_CwJsHooked = true;
         return true;
+    }
+
+    // Defined further down, past the script plumbing this needs.
+    bool EnqueuePlayerScript(const char* script) noexcept;
+
+    // Ray against a vehicle's own box: the snapshot carries heading and half
+    // extents, so the test is done in the vehicle's frame where the box is
+    // axis-aligned and the whole thing is a slab intersection.
+    bool RayHitsVehicle(
+        const Vector3& origin,
+        const Vector3& direction,
+        const RageWorldEntities::Entry& entry,
+        float& outDistance) noexcept
+    {
+        const float radians = entry.heading * 3.14159265f / 180.f;
+        const float sine = std::sin(radians);
+        const float cosine = std::cos(radians);
+
+        const float dx = origin.x - entry.x;
+        const float dy = origin.y - entry.y;
+        const Vector3 localOrigin(
+            dx * cosine + dy * sine,
+            -dx * sine + dy * cosine,
+            origin.z - entry.z);
+        const Vector3 localDirection(
+            direction.x * cosine + direction.y * sine,
+            -direction.x * sine + direction.y * cosine,
+            direction.z);
+
+        const float half[3] = {
+            entry.halfExtentX, entry.halfExtentY, entry.halfExtentZ};
+        const float start[3] = {
+            localOrigin.x, localOrigin.y, localOrigin.z};
+        const float step[3] = {
+            localDirection.x, localDirection.y, localDirection.z};
+
+        // Not "near" and "far": those are Windows macros and turn this into a
+        // syntax error the moment windows.h is in scope.
+        float entry_ = 0.f;
+        float exit_ = 1.0e9f;
+        for (int axis = 0; axis < 3; ++axis)
+        {
+            if (std::fabs(step[axis]) < 1.0e-6f)
+            {
+                if (std::fabs(start[axis]) > half[axis])
+                    return false;
+                continue;
+            }
+            const float inverse = 1.f / step[axis];
+            float first = (-half[axis] - start[axis]) * inverse;
+            float second = (half[axis] - start[axis]) * inverse;
+            if (first > second)
+            {
+                const float swap = first;
+                first = second;
+                second = swap;
+            }
+            if (first > entry_)
+                entry_ = first;
+            if (second < exit_)
+                exit_ = second;
+            if (entry_ > exit_)
+                return false;
+        }
+        if (exit_ < 0.f)
+            return false;
+        outDistance = entry_;
+        return true;
+    }
+
+    // Sends the server's own "open this vehicle's inventory" event for whatever
+    // vehicle the camera is pointing at. The target is chosen here rather than
+    // in script because the snapshot already knows every vehicle's box, id and
+    // trunk state, and because mp.raycasting only names an entity from inside a
+    // render event, which a keypress is not.
+    void OpenAimedTrunkInventory() noexcept
+    {
+        Vector3 origin{};
+        Vector3 look{};
+        if (!ReadViewportLook(origin, look))
+            return;
+
+        static RageWorldEntities::Entry entries[
+            RageWorldEntities::kMaxEntries]{};
+        const int count = RageWorldEntities::CopySnapshot(
+            entries, RageWorldEntities::kMaxEntries);
+
+        std::uint32_t bestId = RageWorldEntities::kInvalidRemoteId;
+        float bestDistance = 0.f;
+        bool bestTrunk = false;
+        for (int index = 0; index < count; ++index)
+        {
+            const RageWorldEntities::Entry& entry = entries[index];
+            if (!entry.valid ||
+                entry.kind != RageWorldEntities::EntityKind::Vehicle ||
+                entry.remoteId == RageWorldEntities::kInvalidRemoteId)
+                continue;
+            float distance = 0.f;
+            if (!RayHitsVehicle(origin, look, entry, distance))
+                continue;
+            // An open trunk wins over a nearer closed one: the whole point is
+            // to reach the car that can actually be looted.
+            const bool better =
+                bestId == RageWorldEntities::kInvalidRemoteId ||
+                (entry.trunkOpen && !bestTrunk) ||
+                (entry.trunkOpen == bestTrunk && distance < bestDistance);
+            if (!better)
+                continue;
+            bestId = entry.remoteId;
+            bestDistance = distance;
+            bestTrunk = entry.trunkOpen;
+        }
+
+        if (bestId == RageWorldEntities::kInvalidRemoteId)
+            return;
+
+        // The server takes this over its own RPC bridge rather than as a plain
+        // remote event, and the vehicle is passed by remote id in the wrapper
+        // shape the bridge expects.
+        char script[420]{};
+        _snprintf_s(
+            script,
+            sizeof(script),
+            _TRUNCATE,
+            "try{mp.events.callRemote('__rpc:process',JSON.stringify({"
+            "req:1,id:'bf'+Date.now().toString(36),"
+            "name:'__rpc:triggerEvent',env:'client',"
+            "args:['server_vehicle_openInventory',{'__t':'v',i:%u}],"
+            "fenv:'cef',noRet:1}));}catch(e){}",
+            static_cast<unsigned>(bestId));
+        EnqueuePlayerScript(script);
     }
 
     bool PlayerV8Ready() noexcept
@@ -4076,6 +4209,10 @@ try{mp.game.invoke('0x0AE73D8DF3A762B2',false);}catch(e){}
             if (!EnqueuePlayerScript(kRepairJs))
                 Queue("misc_repair");
         }
+        if (g_PendingOpenTrunk) {
+            g_PendingOpenTrunk = false;
+            OpenAimedTrunkInventory();
+        }
         if (g_PendingTpWaypoint) {
             g_PendingTpWaypoint = false;
             // Preferred path: the script thread, where the blip natives, the
@@ -4326,6 +4463,11 @@ void RequestRespawn() noexcept
 void RequestRepairVehicle() noexcept
 {
     g_PendingRepairVehicle = true;
+}
+
+void RequestOpenTrunkInventory() noexcept
+{
+    g_PendingOpenTrunk = true;
 }
 
 bool RequestTeleportWaypoint() noexcept

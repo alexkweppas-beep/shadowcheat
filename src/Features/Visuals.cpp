@@ -10,6 +10,7 @@
 #include "RagePlayerNames.h"
 #include "RageWorldEntities.h"
 #include "WorldEntityMotion.h"
+#include "GameVehicles.h"
 #include "RuntimeProfiler.h"
 #include "VisualPolicy.h"
 #include "WeaponNames.h"
@@ -47,6 +48,54 @@ namespace Features {
     // Periodic diagnostic logging for Viewport matrix dump
     static int s_EspDiagCounter = 0;
     static bool s_LogThisFrame = false;
+
+    // At file scope rather than inside the render function: a function-local
+    // static of a type with a constructor needs a thread-safe init guard, and
+    // that guard makes the whole function need unwinding, which it cannot have
+    // while it also uses structured exception handling.
+    constexpr int kMaxLiveVehicles = 256;
+    static GameVehicles::Live s_LiveVehicles[kMaxLiveVehicles]{};
+
+    // Snapshot handle -> the vehicle object it was tied to. Small and fixed:
+    // there are never more vehicles on screen than the list can hold.
+    struct LiveBinding final
+    {
+        std::uint32_t handle{};
+        const void* object{};
+    };
+    static LiveBinding s_LiveBindings[kMaxLiveVehicles]{};
+
+    const void* LiveVehicleBinding(std::uint32_t handle) noexcept
+    {
+        if (handle == 0)
+            return nullptr;
+        for (const LiveBinding& binding : s_LiveBindings)
+        {
+            if (binding.handle == handle)
+                return binding.object;
+        }
+        return nullptr;
+    }
+
+    void BindLiveVehicle(
+        std::uint32_t handle, const void* object) noexcept
+    {
+        if (handle == 0 || !object)
+            return;
+        for (LiveBinding& binding : s_LiveBindings)
+        {
+            if (binding.handle == handle || binding.handle == 0)
+            {
+                binding.handle = handle;
+                binding.object = object;
+                return;
+            }
+        }
+        // Full: the oldest entry is as good a victim as any, and a lost
+        // binding costs one frame of distance matching, not correctness.
+        s_LiveBindings[0].handle = handle;
+        s_LiveBindings[0].object = object;
+    }
 
     struct SmoothedVisual final
     {
@@ -1404,12 +1453,103 @@ namespace Features {
                     IM_ARRAYSIZE(worldEntries),
                     &worldGeneration,
                     &worldCapturedAtMs);
+            // Vehicles get their position from the game itself, matched to the
+            // snapshot by proximity. The snapshot still owns everything only
+            // the server knows, but where a car is and which way it points is
+            // read fresh every frame, so there is nothing left to interpolate.
+            const int liveCount =
+                GameVehicles::Copy(s_LiveVehicles, kMaxLiveVehicles);
+            GameVehicles::Live* live = s_LiveVehicles;
+            int refreshed = 0;
+            if (liveCount > 0)
+            {
+                for (int index = 0; index < worldEntryCount; ++index)
+                {
+                    RageWorldEntities::Entry& entry = worldEntries[index];
+                    if (entry.kind !=
+                        RageWorldEntities::EntityKind::Vehicle)
+                        continue;
+
+                    // Once a snapshot entry has been tied to a vehicle object
+                    // the pairing is kept and followed by pointer. Re-matching
+                    // by distance every frame is what left fast cars behind:
+                    // they outrun the search radius before the next snapshot
+                    // arrives, which is exactly when smooth motion matters.
+                    int best = -1;
+                    const void* bound = LiveVehicleBinding(entry.handle);
+                    if (bound)
+                    {
+                        for (int other = 0; other < liveCount; ++other)
+                        {
+                            if (live[other].object == bound)
+                            {
+                                best = other;
+                                break;
+                            }
+                        }
+                    }
+                    if (best < 0)
+                    {
+                        float bestDistance = 36.f;
+                        for (int other = 0; other < liveCount; ++other)
+                        {
+                            const float dx =
+                                live[other].position.x - entry.x;
+                            const float dy =
+                                live[other].position.y - entry.y;
+                            const float dz =
+                                live[other].position.z - entry.z;
+                            const float distance =
+                                dx * dx + dy * dy + dz * dz;
+                            if (distance < bestDistance)
+                            {
+                                bestDistance = distance;
+                                best = other;
+                            }
+                        }
+                        if (best >= 0)
+                            BindLiveVehicle(
+                                entry.handle, live[best].object);
+                    }
+                    if (best < 0)
+                        continue;
+                    entry.x = live[best].position.x;
+                    entry.y = live[best].position.y;
+                    entry.z = live[best].position.z;
+                    entry.heading = live[best].heading;
+                    ++refreshed;
+                }
+            }
+#if defined(RAGEMP_DIAGNOSTICS)
+            {
+                static ULONGLONG lastReport = 0;
+                const ULONGLONG now = GetTickCount64();
+                if (now - lastReport >= 3000)
+                {
+                    lastReport = now;
+                    char line[144]{};
+                    _snprintf_s(
+                        line,
+                        sizeof(line),
+                        _TRUNCATE,
+                        "GameVehicles: list=%d snapshot=%d refreshed=%d",
+                        liveCount,
+                        worldEntryCount,
+                        refreshed);
+                    hooks::HLog(line);
+                }
+            }
+#endif
+
+            // Smoothing still covers objects and pickups, which have no such
+            // list, and any vehicle the match did not reach.
             WorldEntityMotion::Smooth(
                 worldEntries,
                 worldEntryCount,
                 worldGeneration,
                 worldCapturedAtMs,
-                ImGui::GetIO().DeltaTime);
+                ImGui::GetIO().DeltaTime,
+                refreshed > 0);
         }
 
         int pedCount = 0;

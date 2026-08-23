@@ -19,6 +19,16 @@ namespace Offsets
         // camGameplayDirector** — resolved primarily via pattern (RVA may drift).
         constexpr uintptr_t GameplayDirector = 0x201ED38;
         constexpr uintptr_t RagePlayerPool  = 0x2714DF8; // RAGE MP player pool heap pointer cell
+
+        // Vehicle list: a fixed array of CVehicle* with its capacity beside it.
+        //
+        // There is a dword further along that looked like a live count and is
+        // not: it read 55 once and 8 a minute later while the array actually
+        // held 28 vehicles. The array is walked to capacity instead and the
+        // entries are filtered on their own type byte, which is the only
+        // statement about a slot that the slot itself makes.
+        constexpr uintptr_t VehicleList         = 0x2472650; // CVehicle**
+        constexpr uintptr_t VehicleListCapacity = 0x2472648; // uint32
         constexpr uintptr_t NetPlayerPedSlots = 0x30047B0; // CPed*[32] by net slot id
     }
 
@@ -34,6 +44,8 @@ namespace Offsets
     inline uint8_t** ReplayInterfacePtr = nullptr;
     inline uint8_t** ViewportPtr        = nullptr;
     inline uint8_t** RagePlayerPoolPtr  = nullptr;
+    inline uint8_t*** VehicleListPtr    = nullptr;
+    inline uint32_t*  VehicleListCapacityPtr = nullptr;
     // Cell that holds the active CPlayerAngles* (gameplay camera).
     inline uint8_t** CameraManagerPtr   = nullptr;
     // Cell that holds camGameplayDirector* (FOV metadata source).

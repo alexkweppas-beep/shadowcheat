@@ -803,7 +803,15 @@ namespace Visibility
         if (!localPed)
             WorldProbe::CancelAll();
 
+        // Capped by what we may still take without crowding the game out of
+        // its own shape test pool. Submitting past that comes back as a refusal
+        // that reads exactly like the game refusing us, which would count as a
+        // failure and eventually switch visibility to the fallback for no
+        // reason other than our own back-pressure.
         int budget = localPed ? kMaxProbesPerFrame : 0;
+        const int capacity = WorldProbe::Free();
+        if (budget > capacity)
+            budget = capacity;
         for (int rank = 0;
              rank < candidateCount && budget > 0;
              ++rank)

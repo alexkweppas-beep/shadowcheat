@@ -88,6 +88,8 @@ namespace Offsets
         ReplayInterfacePtr = reinterpret_cast<uint8_t**>(base + RVA::ReplayInterface);
         ViewportPtr        = reinterpret_cast<uint8_t**>(base + RVA::Viewport);
         RagePlayerPoolPtr  = reinterpret_cast<uint8_t**>(base + RVA::RagePlayerPool);
+        VehicleListPtr     = reinterpret_cast<uint8_t***>(base + RVA::VehicleList);
+        VehicleListCapacityPtr = reinterpret_cast<uint32_t*>(base + RVA::VehicleListCapacity);
         CameraManagerPtr     = reinterpret_cast<uint8_t**>(base + RVA::CameraManager);
         GameplayDirectorPtr  = reinterpret_cast<uint8_t**>(base + RVA::GameplayDirector);
 

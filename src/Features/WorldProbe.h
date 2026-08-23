@@ -57,6 +57,12 @@ namespace WorldProbe
     void Cancel(int token) noexcept;
     void CancelAll() noexcept;
 
+    // Slots we could still take without going over our share of the game's
+    // pool. Callers budget against this instead of submitting until refused:
+    // being refused is indistinguishable from the game refusing us, and that
+    // is the signal that switches visibility to its fallback.
+    int Free() noexcept;
+
     struct Telemetry final
     {
         std::uint32_t submitted{};

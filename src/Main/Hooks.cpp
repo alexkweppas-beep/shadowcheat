@@ -37,6 +37,9 @@
 #include "../Features/ObsBypass.h"
 #include "../Features/Overlay.h"
 #include "../Features/WorldOverlay.h"
+#if defined(RAGEMP_DIAGNOSTICS)
+#include "../Dev/VehicleListProbe.h"
+#endif
 #include "../Features/PedPreview.h"
 #include "../Features/ModelPreview.h"
 #include "../Helpers/inject_ready.h"
@@ -1691,6 +1694,9 @@ namespace hooks
                     __try {
                         if (logFrame) HLog("hkPresent: RenderESP BEGIN");
                         PRESENT_STAGE("ESP");
+#if defined(RAGEMP_DIAGNOSTICS)
+                        VehicleListProbe::Update();
+#endif
                         Features::RenderESP(Overlay::GetDrawList());
                         if (logFrame) HLog("hkPresent: RenderESP DONE");
                     } __except (SafeFilter(GetExceptionInformation(), "hkPresent:ESP")) {

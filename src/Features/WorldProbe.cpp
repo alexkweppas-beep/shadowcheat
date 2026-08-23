@@ -113,13 +113,29 @@ namespace WorldProbe
         constexpr std::uint32_t kStateFinished = 1u << 1;
         constexpr std::uint32_t kStateAbandoned = 1u << 3;
 
-        // Result buffers are static, never automatic. The manager keeps the
-        // pointer it is given and writes through it once the test runs, which is
-        // after submit has returned: a buffer on the caller's stack is written
-        // into a frame that no longer exists, and that is the fault that worked
-        // a few times and then took the process down.
-        constexpr int kInFlight = 64;
+        // How much of the game's pool we are willing to hold at once.
+        //
+        // This was 64 of the 90 slots, which is most of the subsystem. The pool
+        // is not ours: the game runs its own line-of-sight, weapon traces,
+        // camera collision and physics queries through it, and when a slot
+        // cannot be had those callers do not all cope. The symptom was a null
+        // dereference deep inside GTA5.exe with no frame of ours anywhere on
+        // the stack, minutes after the fact, which is exactly what starving a
+        // shared pool looks like: we break something for someone else and are
+        // long gone by the time it falls over.
+        //
+        // Twelve is enough to keep visibility answering. Probes come back
+        // within a frame or two, so a dozen in flight at sixty frames a second
+        // is several hundred answers a second, well past what the ESP consumes,
+        // and it leaves the game seven eighths of its own pool.
+        constexpr int kInFlight = 12;
         alignas(16) std::uint8_t g_results[kInFlight][kResultSize]{};
+
+        static_assert(
+            kInFlight * 5 <= kSlotCount,
+            "our share of the shape test pool must stay under a fifth: the "
+            "game needs slots for its own traces and does not always survive "
+            "being refused one");
 
         // Long enough that a busy frame does not throw away good work, short
         // enough that a wedged queue cannot leak the whole pool of ninety.
@@ -596,6 +612,17 @@ namespace WorldProbe
             ReleaseHandle(manager, entry.handle);
             entry.used = false;
         }
+    }
+
+    int Free() noexcept
+    {
+        int free = 0;
+        for (const auto& entry : g_inFlight)
+        {
+            if (!entry.used)
+                ++free;
+        }
+        return free;
     }
 
     const Telemetry& GetTelemetry() noexcept

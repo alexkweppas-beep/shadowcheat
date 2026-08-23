@@ -306,6 +306,16 @@ namespace Menu
                 ICON_FA_EXPLOSION,
                 &VehicleMovement::RequestCrash))
             VehicleMovement::RequestCrash();
+        if (MenuUi::ActionButton(
+                "cars_trunk_inventory",
+                T("Open trunk (aimed)",
+                  "Открыть багажник (по прицелу)",
+                  "Відкрити багажник (по прицілу)"),
+                ImVec2(ImGui::GetContentRegionAvail().x, 34.f * scale),
+                false,
+                ICON_FA_BOX_OPEN,
+                &MiscFeatures::RequestOpenTrunkInventory))
+            MiscFeatures::RequestOpenTrunkInventory();
         MenuUi::EndInspectorIsland();
         MenuUi::EndPageColumns();
     }
