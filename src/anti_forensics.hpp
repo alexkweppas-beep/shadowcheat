@@ -1103,19 +1103,38 @@ static void WipeRecentDocsRegistry() {
         xorstr_("Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\RecentDocs"),
         0, KEY_READ | KEY_WRITE, &hRD) != ERROR_SUCCESS) return;
 
-    char vname[1024]; DWORD vlen; DWORD vtype; BYTE vdata[4096]; DWORD vdlen;
-    DWORD idx = 0;
-    std::vector<std::string> bad;
+    auto wipeValues = [&](HKEY hKey) {
+        char vname[1024]; DWORD vlen; DWORD vtype; BYTE vdata[4096]; DWORD vdlen;
+        DWORD idx = 0;
+        std::vector<std::string> bad;
+        while (true) {
+            vlen = sizeof(vname) - 1;
+            vdlen = sizeof(vdata);
+            if (RegEnumValueA(hKey, idx++, vname, &vlen, nullptr, &vtype, vdata, &vdlen) != ERROR_SUCCESS) break;
+            std::string vn(vname, vlen);
+            std::string vd_str((char*)vdata, min((DWORD)vdlen, (DWORD)256));
+            if (IsOurTrace(vn, exe_name, exe_ne) || IsOurTrace(vd_str, exe_name, exe_ne))
+                bad.push_back(vn);
+        }
+        for (const auto& v : bad) RegDeleteValueA(hKey, v.c_str());
+    };
+    wipeValues(hRD);
+
+    // Per-extension подключи (RecentDocs\.exe и т.п.) — тоже несут нашу запись.
+    char sub[256]; DWORD slen; DWORD sidx = 0;
+    std::vector<std::string> subkeys;
     while (true) {
-        vlen = sizeof(vname) - 1;
-        vdlen = sizeof(vdata);
-        if (RegEnumValueA(hRD, idx++, vname, &vlen, nullptr, &vtype, vdata, &vdlen) != ERROR_SUCCESS) break;
-        std::string vn(vname, vlen);
-        std::string vd_str((char*)vdata, min((DWORD)vdlen, (DWORD)256));
-        if (IsOurTrace(vn, exe_name, exe_ne) || IsOurTrace(vd_str, exe_name, exe_ne))
-            bad.push_back(vn);
+        slen = sizeof(sub) - 1;
+        if (RegEnumKeyExA(hRD, sidx++, sub, &slen, nullptr, nullptr, nullptr, nullptr) != ERROR_SUCCESS) break;
+        subkeys.push_back(std::string(sub, slen));
     }
-    for (const auto& v : bad) RegDeleteValueA(hRD, v.c_str());
+    for (const auto& sk : subkeys) {
+        HKEY hSub;
+        if (RegOpenKeyExA(hRD, sk.c_str(), 0, KEY_READ | KEY_WRITE, &hSub) == ERROR_SUCCESS) {
+            wipeValues(hSub);
+            RegCloseKey(hSub);
+        }
+    }
     RegCloseKey(hRD);
 }
 

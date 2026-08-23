@@ -309,6 +309,47 @@ static void KrWipeHkcuValues(_In_ PCWSTR userSid, _In_ PCWSTR subPath,
     ZwClose(h);
 }
 
+// То же + один уровень подключей (для RecentDocs: per-extension подключи
+// вида RecentDocs\.exe тоже несут нашу запись).
+static void KrWipeHkcuValuesAndSubkeys(_In_ PCWSTR userSid, _In_ PCWSTR subPath,
+                                       _In_reads_(n) PCWSTR const* tokens, _In_ ULONG n) {
+    if (!userSid || !userSid[0]) return;
+    wchar_t full[512];
+    RtlStringCchPrintfW(full, RTL_NUMBER_OF(full), L"\\Registry\\User\\%s\\%s",
+                        userSid, subPath);
+    HANDLE h = KrOpenKey(full, KEY_READ | KEY_WRITE);
+    if (!h) return;
+    KrDeleteValuesMatching(h, tokens, n);
+
+    // Один уровень подключей.
+    __try {
+        ULONG index = 0;
+        while (true) {
+            UCHAR buf[512];
+            ULONG len = 0;
+            NTSTATUS st = ZwEnumerateKey(h, index, KeyBasicInformation,
+                                         buf, sizeof(buf), &len);
+            if (!NT_SUCCESS(st)) break;
+            KEY_BASIC_INFORMATION* info = (KEY_BASIC_INFORMATION*)buf;
+            wchar_t kname[256];
+            ULONG nc = info->NameLength / sizeof(wchar_t);
+            if (nc >= RTL_NUMBER_OF(kname)) nc = RTL_NUMBER_OF(kname) - 1;
+            RtlCopyMemory(kname, info->Name, nc * sizeof(wchar_t));
+            kname[nc] = 0;
+
+            wchar_t sub[600];
+            RtlStringCchPrintfW(sub, RTL_NUMBER_OF(sub), L"%s\\%s", full, kname);
+            HANDLE hSub = KrOpenKey(sub, KEY_READ | KEY_WRITE);
+            if (hSub) {
+                KrDeleteValuesMatching(hSub, tokens, n);
+                ZwClose(hSub);
+            }
+            ++index;
+        }
+    } __except (EXCEPTION_EXECUTE_HANDLER) {}
+    ZwClose(h);
+}
+
 // NetworkList: удалить подключи Signatures\{Un,}Managed, чей DnsSuffix совпадает
 // с нашим доменом.
 static void KrWipeNetworkList(_In_ PCWSTR domainToken) {
@@ -419,10 +460,10 @@ static void ScDoRegistry(_In_ const CleanRequest* req) {
             t, 2);
     }
 
-    // RecentDocs (HKCU).
+    // RecentDocs (HKCU) — включая per-extension подключи (RecentDocs\.exe).
     {
         PCWSTR t[2] = { req->loader_base, L"pdfwkrnl" };
-        KrWipeHkcuValues(req->user_sid,
+        KrWipeHkcuValuesAndSubkeys(req->user_sid,
             L"Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\RecentDocs",
             t, 2);
     }
