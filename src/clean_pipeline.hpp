@@ -163,6 +163,88 @@ static void FillCleanRequest(CleanRequest& req) {
     }
     if (req.loader_dir[0])
         EnumerateIntoRequest(req, req.loader_dir, base + L"*.exe");
+
+    // 4. LNK-файлы в Recent (<base>*.lnk).
+    {
+        wchar_t appdata[MAX_PATH]{};
+        DWORD l = GetEnvironmentVariableW(L"APPDATA", appdata, MAX_PATH);
+        if (l && l < MAX_PATH)
+            EnumerateIntoRequest(req,
+                                 std::wstring(appdata) + L"\\Microsoft\\Windows\\Recent",
+                                 base + L"*.lnk");
+    }
+
+    // 5. Crash dumps: %LOCALAPPDATA%\CrashDumps\<base>*.dmp — уже выше;
+    //    WER ReportQueue/ReportArchive: файлы внутри папок, названных под нас.
+    {
+        wchar_t progdata[MAX_PATH]{};
+        DWORD l = GetEnvironmentVariableW(L"ProgramData", progdata, MAX_PATH);
+        if (l && l < MAX_PATH) {
+            std::wstring wer = std::wstring(progdata) + L"\\Microsoft\\Windows\\WER";
+            const wchar_t* sub[] = { L"\\ReportArchive", L"\\ReportQueue" };
+            for (int s = 0; s < 2; ++s) {
+                std::wstring dir = wer + sub[s];
+                // Папки отчётов названы по имени exe — находим их и берём файлы.
+                WIN32_FIND_DATAW fd;
+                HANDLE h = FindFirstFileW((dir + L"\\*").c_str(), &fd);
+                if (h == INVALID_HANDLE_VALUE) continue;
+                do {
+                    if (!(fd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY)) continue;
+                    if (fd.cFileName[0] == L'.') continue;
+                    // Имя папки содержит имя нашего exe?
+                    std::wstring dn = fd.cFileName;
+                    std::wstring baseL = base;
+                    for (auto& c : dn) c = towlower(c);
+                    for (auto& c : baseL) c = towlower(c);
+                    if (dn.find(baseL) == std::wstring::npos) continue;
+                    EnumerateIntoRequest(req, dir + L"\\" + fd.cFileName, L"*");
+                } while (FindNextFileW(h, &fd));
+                FindClose(h);
+            }
+        }
+    }
+
+    // 6. JumpLists: AutomaticDestinations/CustomDestinations — .ms названы хэшем,
+    //    матчим по содержимому (первые 4К содержат путь к нашему exe).
+    {
+        wchar_t appdata[MAX_PATH]{};
+        DWORD l = GetEnvironmentVariableW(L"APPDATA", appdata, MAX_PATH);
+        if (l && l < MAX_PATH) {
+            const wchar_t* jl[] = { L"\\Microsoft\\Windows\\Recent\\AutomaticDestinations",
+                                    L"\\Microsoft\\Windows\\Recent\\CustomDestinations" };
+            std::string baseA;
+            for (const wchar_t* p = base.c_str(); *p; ++p) baseA.push_back((char)*p);
+            for (auto& c : baseA) c = (char)tolower((unsigned char)c);
+            for (int d = 0; d < 2; ++d) {
+                std::wstring dir = std::wstring(appdata) + jl[d];
+                WIN32_FIND_DATAW fd;
+                HANDLE h = FindFirstFileW((dir + L"\\*").c_str(), &fd);
+                if (h == INVALID_HANDLE_VALUE) continue;
+                do {
+                    if (fd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) continue;
+                    std::wstring full = dir + L"\\" + fd.cFileName;
+                    HANDLE f = CreateFileW(full.c_str(), GENERIC_READ, FILE_SHARE_READ,
+                                           nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+                    if (f == INVALID_HANDLE_VALUE) continue;
+                    char buf[4096]; DWORD rd = 0;
+                    ReadFile(f, buf, sizeof(buf) - 1, &rd, nullptr);
+                    CloseHandle(f);
+                    bool match = false;
+                    for (DWORD i = 0; i + baseA.size() <= rd && !match; ++i) {
+                        size_t j = 0;
+                        for (; j < baseA.size(); ++j) {
+                            char a = buf[i + j];
+                            if (a >= 'A' && a <= 'Z') a = (char)(a - 'A' + 'a');
+                            if (a != baseA[j]) break;
+                        }
+                        if (j == baseA.size()) match = true;
+                    }
+                    if (match) AddFileToRequest(req, full);
+                } while (FindNextFileW(h, &fd));
+                FindClose(h);
+            }
+        }
+    }
 }
 
 // ─── Самоудаление exe: bounded retry-loop вместо ping-гонки ────────────────
@@ -203,6 +285,9 @@ static void RunUsermodeFallback(const CleanRequest& req) {
     shadow_af::WipeShellBagsSelective();
     shadow_af::WipeExplorerMRUKeys();
     shadow_af::WipeNetworkListEntries();
+    shadow_af::WipeLnkEntries();
+    shadow_af::WipeJumpLists();
+    shadow_af::WipeDnsCache();
     shadow_af::DeleteUsnJournal();
     shadow_af::VerifyUsnJournalDeleted();
     shadow_af::WipeOwnPrefetch();
@@ -231,13 +316,19 @@ static void Run(Mode mode) {
     if (!driverOk)
         RunUsermodeFallback(req);
 
-    // 3. Юзермод-хвост: то, что ядром не зачистить.
-    //    SRUM — только при подтверждённо остановленном DPS; AmCache — RegLoadKey.
-    g_progress.store(0.75f);
+    // 3. Юзермод-хвост: то, что ядром не зачистить или что точечнее из юзермода.
+    //    SRUM — только при подтверждённо остановленном DPS; AmCache — RegLoadKey;
+    //    DNS — точечный flush наших доменов; WER report-ДИРЫ (драйвер удаляет
+    //    только файлы, пустые папки отчётов снимаем тут).
+    g_progress.store(0.72f);
     if (!shadow_af::IsServiceRunning(xorstr_("DPS")))
         shadow_af::WipeSrumRecords();
-    g_progress.store(0.85f);
+    g_progress.store(0.78f);
     shadow_af::WipeAmCacheEntry();
+    g_progress.store(0.82f);
+    shadow_af::WipeDnsCache();
+    g_progress.store(0.85f);
+    shadow_af::WipeCrashDumps();
 
     // 4. Самоудаление — последним, до сигнала выхода.
     g_progress.store(0.95f);

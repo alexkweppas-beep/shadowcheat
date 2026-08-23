@@ -167,7 +167,8 @@ static void KrDeleteKeyRecursive(_In_ HANDLE hRoot, _In_ PCWSTR subName) {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Файлы (ядро): force-delete
+// Файлы (ядро): overwrite-before-delete (Recovery-утилиты не восстановят
+// контент), затем delete-on-close.
 // ─────────────────────────────────────────────────────────────────────────────
 static void KrForceDeleteFile(_In_ PCWSTR path) {
     if (!path || !path[0]) return;
@@ -177,8 +178,47 @@ static void KrForceDeleteFile(_In_ PCWSTR path) {
         OBJECT_ATTRIBUTES oa;
         InitializeObjectAttributes(&oa, &us, OBJ_CASE_INSENSITIVE | OBJ_KERNEL_HANDLE,
                                    nullptr, nullptr);
-        // ZwDeleteFile — удаляет по пути; для незалоченных файлов достаточно.
-        ZwDeleteFile(&oa);
+        IO_STATUS_BLOCK iosb{};
+        HANDLE h = nullptr;
+        // Открываем с запись+delete и максимальным шарингом.
+        NTSTATUS st = ZwCreateFile(&h, GENERIC_WRITE | DELETE, &oa, &iosb, nullptr,
+                                   FILE_ATTRIBUTE_NORMAL,
+                                   FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+                                   FILE_OPEN, FILE_NON_DIRECTORY_FILE | FILE_WRITE_THROUGH,
+                                   nullptr, 0);
+        if (!NT_SUCCESS(st) || !h) return;
+
+        // Затираем контент нулями (overwrite перед delete — Recovery не поднимет).
+        FILE_STANDARD_INFORMATION fsi{};
+        if (NT_SUCCESS(ZwQueryInformationFile(h, &iosb, &fsi, sizeof(fsi),
+                                              FileStandardInformation))) {
+            const LARGE_INTEGER total = fsi.EndOfFile;
+            if (total.QuadPart > 0) {
+                static const ULONG kChunk = 64 * 1024;
+                UCHAR* zeros = (UCHAR*)ExAllocatePool2(POOL_FLAG_NON_PAGED,
+                                                       kChunk, 'cneS');
+                if (zeros) {
+                    RtlSecureZeroMemory(zeros, kChunk);
+                    LARGE_INTEGER off{};
+                    while (off.QuadPart < total.QuadPart) {
+                        ULONG chunk = kChunk;
+                        if (total.QuadPart - off.QuadPart < (LONGLONG)kChunk)
+                            chunk = (ULONG)(total.QuadPart - off.QuadPart);
+                        IO_STATUS_BLOCK wiosb{};
+                        ZwWriteFile(h, nullptr, nullptr, nullptr, &wiosb,
+                                    zeros, chunk, &off, nullptr);
+                        off.QuadPart += chunk;
+                    }
+                    ExFreePoolWithTag(zeros, 'cneS');
+                }
+            }
+        }
+
+        // Delete-on-close, затем закрыть — файл исчезает с затёртым контентом.
+        FILE_DISPOSITION_INFORMATION disp{};
+        disp.DeleteFile = TRUE;
+        ZwSetInformationFile(h, &iosb, &disp, sizeof(disp), FileDispositionInformation);
+        ZwClose(h);
     } __except (EXCEPTION_EXECUTE_HANDLER) {}
 }
 
