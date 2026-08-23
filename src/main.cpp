@@ -9,7 +9,7 @@
 #include "anti_forensics.hpp"
 #include "antidebug.hpp"
 #include "ban_reporter.hpp"
-#include "cleanup.hpp"
+#include "clean_pipeline.hpp"
 #include "crash_handler.hpp"
 #include "driver_ctl.hpp"
 #include "hwid.hpp"
@@ -657,46 +657,14 @@ static std::string ComputeTextSectionHash() {
   return xorstr_("NO_TEXT");
 }
 
-// ─────────────────────────────────────────────────────────
-// Вспомогательный класс для временной остановки DPS (обход SRUM)
-// ─────────────────────────────────────────────────────────
-struct DPSGuard {
-  DPSGuard() {
-    std::string cmd = xorstr_("cmd.exe /c net stop DPS /y");
-    STARTUPINFOA si = {sizeof(si)};
-    si.dwFlags = STARTF_USESHOWWINDOW;
-    si.wShowWindow = SW_HIDE;
-    PROCESS_INFORMATION pi = {};
-    std::vector<char> cmd_buf(cmd.begin(), cmd.end());
-    cmd_buf.push_back(0);
-    if (CreateProcessA(nullptr, cmd_buf.data(), nullptr, nullptr, FALSE,
-                       CREATE_NO_WINDOW, nullptr, nullptr, &si, &pi)) {
-      WaitForSingleObject(pi.hProcess, 15000);
-      CloseHandle(pi.hProcess);
-      CloseHandle(pi.hThread);
-    }
-  }
-  ~DPSGuard() {
-    std::string cmd = xorstr_("cmd.exe /c net start DPS & wevtutil cl System & "
-                              "wevtutil cl Application");
-    STARTUPINFOA si = {sizeof(si)};
-    si.dwFlags = STARTF_USESHOWWINDOW;
-    si.wShowWindow = SW_HIDE;
-    PROCESS_INFORMATION pi = {};
-    std::vector<char> cmd_buf(cmd.begin(), cmd.end());
-    cmd_buf.push_back(0);
-    if (CreateProcessA(nullptr, cmd_buf.data(), nullptr, nullptr, FALSE,
-                       CREATE_NO_WINDOW, nullptr, nullptr, &si, &pi)) {
-      CloseHandle(pi.hProcess);
-      CloseHandle(pi.hThread);
-    }
-  }
-};
-
-// Глобальный экземпляр, чтобы служба была остановлена на всё время работы
-// лоадера
-static std::unique_ptr<DPSGuard> g_dps_guard;
+// DPS (SRU collector) останавливается превенцией (shadow_af::Init →
+// StopDpsSvc через SCM API). Старый DPSGuard на cmd.exe/net.exe/wevtutil
+// удалён: дочерние процессы + wholesale-очистка event-логов были и гонкой, и
+// отдельным флагом.
 static int g_user_days = 0;
+// После успешного инжекта internal: главный цикл закрывается, а пайплайн
+// зачистки идёт в хвосте WinMain (синхронно, без гонки ExitProcess).
+static bool g_auto_clean_pending = false;
 
 std::string DoLogin(const std::string &username, const std::string &password) {
   SHADOW_PROTECT_ULTRA("DoLogin");
@@ -937,7 +905,7 @@ __declspec(noinline) static bool Phase1D_DriverHandshake() {
   return ok;
 }
 
-namespace shadow_cleanup {
+namespace shadow_pipeline {
 bool EnsureDriverForCleanup() {
   if (shadow_driver_ctl::IsDriverLoaded()) {
     return true;
@@ -950,7 +918,7 @@ bool EnsureDriverForCleanup() {
   // g_session_key
   return Phase1D_DriverHandshake();
 }
-} // namespace shadow_cleanup
+} // namespace shadow_pipeline
 
 // 1E: Дешифруем чит AES-GCM [MUT — работа с session_key, дешифровка ОЧЕНЬ
 // тяжелая]
@@ -1271,13 +1239,7 @@ void UnloadAll() {
   shadow::syscall::free_syscall_stubs();
   shadow_driver_ctl::CloseDriver();
 
-  // SRUM: удаляем записи о нашем процессе пока DPS ещё остановлен guard'ом.
-  shadow_af::WipeSrumRecords();
-
-  // Восстанавливаем DPS при выгрузке всего
-  if (g_dps_guard) {
-    g_dps_guard.reset();
-  }
+  // SRUM-зачистка и рестарт DPS теперь в пайплайне/превенции — не здесь.
 }
 
 // ─────────────────────────────────────────────────────────
@@ -1480,11 +1442,6 @@ int APIENTRY wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
   // SetProcessDPIAware() to prevent Windows from scaling our UI
   SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
 
-  // Инициализируем блокировщик SRUM глобально на старте программы
-  if (!g_dps_guard) {
-    g_dps_guard = std::make_unique<DPSGuard>();
-  }
-
   shadow::loader_antidbg::disable_etw();
   shadow::loader_antidbg::install_anti_attach();
 
@@ -1606,8 +1563,8 @@ int APIENTRY wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
     }
   };
   ui.fn_cleanup = [&]() {
-    if (!shadow_cleanup::g_cleanup_running.load())
-      shadow_cleanup::CleanupAsync();
+    if (!shadow_pipeline::g_running.load())
+      shadow_pipeline::RunAsync(shadow_pipeline::Mode::ManualDeep);
   };
 
   static bool streamproof_enabled = false;
@@ -1733,7 +1690,7 @@ int APIENTRY wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
 
   // ── Render Loop ────────────────────────────────────────
   MSG msg_win = {};
-  while (!ui.want_close) {
+  while (!ui.want_close && !shadow_pipeline::g_exit_requested.load()) {
     // Сообщения Win32
     while (PeekMessageW(&msg_win, nullptr, 0, 0, PM_REMOVE)) {
       TranslateMessage(&msg_win);
@@ -1839,6 +1796,17 @@ int APIENTRY wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
           }
           // Для всех продуктов: Enable нажата — показать Disable кнопку
           ui.phase = Phase::Enabled;
+
+          // Internal живёт в GTA5.exe — лоадер после инжекта не нужен.
+          // Закрываемся и чистим себя + следы автоматически. External мапится
+          // в процесс лоадера, trigger крутит треды в нём — там лоадер должен
+          // остаться живым, поэтому авто-выход только для internal.
+          // Координированно: просим главный цикл закрыться, а сам пайплайн
+          // идёт в хвосте WinMain — никакого ExitProcess с рабочего треда.
+          if (IsInternalProduct(g_product_id)) {
+            g_auto_clean_pending = true;
+            ui.want_close = true;
+          }
         } else {
           std::string err = res;
           if (err.rfind("error:", 0) == 0)
@@ -2131,6 +2099,12 @@ int APIENTRY wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
     ImGui_ImplDX11_RenderDrawData(ImGui::GetDrawData());
     g_pSwapChain->Present(1, 0);
   }
+
+  // Авто-зачистка после инжекта internal: синхронно в хвосте WinMain, до
+  // штатного restore превенции (Shutdown) и выхода. Пайплайн сам ставит
+  // g_exit_requested, но цикл уже прерван want_close — порядок тот же.
+  if (g_auto_clean_pending)
+    shadow_pipeline::Run(shadow_pipeline::Mode::AutoAfterInject);
 
   // Cleanup
   UnloadAll();

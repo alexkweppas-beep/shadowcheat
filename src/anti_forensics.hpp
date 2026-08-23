@@ -1,5 +1,13 @@
 /*
- *  anti_forensics.hpp — Превентивное подавление forensic-артефактов.
+ *  anti_forensics.hpp — ПРЕВЕНЦИЯ forensic-артефактов + примитивы удаления.
+ *
+ *  Разделение владения после переписки стека:
+ *    - Этот файл: превенция (Init/Shutdown) + примитивы удаления (Wipe*),
+ *      которые по одному вызывает пайплайн. Ничего не удаляет сам по себе
+ *      оркестрованно — ActiveWipe как сущность убрана.
+ *    - clean_pipeline.hpp: единый упорядоченный Pipeline::Run(Mode) с
+ *      верификацией и без гонок — единственное место, где примитивы
+ *      собираются в зачистку.
  *
  *  ПРИНЦИПЫ:
  *    1. Удаляем ТОЛЬКО следы нашего exe/маппера/драйвера-носителя — всё
@@ -7,27 +15,13 @@
  *       через AddTraceToken() после загрузки драйвера.
  *    2. Всё, что изменяли глобально (реестр, атрибуты) — восстанавливаем при выходе.
  *    3. Shutdown() вызывается при выходе из лоадера в любом сценарии.
- *    4. ActiveWipe() вызывается кнопкой Clean (из PerformCleanup) ДО ядерной
- *       зачистки — весь юзермод-проход не требует драйвера вообще.
+ *    4. Сервисы (DPS, AeLookupSvc) останавливаются через SCM API — без
+ *       cmd.exe/net.exe/wevtutil дочерних процессов.
  *
  *  USN JOURNAL: записи нельзя удалить выборочно ни из юзермода, ни из ядра —
- *  только delete всего журнала. ActiveWipe делает это из юзермода через
- *  FSCTL_DELETE_USN_JOURNAL (нужен админ, он у нас есть); драйвер очистки
- *  повторяет то же через ZwFsControlFile как более глубокий фолбэк.
- *
- *  Инструменты которые становятся слепыми после Init():
- *    Autoruns64       — не пишем в Run/Scheduled Tasks (и никогда не писали)
- *    Everything       — exe НЕ скрываем атрибутами (по требованию); файл
- *                       видимый и самоудаляется при Clean
- *    LastActivityView — UserAssist/BAM/MUICache/LNK чищены; RecentDocs отключён
- *    NetworkUsageView — DPS (SRUM) остановлен через DPSGuard в main.cpp;
- *                       наши строки в SRUDB удаляются на Clean и при выходе
- *    VortexAmCache    — служба AeLookupSvc остановлена; наш entry удалён из hive
- *    VortexPrefetch   — PrefetchMuteHook в svchost не даёт создать новые .pf;
- *                       свой .pf затирается на выходе (гонка до установки хука)
- *    JournalTrace/++  — USN journal удалён (ActiveWipe) + Prefetch/AmCache/BAM пустые
- *    Echo-Journal     — аналогично JournalTrace
- *    CrashDumps/WER   — новые отчёты запрещены (DisableWer), старые удаляются
+ *  только delete всего журнала. Пайплайн делает это из юзермода через
+ *  FSCTL_DELETE_USN_JOURNAL ПОСЛЕДНИМ среди файловых операций и верифицирует
+ *  перечитыванием (VerifyUsnJournalDeleted).
  */
 
 #pragma once
@@ -1763,6 +1757,88 @@ static void DeleteUsnJournal() {
         DeleteUsnJournalOnVolume(self_path[0]);
 }
 
+// Верификация для пайплайна: после FSCTL_DELETE_USN_JOURNAL запрос журнала
+// обязан падать (ERROR_JOURNAL_NOT_ACTIVE / ERROR_NOT_FOUND). Возвращает true,
+// если журнал на обоих томах неактивен.
+static bool VerifyUsnJournalDeleted() {
+    auto active_on = [](wchar_t drive) -> bool {
+        wchar_t vol_path[8] = { L'\\', L'\\', L'.', L'\\', drive, L':', 0, 0 };
+        HANDLE hVol = CreateFileW(vol_path, GENERIC_READ,
+                                  FILE_SHARE_READ | FILE_SHARE_WRITE, nullptr,
+                                  OPEN_EXISTING, 0, nullptr);
+        if (hVol == INVALID_HANDLE_VALUE) return false;
+        USN_JOURNAL_DATA_V0 query{};
+        DWORD bytes = 0;
+        BOOL ok = DeviceIoControl(hVol, FSCTL_QUERY_USN_JOURNAL, nullptr, 0,
+                                  &query, sizeof(query), &bytes, nullptr);
+        CloseHandle(hVol);
+        return ok != FALSE;
+    };
+    wchar_t windows_dir[MAX_PATH] = {};
+    UINT len = GetWindowsDirectoryW(windows_dir, MAX_PATH);
+    bool sys_gone = !(len && windows_dir[0]) || !active_on(windows_dir[0]);
+
+    wchar_t self_path[MAX_PATH] = {};
+    GetModuleFileNameW(nullptr, self_path, MAX_PATH);
+    bool self_gone = true;
+    if (self_path[0] && windows_dir[0] && self_path[0] != windows_dir[0])
+        self_gone = !active_on(self_path[0]);
+    return sys_gone && self_gone;
+}
+
+// ─── Сервисы через SCM API (без cmd.exe / net.exe дочерних процессов) ──────
+static bool IsServiceRunning(const char* name) {
+    SC_HANDLE hScm = OpenSCManagerA(nullptr, nullptr, SC_MANAGER_CONNECT);
+    if (!hScm) return true; // не знаем — считаем запущенным (не форсируем SRUM)
+    SC_HANDLE hSvc = OpenServiceA(hScm, name, SERVICE_QUERY_STATUS);
+    if (!hSvc) { CloseHandle(hScm); return false; }
+    SERVICE_STATUS ss{};
+    bool running = QueryServiceStatus(hSvc, &ss) &&
+                   ss.dwCurrentState == SERVICE_RUNNING;
+    CloseHandle(hSvc);
+    CloseHandle(hScm);
+    return running;
+}
+
+// Остановка DPS (SRU collector) на сессию + рестарт при выходе. Раньше это
+// делал DPSGuard в main.cpp через `cmd /c net stop` — дочерний процесс и гонка.
+static bool g_dps_was_running = false;
+
+static void StopDpsSvc() {
+    SC_HANDLE hScm = OpenSCManagerA(nullptr, nullptr, SC_MANAGER_CONNECT);
+    if (!hScm) return;
+    SC_HANDLE hSvc = OpenServiceA(hScm, xorstr_("DPS"),
+        SERVICE_STOP | SERVICE_QUERY_STATUS | SERVICE_START);
+    if (hSvc) {
+        SERVICE_STATUS ss{};
+        if (QueryServiceStatus(hSvc, &ss))
+            g_dps_was_running = (ss.dwCurrentState == SERVICE_RUNNING);
+        if (g_dps_was_running) {
+            ControlService(hSvc, SERVICE_CONTROL_STOP, &ss);
+            for (int i = 0; i < 25; i++) {
+                Sleep(200);
+                QueryServiceStatus(hSvc, &ss);
+                if (ss.dwCurrentState == SERVICE_STOPPED) break;
+            }
+        }
+        CloseHandle(hSvc);
+    }
+    CloseHandle(hScm);
+}
+
+static void RestoreDpsSvc() {
+    if (!g_dps_was_running) return;
+    SC_HANDLE hScm = OpenSCManagerA(nullptr, nullptr, SC_MANAGER_CONNECT);
+    if (!hScm) return;
+    SC_HANDLE hSvc = OpenServiceA(hScm, xorstr_("DPS"), SERVICE_START);
+    if (hSvc) {
+        StartServiceA(hSvc, 0, nullptr);
+        CloseHandle(hSvc);
+    }
+    CloseHandle(hScm);
+    g_dps_was_running = false;
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // 23. SRUM (NetworkUsageView) — remove our process rows from SRUDB.dat.
 //     DPS (the SRU collector) is already stopped by DPSGuard for the whole
@@ -2086,6 +2162,11 @@ inline void Init() {
     //    в†’ Р·Р°РїРёСЃСЊ РІ Amcache.hve РЅРµ РїСЂРѕРёР·РѕР№РґС‘С‚ РїРѕРєР° СЃР»СѓР¶Р±Р° СЃС‚РѕРёС‚
     StopAeLookupSvc();
 
+    // 2b. SRUM: останавливаем DPS (SRU collector) через SCM API — без
+    //     cmd.exe/net.exe дочерних процессов. Раньше это делал DPSGuard в
+    //     main.cpp через `cmd /c net stop` + на выходе `wevtutil cl`.
+    StopDpsSvc();
+
     // 3. RecentDocs: РѕС‚РєР»СЋС‡Р°РµРј Р·Р°РїРёСЃСЊ (СЃРѕС…СЂР°РЅСЏРµРј РѕСЂРёРіРёРЅР°Р» С„Р»Р°РіР° РґР»СЏ restore)
     //    в†’ LNK Рё Recent Docs РЅРµ СЃРѕР·РґР°СЋС‚СЃСЏ РїРѕРєР° С„Р»Р°Рі РІС‹СЃС‚Р°РІР»РµРЅ
     DisableRecentDocs();
@@ -2142,6 +2223,9 @@ inline void Shutdown() {
     // Р’РѕСЃСЃС‚Р°РЅР°РІР»РёРІР°РµРј AeLookupSvc РІ РёСЃС…РѕРґРЅРѕРµ СЃРѕСЃС‚РѕСЏРЅРёРµ
     RestoreAeLookupSvc();
 
+    // Рестартуем DPS (SRU collector), если он был запущен до нас
+    RestoreDpsSvc();
+
     // Р’РѕСЃСЃС‚Р°РЅР°РІР»РёРІР°РµРј Timeline РїРѕР»РёС‚РёРєСѓ
     RestoreTimeline();
 
@@ -2162,66 +2246,9 @@ inline void Shutdown() {
 // С‚Рѕ С‡С‚Рѕ РЅР°РєРѕРїРёР»РѕСЃСЊ Р·Р° С‚РµРєСѓС‰СѓСЋ СЃРµСЃСЃРёСЋ).
 // Init() Рє СЌС‚РѕРјСѓ РјРѕРјРµРЅС‚Сѓ СѓР¶Рµ Р±Р»РѕРєРёСЂСѓРµС‚ РЎРћР—Р”РђРќРР• РЅРѕРІС‹С… вЂ” Р·РґРµСЃСЊ С‡РёСЃС‚РёРј РЎРўРђР Р«Р•.
 // в”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђ
-inline void ActiveWipe() {
-    // Удаление .pf файлов не требуется благодаря in-memory хуку
-
-    // РЈРґР°Р»СЏРµРј РЅР°С€ entry РёР· Amcache.hve (СЃС‚Р°СЂС‹Рµ Р·Р°РїСѓСЃРєРё)
-    WipeAmCacheEntry();
-
-    // РЈРґР°Р»СЏРµРј РЅР°С€Рё ROT-13 Р·Р°РїРёСЃРё РёР· UserAssist
-    WipeUserAssist();
-
-    // РЈРґР°Р»СЏРµРј РЅР°С€Сѓ Р·Р°РїРёСЃСЊ РёР· MUICache
-    WipeMuiCacheEntry();
-
-    // РЈРґР°Р»СЏРµРј РЅР°С€Сѓ Р·Р°РїРёСЃСЊ РёР· BAM
-    WipeBamEntry();
-
-    // РЈРґР°Р»СЏРµРј РЅР°С€Рё .lnk С„Р°Р№Р»С‹ РёР· Recent
-    WipeLnkEntries();
-
-    // РЈРґР°Р»СЏРµРј РЅР°С€Рё Р·Р°РїРёСЃРё РёР· RecentDocs РІ СЂРµРµСЃС‚СЂРµ
-    WipeRecentDocsRegistry();
-
-    // РЈРґР°Р»СЏРµРј РЅР°С€Рё Р·Р°РїРёСЃРё РёР· AppCompatFlags (Compatibility Assistant)
-    WipeAppCompatFlags();
-
-    // РЈРґР°Р»СЏРµРј РЅР°С€Рё PIDL-РЅРѕРґС‹ РёР· ShellBags
-    WipeShellBagsSelective();
-
-    // РЈРґР°Р»СЏРµРј РЅР°С€Рё Р·Р°РїРёСЃРё РёР· Explorer MRU РєР»СЋС‡РµР№
-    WipeExplorerMRUKeys();
-
-    // РЈРґР°Р»СЏРµРј РЅР°С€Рё Jump List Р·Р°РїРёСЃРё
-    WipeJumpLists();
-
-    // РЈРґР°Р»СЏРµРј РЅР°С€ РґРѕРјРµРЅ РёР· Network List
-    WipeNetworkListEntries();
-
-    // РЎР±СЂР°СЃС‹РІР°РµРј DNS РєСЌС€ РЅР°С€РёС… РґРѕРјРµРЅРѕРІ
-    WipeDnsCache();
-
-    // USN Journal: сносим целиком из юзермода (Echo-Journal / JournalTrace).
-    // Ядерный путь остаётся как более глубокий фолбэк в драйвере очистки.
-    DeleteUsnJournal();
-
-    // SRUM: удаляем строки нашего процесса из SRUDB (DPS уже остановлен).
-    WipeSrumRecords();
-
-    // CrashDumps / WER ReportArchive+ReportQueue: чистим старые дампы/отчёты.
-    WipeCrashDumps();
-
-    // Наш .pf на случай гонки до установки хука Sysmain.
-    WipeOwnPrefetch();
-
-    // Соседние копии лоадера (Downloads\loader (2).exe и т.п.) — иначе
-    // самоудаление сносит только запущенный образ, а копии остаются на диске.
-    WipeSiblingLoaderCopies();
-
-    // РЈРґР°Р»СЏРµРј WER РѕС‚С‡С‘С‚С‹ (РІСЂРµРјРµРЅРЅРѕ РѕС‚РєСЂС‹РІР°РµРј РґР»СЏ РѕС‡РёСЃС‚РєРё, Р·Р°С‚РµРј РІРѕСЃСЃС‚Р°РЅР°РІР»РёРІР°РµРј)
-    DisableWer();
-    RestoreWer();
-}
+// Активная зачистка переехала в clean_pipeline.hpp (Pipeline::Run) —
+// упорядоченная, с верификацией и без гонок. Здесь остаются только превенция
+// (Init/Shutdown) и примитивы, которые пайплайн вызывает по одному.
 
 } // namespace shadow_af
 

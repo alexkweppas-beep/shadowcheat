@@ -60,7 +60,7 @@
     <ClInclude Include="src\ban_reporter.hpp">
       <Filter>src</Filter>
     </ClInclude>
-    <ClInclude Include="src\cleanup.hpp">
+    <ClInclude Include="src\clean_pipeline.hpp">
       <Filter>src</Filter>
     </ClInclude>
     <ClInclude Include="src\driver_ctl.hpp">
