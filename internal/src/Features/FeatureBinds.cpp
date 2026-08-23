@@ -134,6 +134,43 @@ namespace FeatureBinds
         return &binding;
     }
 
+    Binding* RegisterAction(
+        const char* id,
+        const char* label,
+        void (*action)()) noexcept
+    {
+        if (!action || !id || !*id)
+            return nullptr;
+        const std::uint64_t stableId = HashLabel(id);
+        for (int index = 0; index < g_Count; ++index)
+        {
+            if (g_Bindings[index].value ||
+                g_Bindings[index].stableId != stableId)
+                continue;
+            // The same action can sit on more than one page under different
+            // wording; the last one drawn names the bind.
+            CopyLabel(
+                g_Bindings[index].label,
+                sizeof(g_Bindings[index].label),
+                label);
+            g_Bindings[index].action = action;
+            return &g_Bindings[index];
+        }
+        if (g_Count >= kCapacity)
+            return nullptr;
+        Binding& binding = g_Bindings[g_Count++];
+        binding = {};
+        binding.action = action;
+        binding.stableId = stableId;
+        binding.mode = Toggle;
+        CopyLabel(
+            binding.label,
+            sizeof(binding.label),
+            label);
+        ApplyPending(binding);
+        return &binding;
+    }
+
     void Tick(bool suppressActivation) noexcept
     {
         const bool suppressed =
@@ -142,7 +179,7 @@ namespace FeatureBinds
         for (int index = 0; index < g_Count; ++index)
         {
             Binding& binding = g_Bindings[index];
-            if (!binding.value ||
+            if ((!binding.value && !binding.action) ||
                 binding.key <= 0 ||
                 binding.key >= 256)
                 continue;
@@ -150,7 +187,12 @@ namespace FeatureBinds
                 (GetAsyncKeyState(binding.key) & 0x8000) != 0;
             if (!suppressed)
             {
-                if (binding.mode == Hold)
+                if (binding.action)
+                {
+                    if (down && !binding.previousDown)
+                        binding.action();
+                }
+                else if (binding.mode == Hold)
                 {
                     *binding.value = down;
                 }

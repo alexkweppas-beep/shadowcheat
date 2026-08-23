@@ -4297,6 +4297,11 @@ static const char* key_label(int vk) noexcept
     return name;
 }
 
+const char* c_widgets::key_name(int vk)
+{
+    return key_label(vk);
+}
+
 bool c_widgets::keybind(const char* label, int* key, const char* icon)
 {
     struct keybind_state

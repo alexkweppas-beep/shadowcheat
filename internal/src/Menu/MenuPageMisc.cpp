@@ -143,7 +143,8 @@ namespace Menu
                 T("Heal", "Вылечить", "Вилікувати"),
                 ImVec2(half, 34.f * scale),
                 false,
-                ICON_FA_KIT_MEDICAL))
+                ICON_FA_KIT_MEDICAL,
+                &MiscFeatures::RequestHeal))
             MiscFeatures::RequestHeal();
         ImGui::SameLine(0.f, gap);
         if (MenuUi::ActionButton(
@@ -151,14 +152,16 @@ namespace Menu
                 T("Give Armor", "Дать броню", "Дати броню"),
                 ImVec2(half, 34.f * scale),
                 false,
-                ICON_FA_SHIELD))
+                ICON_FA_SHIELD,
+                &MiscFeatures::RequestArmor))
             MiscFeatures::RequestArmor();
         if (MenuUi::ActionButton(
                 "misc_respawn",
                 T("Respawn", "Респавн", "Респавн"),
                 ImVec2(half, 34.f * scale),
                 false,
-                ICON_FA_ROTATE))
+                ICON_FA_ROTATE,
+                &MiscFeatures::RequestRespawn))
             MiscFeatures::RequestRespawn();
         ImGui::SameLine(0.f, gap);
         if (MenuUi::ActionButton(
@@ -166,14 +169,16 @@ namespace Menu
                 T("Reset Animations", "Сброс анимаций", "Скинути анімації"),
                 ImVec2(half, 34.f * scale),
                 false,
-                ICON_FA_PERSON))
+                ICON_FA_PERSON,
+                &MiscFeatures::RequestResetAnimations))
             MiscFeatures::RequestResetAnimations();
         if (MenuUi::ActionButton(
                 "misc_suicide",
                 T("Suicide", "Самоубийство", "Самогубство"),
                 ImVec2(ImGui::GetContentRegionAvail().x, 34.f * scale),
                 false,
-                ICON_FA_SKULL))
+                ICON_FA_SKULL,
+                &MiscFeatures::RequestSuicide))
             MiscFeatures::RequestSuicide();
         MenuUi::EndInspectorIsland();
     }
@@ -371,7 +376,8 @@ namespace Menu
                     ImGui::GetContentRegionAvail().x,
                     38.f * UIScale()),
                 true,
-                ICON_FA_WRENCH))
+                ICON_FA_WRENCH,
+                &MiscFeatures::RequestRepairVehicle))
             MiscFeatures::RequestRepairVehicle();
         MenuUi::EndInspectorIsland();
     }

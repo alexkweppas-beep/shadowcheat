@@ -14,16 +14,29 @@ if(NOT PROJECT_NAME)
     project(shadow_internal LANGUAGES CXX C)
 endif()
 
+# Off for anything a user ever runs: development tooling writes a crash log,
+# profiler reports and an event log to disk, which the shipping payload must
+# never do. This is the switch Hooks.h already checks to un-stub HLog, so
+# turning it on lights up the breadcrumbs that are already in the code.
+#
+# The implementations live under src/Dev and are excluded rather than merely
+# stubbed, so that directory can be absent entirely. That is what makes the user
+# tree publishable: with the switch off the build does not reference it, and the
+# headers compile the entry points down to inline no-ops.
+option(SHADOW_DEV
+    "Build development tooling: crash log, profiler, event logger" OFF)
+
 file(GLOB_RECURSE SHADOW_INTERNAL_SOURCES CONFIGURE_DEPENDS
     "${CMAKE_CURRENT_SOURCE_DIR}/src/*.cpp")
-
-# Off for anything a user ever runs: it writes a crash log to disk, which the
-# shipping payload must never do. This is the switch Hooks.h already checks to
-# un-stub HLog, so turning it on lights up the breadcrumbs that are already in
-# the code and points them at src/Main/Diagnostics.cpp. Deliberately not
-# RAGEMP_DEV_BUILD, which gates development-tree code that does not exist here.
-option(SHADOW_INTERNAL_DIAGNOSTICS
-    "Write a crash log and record exception addresses" OFF)
+if(SHADOW_DEV)
+    if(NOT EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/src/Dev")
+        message(FATAL_ERROR
+            "SHADOW_DEV is ON but src/Dev is missing. This tree is the user "
+            "build; configure with -DSHADOW_DEV=OFF.")
+    endif()
+else()
+    list(FILTER SHADOW_INTERNAL_SOURCES EXCLUDE REGEX "/src/Dev/")
+endif()
 
 
 # MinHook is vendored: it is three C files plus the length disassembler, and
@@ -61,7 +74,7 @@ target_compile_definitions(internal PRIVATE
     UNICODE
     _UNICODE)
 
-if(SHADOW_INTERNAL_DIAGNOSTICS)
+if(SHADOW_DEV)
     target_compile_definitions(internal PRIVATE RAGEMP_DIAGNOSTICS)
 endif()
 

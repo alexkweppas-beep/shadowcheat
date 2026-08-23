@@ -158,14 +158,19 @@ namespace
         if (gui->keybind("Key##feature_bind", &binding->key))
             FeatureBinds::ResetEdge(binding);
         gui->separator();
-        const char* modes[] = {"Hold", "Toggle"};
-        gui->dropdown(
-            "Mode##feature_bind",
-            &binding->mode,
-            modes,
-            IM_ARRAYSIZE(modes),
-            2);
-        gui->separator();
+        // An action runs once per press, so offering Hold would only promise
+        // something the binding cannot do.
+        if (!binding->action)
+        {
+            const char* modes[] = {"Hold", "Toggle"};
+            gui->dropdown(
+                "Mode##feature_bind",
+                &binding->mode,
+                modes,
+                IM_ARRAYSIZE(modes),
+                2);
+            gui->separator();
+        }
         if (gui->button(
                 "Clear bind##feature_bind",
                 ImVec2(
@@ -2272,7 +2277,8 @@ bool ActionButton(
     const char* label,
     const ImVec2& size,
     bool primary,
-    const char* icon) noexcept
+    const char* icon,
+    void (*bindAction)()) noexcept
 {
     ImGui::PushID(id ? id : "action");
     const MenuTheme::Palette& tokens = MenuTheme::Colors();
@@ -2295,6 +2301,24 @@ bool ActionButton(
     const bool pressed = ImGui::InvisibleButton("##action", buttonSize);
     const bool hovered = ImGui::IsItemHovered();
     const bool held = ImGui::IsItemActive();
+
+    FeatureBinds::Binding* binding = nullptr;
+    if (bindAction)
+    {
+        binding = FeatureBinds::RegisterAction(id, label, bindAction);
+        if (binding)
+        {
+            if (hovered &&
+                ImGui::IsMouseClicked(ImGuiMouseButton_Right))
+            {
+                gui->open_popup_w(
+                    "##bind",
+                    min,
+                    min + buttonSize);
+            }
+            RenderBindPopup(binding);
+        }
+    }
 
     struct ActionAnim final
     {
@@ -2349,7 +2373,32 @@ bool ActionButton(
         iconSize = set->icon->CalcTextSizeA(iconSz, FLT_MAX, 0.f, icon);
         totalW += iconSize.x + iconGap;
     }
-    float x = min.x + (buttonSize.x - totalW) * 0.5f;
+    // A bound key is shown on the button itself, and the label is centred in
+    // what is left rather than under the badge.
+    const char* keyText = binding && binding->key
+        ? gui->key_name(binding->key)
+        : nullptr;
+    ImFont* keyFont = keyText ? MenuType::Mono() : nullptr;
+    float keyWidth = 0.f;
+    if (keyFont)
+    {
+        const float keySize = MenuType::MonoSize();
+        const ImVec2 keyExtent = keyFont->CalcTextSizeA(
+            keySize, FLT_MAX, 0.f, keyText);
+        keyWidth = keyExtent.x + metrics.space2 * scale;
+        draw->AddText(
+            keyFont,
+            keySize,
+            ImVec2(
+                max.x - metrics.space2 * scale - keyExtent.x,
+                min.y + (buttonSize.y - keyExtent.y) * 0.5f),
+            gui->get_clr(
+                primary ? tokens.onAccent : tokens.textFaint,
+                primary ? 0.75f : 1.f),
+            keyText);
+    }
+
+    float x = min.x + (buttonSize.x - keyWidth - totalW) * 0.5f;
     const float y = min.y + (buttonSize.y - textSize.y) * 0.5f;
     if (icon && icon[0] && set->icon)
     {

@@ -281,12 +281,17 @@ namespace MenuUi
 
     void EndToolbar() noexcept;
 
+    // Supplying bindAction makes the button bindable: right-click opens the same
+    // panel the toggle rows use, and the key then fires the action with the menu
+    // closed. Leave it null for buttons that only make sense inside the menu,
+    // such as dialog confirmations or list editing.
     bool ActionButton(
         const char* id,
         const char* label,
         const ImVec2& size,
         bool primary = false,
-        const char* icon = nullptr) noexcept;
+        const char* icon = nullptr,
+        void (*bindAction)() = nullptr) noexcept;
 
     // Icon with no surface behind it. For destructive affordances that sit
     // inside a row: a filled button there competes with the row itself, and

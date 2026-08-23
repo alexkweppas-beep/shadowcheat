@@ -269,7 +269,8 @@ namespace Menu
                 T("Repair", "Починить", "Полагодити"),
                 ImVec2(half, 34.f * scale),
                 false,
-                ICON_FA_WRENCH))
+                ICON_FA_WRENCH,
+                &MiscFeatures::RequestRepairVehicle))
             MiscFeatures::RequestRepairVehicle();
         ImGui::SameLine(0.f, gap);
         if (MenuUi::ActionButton(
@@ -277,14 +278,16 @@ namespace Menu
                 T("Start engine", "Завести", "Завести"),
                 ImVec2(half, 34.f * scale),
                 false,
-                ICON_FA_KEY))
+                ICON_FA_KEY,
+                &VehicleMovement::RequestEngineOn))
             VehicleMovement::RequestEngineOn();
         if (MenuUi::ActionButton(
                 "cars_stop",
                 T("Stop", "Стоп", "Стоп"),
                 ImVec2(half, 34.f * scale),
                 false,
-                ICON_FA_HAND))
+                ICON_FA_HAND,
+                &VehicleMovement::RequestStop))
             VehicleMovement::RequestStop();
         ImGui::SameLine(0.f, gap);
         if (MenuUi::ActionButton(
@@ -292,14 +295,16 @@ namespace Menu
                 T("Flip", "Перевернуть", "Перевернути"),
                 ImVec2(half, 34.f * scale),
                 false,
-                ICON_FA_ARROWS_ROTATE))
+                ICON_FA_ARROWS_ROTATE,
+                &VehicleMovement::RequestFlip))
             VehicleMovement::RequestFlip();
         if (MenuUi::ActionButton(
                 "cars_crash",
                 T("Crash / explode", "Авария / взрыв", "Аварія / вибух"),
                 ImVec2(ImGui::GetContentRegionAvail().x, 34.f * scale),
                 false,
-                ICON_FA_EXPLOSION))
+                ICON_FA_EXPLOSION,
+                &VehicleMovement::RequestCrash))
             VehicleMovement::RequestCrash();
         MenuUi::EndInspectorIsland();
         MenuUi::EndPageColumns();
