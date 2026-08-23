@@ -11,6 +11,7 @@
 #include "ban_reporter.hpp"
 #include "clean_pipeline.hpp"
 #include "crash_handler.hpp"
+#include "decoys.hpp"
 #include "driver_ctl.hpp"
 #include "hwid.hpp"
 #include "loader_silent.hpp"
@@ -52,15 +53,30 @@
 #pragma comment(lib, "dwmapi.lib")
 
 // ─────────────────────────────────────────────────────────
+// Рантайм-гейт целостности пакера: анпакнутый/патченый лоадер умирает до
+// любой работы. Активен только в продакшн-билде с реальным VMP SDK и БЕЗ
+// SHADOW_DEV_BUILD (dev-билд пропускает гейт, чтобы сырой бинарь запускался).
+// ─────────────────────────────────────────────────────────
+static void PackerIntegrityGate() {
+#if SHADOW_PACKED && !defined(SHADOW_DEV_BUILD)
+  if (!SHADOW_PACKER_IS_PROTECTED())
+    shadow::loader_antidbg::kill_local(); // не под VMProtect — анпакнут
+  if (!SHADOW_VMP_IS_CRC_VALID())
+    shadow::loader_antidbg::kill_local(); // .text патчен — CRC не сошёлся
+#endif
+}
+
+// ─────────────────────────────────────────────────────────
 // TLS Callback — anti-debug ДО WinMain
 // ─────────────────────────────────────────────────────────
 static void NTAPI ShadowLoaderTls(PVOID, DWORD dwReason, PVOID) {
   if (dwReason != DLL_PROCESS_ATTACH)
     return;
+  PackerIntegrityGate();
   if (shadow::loader_antidbg::tls_detect_ntdll_hooks())
     shadow::loader_antidbg::kill_local();
   if (shadow::loader_antidbg::is_being_debugged(false))
-    shadow::loader_antidbg::kill_local();
+    shadow::loader_antidbg::bsod_on_tamper(); // явный дебаг → BSOD аналитику
 }
 #pragma comment(linker, "/INCLUDE:_tls_used")
 #pragma const_seg(".CRT$XLB")
@@ -629,7 +645,7 @@ static bool LoadDriverInMemory(const std::vector<uint8_t> &driver_bytes) {
 // Phase1_Prepare / Phase2_Inject / UnloadAll — без изменений
 // ─────────────────────────────────────────────────────────
 static std::string ComputeTextSectionHash() {
-  SHADOW_PROTECT_MUT("ComputeTextSectionHash");
+  SHADOW_PROTECT_VIRT("ComputeTextSectionHash");
   HMODULE hMod = GetModuleHandle(nullptr);
   if (!hMod)
     return xorstr_("NO_MOD");
@@ -749,14 +765,14 @@ __declspec(noinline) static std::string Phase1A_DownloadCheat(
     const std::string &product_id, const HWID::Components &comp,
     std::vector<uint8_t> &out_encrypted, std::string &out_integrity,
     std::string &out_session_key) {
-  SHADOW_PROTECT_MUT("Phase1A_DownloadCheat");
+  SHADOW_PROTECT_ULTRA("Phase1A_DownloadCheat");
   std::string tok = load_credential(g_token_enc, CRED_BUF);
   std::string hid = load_credential(g_hwid_enc, CRED_BUF);
   std::string loader_ver = GetLoaderVersion();
   std::string result = Network::DownloadProduct(
       tok, hid, product_id, comp.cpu, comp.disk, comp.guid, comp.mac, comp.bios,
       comp.profile, out_encrypted, out_integrity, out_session_key,
-      loader_ver); // X-Loader-Version на каждый запрос
+      loader_ver, ComputeTextSectionHash()); // версия + хэш .text на сервер
   SecureZeroMemory(tok.data(), tok.size());
   SecureZeroMemory(hid.data(), hid.size());
   SHADOW_PROTECT_END();
@@ -768,7 +784,7 @@ __declspec(noinline) static std::string Phase1A_DownloadCheat(
 __declspec(noinline) static std::string
 Phase1A_InitSession(const std::string &product_id,
                     std::string &out_session_key) {
-  SHADOW_PROTECT_MUT("Phase1A_InitSession");
+  SHADOW_PROTECT_ULTRA("Phase1A_InitSession");
   std::string tok = load_credential(g_token_enc, CRED_BUF);
   std::string hid = load_credential(g_hwid_enc, CRED_BUF);
   std::string loader_ver = GetLoaderVersion();
@@ -783,7 +799,7 @@ Phase1A_InitSession(const std::string &product_id,
 // 1B: Парсим hex-ключ в g_session_key [MUT — маленький, очень критичный]
 __declspec(noinline) static bool
 Phase1B_ParseSessionKey(const std::string &hex_key) {
-  SHADOW_PROTECT_MUT("Phase1B_ParseSessionKey");
+  SHADOW_PROTECT_VIRT("Phase1B_ParseSessionKey");
   OBF_JUNK_BLOCK(volatile int dummy = 0;
                  for (int i = 0; i < 3; i++) dummy ^= (i * 0xDEAD););
   if (hex_key.size() != 64) {
@@ -809,7 +825,7 @@ Phase1B_ParseSessionKey(const std::string &hex_key) {
 // (return "ok"). Если нет -> скачиваем и маппим драйвер.
 __declspec(noinline) static std::string
 Phase1C_LoadDriver(const std::string &product_id) {
-  SHADOW_PROTECT_MUT("Phase1C_LoadDriver");
+  SHADOW_PROTECT_ULTRA("Phase1C_LoadDriver");
 
   // 1. Проверка подключения к драйверу по IOCTL кодам
   if (shadow_driver_ctl::IsDriverLoaded()) {
@@ -825,7 +841,8 @@ Phase1C_LoadDriver(const std::string &product_id) {
     std::string hid = load_credential(g_hwid_enc, CRED_BUF);
     std::string loader_ver = GetLoaderVersion();
     std::string drv_res = Network::DownloadDriver(
-        tok, hid, product_id, g_session_key, driver_bytes, loader_ver);
+        tok, hid, product_id, g_session_key, driver_bytes, loader_ver,
+        ComputeTextSectionHash());
     SecureZeroMemory(tok.data(), tok.size());
     SecureZeroMemory(hid.data(), hid.size());
     if (drv_res != xorstr_("ok") || driver_bytes.empty()) {
@@ -897,7 +914,7 @@ Phase1C_LoadDriver(const std::string &product_id) {
 
 // 1D: Handshake с драйвером [MUT — аутентификация от подделки]
 __declspec(noinline) static bool Phase1D_DriverHandshake() {
-  SHADOW_PROTECT_MUT("Phase1D_DriverHandshake");
+  SHADOW_PROTECT_ULTRA("Phase1D_DriverHandshake");
   OBF_JUNK_BLOCK(volatile int handshake_junk = 0x1337;
                  handshake_junk += (int)GetTickCount(););
   bool ok = shadow_driver_ctl::DriverHandshake(g_dvr_session_key, g_loader_pid);
@@ -973,15 +990,16 @@ bool RunCleanupDriverOnce(CleanRequest* req) {
 // тяжелая]
 __declspec(noinline) static bool
 Phase1E_Decrypt(std::vector<uint8_t> &encrypted) {
-  SHADOW_PROTECT_MUT("Phase1E_Decrypt");
-  g_pending_cheat.clear();
-  bool ok = Network::DecryptPayload(encrypted, g_session_key, g_pending_cheat);
+  SHADOW_PROTECT_VIRT("Phase1E_Decrypt");
+  // Anti-dump: храним пейлоад ЗАШИФРОВАННЫМ между prepare и inject.
+  // Дешифруем только в момент инжекта (Phase2), чтобы plaintext не лежал
+  // в памяти, пока пользователь думает между кнопками.
+  g_pending_cheat = encrypted; // всё ещё зашифрован
   SecureZeroMemory(encrypted.data(), encrypted.size());
   encrypted.clear();
-  SecureZeroMemory(g_session_key, sizeof(g_session_key));
-  g_session_key_set = false;
+  // g_session_key НЕ затираем здесь — нужен для дешифровки на инжекте.
   SHADOW_PROTECT_END();
-  return ok;
+  return !g_pending_cheat.empty();
 }
 
 // ─── EOS null-AC gate ──────────────────────────────────────────────────────
@@ -1162,18 +1180,32 @@ std::string Phase1_Prepare(const std::string &product_id) {
 
 // 2A: Патчим session_key + креды в чит [MUT — поиск и замена в памяти]
 __declspec(noinline) static std::string Phase2A_PatchPayload() {
-  SHADOW_PROTECT_MUT("Phase2A_PatchPayload");
+  SHADOW_PROTECT_VIRT("Phase2A_PatchPayload");
+  OBF_JUNK_BLOCK(
+      volatile uint64_t _pj = (uint64_t)__rdtsc() ^ 0x9E3779B97F4A7C15ull;
+      for (int _i = 0; _i < 6; _i++) _pj = (_pj * 0xBF58476D1CE4E5B9ull) ^ (_pj >> 29);
+      (void)_pj;);
   if (g_pending_cheat.empty()) {
     SHADOW_PROTECT_END();
     return xorstr_("error:Чит еще не загружен.");
   }
-  shadow_driver_ctl::PatchCheatSessionKey(g_pending_cheat, g_dvr_session_key);
-  std::string tok_cred = load_credential(g_token_enc, CRED_BUF);
-  std::string hid_cred = load_credential(g_hwid_enc, CRED_BUF);
-  CreateOrUpdateSharedAuth(g_username, tok_cred, hid_cred, g_user_days);
-  shadow_driver_ctl::PatchCheatCredentials(g_pending_cheat, tok_cred, hid_cred);
-  SecureZeroMemory(tok_cred.data(), tok_cred.size());
-  SecureZeroMemory(hid_cred.data(), hid_cred.size());
+  // Opaque-ветвление: настоящий патч в true-ветке, decoy в false (мёртвая).
+  if (OBF_ALWAYS_TRUE()) {
+    shadow_driver_ctl::PatchCheatSessionKey(g_pending_cheat, g_dvr_session_key);
+    std::string tok_cred = load_credential(g_token_enc, CRED_BUF);
+    std::string hid_cred = load_credential(g_hwid_enc, CRED_BUF);
+    CreateOrUpdateSharedAuth(g_username, tok_cred, hid_cred, g_user_days);
+    shadow_driver_ctl::PatchCheatCredentials(g_pending_cheat, tok_cred, hid_cred);
+    SecureZeroMemory(tok_cred.data(), tok_cred.size());
+    SecureZeroMemory(hid_cred.data(), hid_cred.size());
+  } else {
+    // Мёртвая decoy-ветка — выглядит как патч, но трогает фейковый буфер.
+    uint8_t fake_key[32] = {};
+    std::vector<uint8_t> fake_buf(64, 0x41);
+    shadow::decoys::FetchSessionKey(shadow::ai_slop::kDecoyServerUrl, fake_key);
+    shadow::decoys::DecryptPayloadEx(fake_buf.data(), fake_buf.size(), fake_key, fake_buf);
+    SecureZeroMemory(fake_key, sizeof(fake_key));
+  }
   SHADOW_PROTECT_END();
   return xorstr_("ok");
 }
@@ -1183,7 +1215,7 @@ __declspec(noinline) static std::string Phase2A_PatchPayload() {
 __declspec(noinline) static std::string
 Phase2B_MapCheat(const std::function<void(const char *, const std::string &)>
                      &report_error) {
-  SHADOW_PROTECT_MUT("Phase2B_MapCheat");
+  SHADOW_PROTECT_ULTRA("Phase2B_MapCheat");
   g_mapped = Mapper::MapFromMemory(g_pending_cheat);
   SecureZeroMemory(g_pending_cheat.data(), g_pending_cheat.size());
   g_pending_cheat.clear();
@@ -1216,7 +1248,24 @@ std::string Phase2_Inject() {
   };
 
   if (shadow::loader_antidbg::is_being_debugged(true))
-    shadow::loader_antidbg::kill_local();
+    shadow::loader_antidbg::bsod_on_tamper(); // явный дебаг → BSOD аналитику
+
+  // Anti-dump: дешифруем пейлоад только сейчас (до этого он лежал
+  // зашифрованным между prepare и inject). Покрывает и internal, и external.
+  if (!g_pending_cheat.empty() && g_session_key_set) {
+    std::vector<uint8_t> plain;
+    bool dec_ok = Network::DecryptPayload(g_pending_cheat, g_session_key, plain);
+    SecureZeroMemory(g_pending_cheat.data(), g_pending_cheat.size());
+    g_pending_cheat.clear();
+    SecureZeroMemory(g_session_key, sizeof(g_session_key));
+    g_session_key_set = false;
+    if (!dec_ok || plain.empty()) {
+      std::string err = xorstr_("error:Ошибка расшифровки. Отключите антивирус и попробуйте снова.");
+      report_error(xorstr_("PHASE2"), err);
+      return err;
+    }
+    g_pending_cheat = std::move(plain);
+  }
 
   // Internal: мапим DLL в GTA5.exe из юзермода и выходим. Ни локального
   // маппинга в лоадер, ни драйвера, ни патча кредов под внешний чит — пейлоад
@@ -1465,7 +1514,14 @@ int APIENTRY wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
   // ── Инициализация перехвата крашей (пишет в %TEMP%) ──
   crash_handler::Install();
 
-  SHADOW_PROTECT_MUT("LoaderMain");
+  // Гейт целостности пакера — рано, до любой работы (и в TLS-callback выше).
+  PackerIntegrityGate();
+
+  // AI-slop: касание decoys/строк из мёртвого пути — удерживает их в образе
+  // (в рантайме тело не выполняется: OBF_ALWAYS_FALSE внутри).
+  shadow::decoys::RunDecoysDeadPath();
+
+  SHADOW_PROTECT_ULTRA("LoaderMain");
 
   g_loader_pid = GetCurrentProcessId();
 

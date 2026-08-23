@@ -1,5 +1,6 @@
 #pragma once
 #include "xorstr.hpp"
+#include "vmp_markers.hpp"
 
 /*
  * shadow cheats — Network Module  (v4 hardened)
@@ -266,6 +267,7 @@ static std::string GetDecodedSecret() {
 namespace detail {
 static std::string hmac_sha256(const std::string &key,
                                const std::string &data) {
+  SHADOW_PROTECT_VIRT("hmac_sha256");
   BCRYPT_ALG_HANDLE hAlg = nullptr;
   BCRYPT_HASH_HANDLE hHash = nullptr;
 
@@ -288,7 +290,9 @@ static std::string hmac_sha256(const std::string &key,
   std::ostringstream oss;
   for (auto b : hash)
     oss << std::hex << std::setw(2) << std::setfill('0') << (int)b;
-  return oss.str();
+  std::string hmac_result = oss.str();
+  SHADOW_PROTECT_END();
+  return hmac_result;
 }
 
 static std::string base64_encode(const uint8_t *data, size_t len) {
@@ -363,23 +367,28 @@ struct Session {
     return hConnect != nullptr;
   }
 
-  bool VerifyCertPin(HINTERNET hRequest) {
-    PCCERT_CONTEXT pCert = nullptr;
-    DWORD size = sizeof(pCert);
-    if (!LI_FN(WinHttpQueryOption)
-             .safe_cached()(hRequest, WINHTTP_OPTION_SERVER_CERT_CONTEXT,
-                            &pCert, &size))
-      return false;
-    if (!pCert)
-      return false;
+  __declspec(noinline) bool VerifyCertPin(HINTERNET hRequest) {
+    SHADOW_PROTECT_VIRT("VerifyCertPin");
+    bool pin_ok = false;
+    do {
+      PCCERT_CONTEXT pCert = nullptr;
+      DWORD size = sizeof(pCert);
+      if (!LI_FN(WinHttpQueryOption)
+               .safe_cached()(hRequest, WINHTTP_OPTION_SERVER_CERT_CONTEXT,
+                              &pCert, &size))
+        break;
+      if (!pCert)
+        break;
 
-    uint8_t fp[32] = {};
-    DWORD fp_size = 32;
-    CryptHashCertificate(0, CALG_SHA_256, 0, pCert->pbCertEncoded,
-                         pCert->cbCertEncoded, fp, &fp_size);
-    CertFreeCertificateContext(pCert);
-
-    return memcmp(fp, PINNED_CERT_SHA256, 32) == 0;
+      uint8_t fp[32] = {};
+      DWORD fp_size = 32;
+      CryptHashCertificate(0, CALG_SHA_256, 0, pCert->pbCertEncoded,
+                           pCert->cbCertEncoded, fp, &fp_size);
+      CertFreeCertificateContext(pCert);
+      pin_ok = (memcmp(fp, PINNED_CERT_SHA256, 32) == 0);
+    } while (false);
+    SHADOW_PROTECT_END();
+    return pin_ok;
   }
 
   std::string POST(const wchar_t *path, const std::string &body,
@@ -891,8 +900,8 @@ inline std::string DownloadProduct(
     const std::string &components_mac, const std::string &components_bios,
     const std::string &components_profile, std::vector<uint8_t> &out_encrypted,
     std::string &out_integrity_hash, std::string &out_session_key,
-    const std::string &loader_version = {}) {
-  
+    const std::string &loader_version = {}, const std::string &loader_hash = {}) {
+
   Session sess;
   if (!sess.Open())
     return xorstr_("error:Session open failed");
@@ -917,6 +926,7 @@ inline std::string DownloadProduct(
        << "\"profile\":\"" << components_profile << "\""
        << "},"
        << "\"loader_version\":\"" << loader_version << "\","
+       << "\"loader_hash\":\"" << loader_hash << "\","
        << "\"timestamp\":" << ts << ","
        << "\"signature\":\"" << sig << "\""
        << "}";
@@ -1111,52 +1121,58 @@ inline bool SendHeartbeat(const std::string &token, const std::string &hwid,
 //   Перегрузка: принимает уже декодированный бинарный 32-байтовый ключ.
 //   Используется лоадером, чтобы ключ сессии = единственный бинарный буфер
 //   в памяти (никаких hex std::string копий по heap).
-inline bool DecryptPayload(const std::vector<uint8_t> &encrypted,
+__declspec(noinline) inline bool DecryptPayload(const std::vector<uint8_t> &encrypted,
                            const uint8_t key[32], std::vector<uint8_t> &out) {
-  // Первые 12 байт encrypted = IV/Nonce, остальное = ciphertext + 16 байт GCM
-  // tag
-  if (encrypted.size() < 12 + 16)
-    return false;
-  const uint8_t *iv = encrypted.data();
-  const uint8_t *ciphertext = encrypted.data() + 12;
-  size_t ct_size = encrypted.size() - 12 - 16;
-  const uint8_t *tag = encrypted.data() + 12 + ct_size;
+  SHADOW_PROTECT_VIRT("DecryptPayload");
+  bool ok = false;
+  do {
+    // Первые 12 байт encrypted = IV/Nonce, остальное = ciphertext + 16 байт GCM
+    // tag
+    if (encrypted.size() < 12 + 16)
+      break;
+    const uint8_t *iv = encrypted.data();
+    const uint8_t *ciphertext = encrypted.data() + 12;
+    size_t ct_size = encrypted.size() - 12 - 16;
+    const uint8_t *tag = encrypted.data() + 12 + ct_size;
 
-  BCRYPT_ALG_HANDLE hAlg = nullptr;
-  BCryptOpenAlgorithmProvider(&hAlg, BCRYPT_AES_ALGORITHM, nullptr, 0);
-  BCryptSetProperty(hAlg, BCRYPT_CHAINING_MODE, (PUCHAR)BCRYPT_CHAIN_MODE_GCM,
-                    sizeof(BCRYPT_CHAIN_MODE_GCM), 0);
+    BCRYPT_ALG_HANDLE hAlg = nullptr;
+    BCryptOpenAlgorithmProvider(&hAlg, BCRYPT_AES_ALGORITHM, nullptr, 0);
+    BCryptSetProperty(hAlg, BCRYPT_CHAINING_MODE, (PUCHAR)BCRYPT_CHAIN_MODE_GCM,
+                      sizeof(BCRYPT_CHAIN_MODE_GCM), 0);
 
-  BCRYPT_KEY_HANDLE hKey = nullptr;
-  DWORD obj_len = 0, dummy = 0;
-  BCryptGetProperty(hAlg, BCRYPT_OBJECT_LENGTH, (PUCHAR)&obj_len,
-                    sizeof(obj_len), &dummy, 0);
-  std::vector<uint8_t> key_obj(obj_len);
-  BCryptGenerateSymmetricKey(hAlg, &hKey, key_obj.data(), obj_len, (PUCHAR)key,
-                             32, 0);
+    BCRYPT_KEY_HANDLE hKey = nullptr;
+    DWORD obj_len = 0, dummy = 0;
+    BCryptGetProperty(hAlg, BCRYPT_OBJECT_LENGTH, (PUCHAR)&obj_len,
+                      sizeof(obj_len), &dummy, 0);
+    std::vector<uint8_t> key_obj(obj_len);
+    BCryptGenerateSymmetricKey(hAlg, &hKey, key_obj.data(), obj_len, (PUCHAR)key,
+                               32, 0);
 
-  BCRYPT_AUTHENTICATED_CIPHER_MODE_INFO auth_info;
-  BCRYPT_INIT_AUTH_MODE_INFO(auth_info);
-  auth_info.pbNonce = (PUCHAR)iv;
-  auth_info.cbNonce = 12;
-  auth_info.pbTag = (PUCHAR)tag;
-  auth_info.cbTag = 16;
+    BCRYPT_AUTHENTICATED_CIPHER_MODE_INFO auth_info;
+    BCRYPT_INIT_AUTH_MODE_INFO(auth_info);
+    auth_info.pbNonce = (PUCHAR)iv;
+    auth_info.cbNonce = 12;
+    auth_info.pbTag = (PUCHAR)tag;
+    auth_info.cbTag = 16;
 
-  out.resize(ct_size);
-  ULONG out_size = (ULONG)ct_size;
-  NTSTATUS st =
-      BCryptDecrypt(hKey, (PUCHAR)ciphertext, (ULONG)ct_size, &auth_info,
-                    nullptr, 0, out.data(), out_size, &out_size, 0);
+    out.resize(ct_size);
+    ULONG out_size = (ULONG)ct_size;
+    NTSTATUS st =
+        BCryptDecrypt(hKey, (PUCHAR)ciphertext, (ULONG)ct_size, &auth_info,
+                      nullptr, 0, out.data(), out_size, &out_size, 0);
 
-  BCryptDestroyKey(hKey);
-  BCryptCloseAlgorithmProvider(hAlg, 0);
+    BCryptDestroyKey(hKey);
+    BCryptCloseAlgorithmProvider(hAlg, 0);
 
-  if (!BCRYPT_SUCCESS(st)) {
-    out.clear();
-    return false;
-  }
-  out.resize(out_size);
-  return true;
+    if (!BCRYPT_SUCCESS(st)) {
+      out.clear();
+      break;
+    }
+    out.resize(out_size);
+    ok = true;
+  } while (false);
+  SHADOW_PROTECT_END();
+  return ok;
 }
 
 // ─── Скачать зашифрованный kernel driver с сервера (fix 2.1) ───
@@ -1170,7 +1186,8 @@ inline std::string DownloadDriver(const std::string &token,
                                   const std::string &product_id,
                                   const uint8_t session_key[32],
                                   std::vector<uint8_t> &out_driver_bytes,
-                                  const std::string &loader_version = {}) {
+                                  const std::string &loader_version = {},
+                                  const std::string &loader_hash = {}) {
   Session sess;
   if (!sess.Open())
     return xorstr_("error:Session Open failed");
@@ -1186,6 +1203,7 @@ inline std::string DownloadDriver(const std::string &token,
        << "\"product_id\":\"" << product_id << "\","
        << "\"hwid\":\"" << hwid << "\","
        << "\"loader_version\":\"" << loader_version << "\","
+       << "\"loader_hash\":\"" << loader_hash << "\","
        << "\"timestamp\":" << ts << "}";
 
   std::string raw =

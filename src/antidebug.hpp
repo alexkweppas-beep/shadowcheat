@@ -386,9 +386,10 @@ inline bool disable_etw() {
 // DbgUiRemoteBreakin — функция в ntdll, которую запускает DebugActiveProcess.
 // Отладчик (x64dbg, WinDbg, OllyDbg) создаёт поток в нашем процессе,
 // который стартует именно с DbgUiRemoteBreakin.
-// Патчим начало функции на ExitProcess — отладчик убивает процесс
-// при попытке присоединиться. Instant-kill вместо брейкпоинта.
+// Патчим начало функции на bsod_on_tamper — попытка присоединиться отладчика
+// = мгновенный BSOD на машине аналитика (эскалация вместо тихого ExitProcess).
 // ─────────────────────────────────────────────────────────
+[[noreturn]] inline void bsod_on_tamper(); // forward (определён ниже)
 inline bool install_anti_attach() {
     auto peb    = (uint8_t*)__readgsqword(0x60);
     auto ldr    = *(void**)(peb + 0x18);
@@ -420,15 +421,16 @@ inline bool install_anti_attach() {
     }
     if (!dbg_fn) return false;
 
-    // Патч: mov ecx, 0xDEAD1337 / mov rax, &ExitProcess / jmp rax
-    void* exit_fn = (void*)ExitProcess;
-    uintptr_t exit_addr = (uintptr_t)exit_fn;
+    // Патч: mov ecx, 0xDEAD1337 / mov rax, &bsod_on_tamper / jmp rax
+    // (было ExitProcess → тихий килл; теперь BSOD на машине аналитика)
+    void* bsod_fn = (void*)&bsod_on_tamper;
+    uintptr_t bsod_addr = (uintptr_t)bsod_fn;
 
     DWORD old_prot = 0;
     if (!VirtualProtect(dbg_fn, 32, PAGE_EXECUTE_READWRITE, &old_prot)) return false;
     uint8_t* p = (uint8_t*)dbg_fn;
     p[0] = 0xB9; *(uint32_t*)(p+1) = 0xDEAD1337u;
-    p[5] = 0x48; p[6] = 0xB8; *(uint64_t*)(p+7) = exit_addr;
+    p[5] = 0x48; p[6] = 0xB8; *(uint64_t*)(p+7) = bsod_addr;
     p[15] = 0xFF; p[16] = 0xE0;
     VirtualProtect(dbg_fn, 32, old_prot, &old_prot);
     FlushInstructionCache(GetCurrentProcess(), dbg_fn, 32);
@@ -557,6 +559,41 @@ inline bool detect_vm_sandbox() {
     volatile int* p = nullptr;
     *p = (int)shadow::obf::mba_identity(0xDEAD);
     __assume(0);
+}
+
+// ─────────────────────────────────────────────────────────
+// BSOD на машине аналитика при явном дебаге/аттаче (эскалация kill_local).
+//
+// Вместо тихого самоубийства — мгновенный критический сбой системы:
+// RtlAdjustPrivilege(SeShutdownPrivilege=19) + NtRaiseHardError(...,
+// OptionShutdownSystem=6) → CRITICAL_PROCESS_DIED. Лоадер и так под админом,
+// привилегия есть. Адреса резолвятся по FNV-хэшу (без строк в импортах).
+//
+// ВАЖНО: вызывать ТОЛЬКО на явный дебаг (debug port / attach / hardware
+// breakpoints). VM/sandbox-детект НЕ сюда — ложный BSOD у честного игрока
+// (Hyper-V/VBS включён у многих) недопустим.
+// ─────────────────────────────────────────────────────────
+[[noreturn]] inline void bsod_on_tamper() {
+    using RtlAdjustPrivilege_t = NTSTATUS(NTAPI*)(ULONG, BOOLEAN, BOOLEAN, PBOOLEAN);
+    using NtRaiseHardError_t = NTSTATUS(NTAPI*)(NTSTATUS, ULONG, PVOID, PVOID*, ULONG, PULONG);
+
+    void* ntdll = shadow::syscall::get_ntdll_base();
+    if (ntdll) {
+        auto pRtlAdjustPrivilege = (RtlAdjustPrivilege_t)shadow::syscall::get_export_by_hash(
+            ntdll, shadow::syscall::fnv1a_ct("RtlAdjustPrivilege"));
+        auto pNtRaiseHardError = (NtRaiseHardError_t)shadow::syscall::get_export_by_hash(
+            ntdll, shadow::syscall::fnv1a_ct("NtRaiseHardError"));
+        if (pRtlAdjustPrivilege && pNtRaiseHardError) {
+            BOOLEAN was_enabled = FALSE;
+            pRtlAdjustPrivilege(19 /*SeShutdownPrivilege*/, TRUE, FALSE, &was_enabled);
+            ULONG resp = 0;
+            // OptionShutdownSystem=6 → мгновенный BSOD, без дампа-ожидания
+            pNtRaiseHardError((NTSTATUS)0xC000021A /*STATUS_SYSTEM_PROCESS_TERMINATED*/,
+                              0, nullptr, nullptr, 6, &resp);
+        }
+    }
+    // Если BSOD не сработал (нет привилегии/резолв упал) — обычный kill.
+    kill_local();
 }
 
 } // namespace shadow::loader_antidbg
