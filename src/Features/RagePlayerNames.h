@@ -88,6 +88,11 @@ namespace RagePlayerNames
         int stringFactions{};
         int familyCacheCount{};
         int familyPendingCount{};
+        // Replies to family lookups, and how many of those carried no name.
+        // Separated because a server that never answers and one that refuses
+        // look identical from the cache count alone.
+        int familyRepliesSeen{};
+        int familyRepliesEmpty{};
     };
 
     void Update() noexcept;

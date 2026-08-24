@@ -2285,13 +2285,31 @@ surface that may not exist.
 p.vehicle is still null while the enter animation plays, so the target has to
 come from the "trying to enter" native rather than from vh. */
 if(!inVeh){
-var tv=inv('0x814FA8BE84158326',h);
+/* Through the wrapper, never through invoke. The hash for
+GET_VEHICLE_PED_IS_TRYING_TO_ENTER is documented and correct, but this RAGE
+build does not carry it in its table, and an unknown hash there is not a quiet
+failure: the client puts up "Invalid native has been passed" every time. It
+fired on every exit, because leaving a vehicle is exactly when this branch
+starts running. Absent wrapper means the enter half simply does nothing. */
+var tv=0;
+try{
+var pedApi=mp.game.ped;
+if(pedApi&&typeof pedApi.getVehiclePedIsTryingToEnter==='function')
+tv=pedApi.getVehiclePedIsTryingToEnter(h)|0;
+}catch(e){tv=0;}
 if(tv){
 /* The seat the game was actually taking. Forcing -1 put you behind the wheel of
 a car you were boarding as a passenger, and did nothing at all when the driver
 seat was occupied. */
-var ts=inv('0x6F4C85ACD641BCD2',h);
+var ts=-1;
+try{
+var pedApi2=mp.game.ped;
+if(pedApi2&&typeof pedApi2.getSeatPedIsTryingToEnter==='function')
+ts=pedApi2.getSeatPedIsTryingToEnter(h)|0;
+}catch(e){ts=-1;}
 if(!(ts>=-1&&ts<=15))ts=-1;
+/* This one is left on invoke: the same hash is used elsewhere in this file and
+has been seen to work, so it is known to be in the table. */
 inv('0xF75B0D629E1C063D',h,tv,ts);
 }
 }else{

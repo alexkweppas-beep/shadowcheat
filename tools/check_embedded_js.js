@@ -32,8 +32,15 @@ for (const file of walk(root)) {
         // Line number of the literal's start, so a failure points somewhere.
         const line = text.slice(0, match.index).split('\n').length;
         const where = `${path.relative(root, file)}:${line}`;
+        // The runtime wraps a command in a function and takes its return value,
+        // so a literal may legitimately begin with `return`. Parsed bare it
+        // fails as an illegal return statement, which says nothing about the
+        // script and hides real errors behind a false one.
+        const wrapped = /^\s*return\b/.test(script)
+            ? `(function(){${script}})`
+            : script;
         try {
-            new vm.Script(script);
+            new vm.Script(wrapped);
             ++checked;
         } catch (error) {
             ++failed;

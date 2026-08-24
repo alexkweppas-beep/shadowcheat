@@ -335,14 +335,97 @@ bool ProjectedPixelsPerMetre(
 // enabled hitboxes. Candidates are ranked by how far inside a capsule the
 // crosshair sits relative to that capsule's own width, so the ped it is most
 // solidly on wins instead of whichever bone centre happens to be nearest.
+// Shortest distance between the aim line and a bone segment, in metres.
+//
+// The screen-space version of this test measures pixels between the crosshair
+// and a projected segment, then compares that against a radius converted from
+// metres at the target's distance. That conversion is a single number for the
+// whole body, so a near arm and a far shoulder are judged at the same scale,
+// and the answer drifts from the geometry the shot will actually meet. Done in
+// world space there is nothing to convert and nothing to drift.
+float RayToSegmentDistance(
+    const Vector3& origin,
+    const Vector3& direction,
+    const Vector3& from,
+    const Vector3& to) noexcept
+{
+    const Vector3 segment(to.x - from.x, to.y - from.y, to.z - from.z);
+    const Vector3 offset(
+        from.x - origin.x, from.y - origin.y, from.z - origin.z);
+
+    const float segmentLengthSq =
+        segment.x * segment.x + segment.y * segment.y +
+        segment.z * segment.z;
+    const float rayDotSegment =
+        direction.x * segment.x + direction.y * segment.y +
+        direction.z * segment.z;
+    const float rayDotOffset =
+        direction.x * offset.x + direction.y * offset.y +
+        direction.z * offset.z;
+    const float segmentDotOffset =
+        segment.x * offset.x + segment.y * offset.y +
+        segment.z * offset.z;
+
+    float alongRay = 0.f;
+    float alongSegment = 0.f;
+    const float denominator = segmentLengthSq - rayDotSegment * rayDotSegment;
+    if (segmentLengthSq <= 1e-6f)
+    {
+        // A point rather than a segment: the head and pelvis capsules are
+        // written that way on purpose.
+        alongRay = rayDotOffset;
+        alongSegment = 0.f;
+    }
+    else if (denominator > 1e-6f)
+    {
+        alongSegment =
+            (rayDotSegment * rayDotOffset - segmentDotOffset) / denominator;
+        if (alongSegment < 0.f)
+            alongSegment = 0.f;
+        else if (alongSegment > 1.f)
+            alongSegment = 1.f;
+        alongRay = rayDotOffset + alongSegment * rayDotSegment;
+    }
+    else
+    {
+        // Ray parallel to the bone.
+        alongSegment = 0.f;
+        alongRay = rayDotOffset;
+    }
+    // Never behind the camera: a bone at the player's back must not count as
+    // being under the crosshair.
+    if (alongRay < 0.f)
+        alongRay = 0.f;
+
+    const Vector3 onRay(
+        origin.x + direction.x * alongRay,
+        origin.y + direction.y * alongRay,
+        origin.z + direction.z * alongRay);
+    const Vector3 onSegment(
+        from.x + segment.x * alongSegment,
+        from.y + segment.y * alongSegment,
+        from.z + segment.z * alongSegment);
+
+    const float dx = onRay.x - onSegment.x;
+    const float dy = onRay.y - onSegment.y;
+    const float dz = onRay.z - onSegment.z;
+    return std::sqrt(dx * dx + dy * dy + dz * dz);
+}
+
 bool EvaluateHitboxCandidate(
     const Game::FramePedEntry& entry,
     const ModeSettings& settings,
     const ImVec2& center,
     TargetCandidate& output) noexcept
 {
+    // World space when the ray is available, which it is whenever a frame has
+    // been drawn. The projected fallback stays for the case where it is not.
+    Vector3 rayOrigin{};
+    Vector3 rayDirection{};
+    const bool haveRay = Game::LastViewRay(rayOrigin, rayDirection);
+
     float pixelsPerMetre = 0.f;
-    if (!ProjectedPixelsPerMetre(entry, pixelsPerMetre))
+    if (!haveRay && !ProjectedPixelsPerMetre(entry, pixelsPerMetre))
     {
         ++g_Diagnostics.projectionRejects;
         return false;
@@ -385,18 +468,29 @@ bool EvaluateHitboxCandidate(
             (1u << capsule.from) | (1u << capsule.to);
         if ((entry.projectedBoneMask & bits) != bits)
             continue;
-        const float radius =
-            capsule.radiusMetres * pixelsPerMetre;
-        if (radius < 0.5f)
-            continue;
-        const ImVec2 a(
-            entry.projectedBones[capsule.from].x,
-            entry.projectedBones[capsule.from].y);
-        const ImVec2 b(
-            entry.projectedBones[capsule.to].x,
-            entry.projectedBones[capsule.to].y);
-        const float ratio =
-            PointSegmentDistance(center, a, b) / radius;
+
+        float ratio = 2.f;
+        if (haveRay)
+        {
+            const Vector3& a = entry.visual.bones[capsule.from];
+            const Vector3& b = entry.visual.bones[capsule.to];
+            ratio = RayToSegmentDistance(
+                rayOrigin, rayDirection, a, b) / capsule.radiusMetres;
+        }
+        else
+        {
+            const float radius =
+                capsule.radiusMetres * pixelsPerMetre;
+            if (radius < 0.5f)
+                continue;
+            const ImVec2 a(
+                entry.projectedBones[capsule.from].x,
+                entry.projectedBones[capsule.from].y);
+            const ImVec2 b(
+                entry.projectedBones[capsule.to].x,
+                entry.projectedBones[capsule.to].y);
+            ratio = PointSegmentDistance(center, a, b) / radius;
+        }
         if (ratio <= bestRatio)
         {
             bestRatio = ratio;

@@ -72,11 +72,6 @@ namespace Menu
             T("Unlimited stamina", "Бесконечная выносливость", "Нескінченна витривалість"),
             &s.unlimitedStamina);
         MiscRow(
-            "player_superjump",
-            ICON_FA_PERSON_ARROW_UP_FROM_LINE,
-            T("Super jump", "Супер-прыжок", "Супер-стрибок"),
-            &s.superJump);
-        MiscRow(
             "player_greenzone",
             ICON_FA_LEAF,
             T("Greenzone bypass", "Обход зелёнки", "Обхід зеленки"),

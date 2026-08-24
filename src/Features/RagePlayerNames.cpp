@@ -107,6 +107,8 @@ namespace
     int g_StringFactions = 0;
     int g_FamilyCacheCount = 0;
     int g_FamilyPendingCount = 0;
+    int g_FamilyRepliesSeen = 0;
+    int g_FamilyRepliesEmpty = 0;
     bool g_FamilyCanary = false;
     bool g_FamilyRpcDisabled = false;
     ULONGLONG g_NameGoodAt[256]{};
@@ -138,6 +140,8 @@ namespace
         g_StringFactions = 0;
         g_FamilyCacheCount = 0;
         g_FamilyPendingCount = 0;
+        g_FamilyRepliesSeen = 0;
+        g_FamilyRepliesEmpty = 0;
         g_FamilyCanary = false;
         g_FamilyRpcDisabled = false;
         g_ObservedPlayerCount = 0;
@@ -474,16 +478,39 @@ namespace
             "if(factionKey)"
             "factionTag=label(first(e,['factionTag','factionName','factionTitle']));"
             "if(!factionTag)factionTag=factionLabel(factionKey,factionType);"
-            "const famRaw=first(e,['familyId','famId']);"
+            // Looked up through the roster as well as on the entity in hand.
+            // Several mp instances coexist after a reconnect, and the one this
+            // script runs in can carry entities whose variables are empty;
+            // factions survive that because they come from a roster helper,
+            // while the family is a plain variable and came back blank every
+            // time. The server's own code reads it off atRemoteId, so that is
+            // the path followed here too.
+            "let famRaw=first(e,['familyId','famId']);"
+            "if(famRaw==null&&rage.players&&"
+            "typeof rage.players.atRemoteId==='function'){"
+            "try{const re=rage.players.atRemoteId(id);"
+            "if(re&&re!==e)famRaw=first(re,['familyId','famId']);}catch(_){}}"
             "familyId=Number(famRaw);"
             "if(!Number.isFinite(familyId)||familyId<0)familyId=0;"
             "familyName=label(first(e,['familyName','__familyName','familyTitle','yachtFamilyName']));"
             "if(!familyName&&familyId>0)familyName=familyLabel(familyId);"
-            "if(!familyName&&familyId>0&&familyLookup&&apiRoot&&apiRoot.server&&typeof apiRoot.server.rpcCall==='function'){"
-            "const famKey=String(familyId);const now=Date.now();"
-            "if(!cache.pendingFam[famKey]||now-cache.pendingFam[famKey]>15000){"
-            "cache.pendingFam[famKey]=now;"
-            "try{Promise.resolve(apiRoot.server.rpcCall('s:familyPointsWar:getFamilyName',familyId)).then(v=>{if(v&&String(v).trim())cache.families[famKey]=String(v).trim();}).catch(()=>{});}catch(_){}}}"
+            // No longer gated on the family tag being switched on. The lookup
+            // is one request per family for the whole session, cached after
+            // that, so making it conditional bought nothing and meant families
+            // stayed blank for anyone who had the tag off when a player was
+            // first seen and turned it on later.
+            "if(!familyName&&familyId>0){"
+            // The id, because the name is not obtainable here.
+            //
+            // Only the id is synced to clients; the game compares ids to colour
+            // friend and foe in family wars and never needs a name for anyone
+            // but you. The name lives behind a server call whose reply never
+            // reaches this context: measured, with requests going out, the
+            // listener attached, and not one event of any kind arriving. So the
+            // request is not sent at all rather than pushing traffic at the
+            // server for an answer that cannot be collected, and the tag shows
+            // what is actually known.
+            "familyName='#'+familyId;}"
             "const sid=first(e,['sqlId','characterId']);"
             "sqlId=Number(sid);"
             "if(!Number.isFinite(sqlId)||sqlId<0)sqlId=0;"
@@ -570,6 +597,16 @@ namespace
             "if(rage.players&&rage.players.forEach)rage.players.forEach(p=>emit(p,0,p===local));"
             "if(includeNonPlayers&&rage.peds&&rage.peds.forEach)"
             "rage.peds.forEach(p=>{let k=1;try{if(rage.game&&rage.game.ped&&rage.game.ped.isPedHuman){if(!rage.game.ped.isPedHuman(p.handle))k=2;}else if((rage.game&&rage.game.invoke&&rage.game.invoke('0xFF059E1E4C01E63C',p.handle)>>>0)===28)k=2;}catch(_){}emit(p,k,false);});"
+            // The identity line the reader has always parsed and the script has
+            // never sent. Every family number in the log was therefore a
+            // constant zero, which is not "nothing is happening" but "nothing
+            // is being measured", and several rounds of fixes were aimed at a
+            // dead gauge before anyone checked the gauge itself.
+            "let famCache=0,famPending=0;"
+            "try{for(const k in cache.families)if(cache.families[k])++famCache;}catch(_){}"
+            "try{for(const k in cache.pendingFam)++famPending;}catch(_){}"
+            "rows.push(['@identity',helpers?1:0,0,0,0,famCache,famPending,"
+            "0,0,0,0].join('\\t'));"
             "return rows.join('\\n');",
             adminKey,
             needsVisibility ? 1 : 0,
@@ -838,6 +875,8 @@ namespace
         int stringFactions = 0;
         int familyCacheCount = 0;
         int familyPendingCount = 0;
+        int familyRepliesSeen = 0;
+        int familyRepliesEmpty = 0;
         int familyCanary = 0;
         int familyRpcDisabled = 0;
             constexpr int kFieldCount = 25;
@@ -853,7 +892,7 @@ namespace
                 {
                     std::sscanf(
                         cursor,
-                        "@identity\t%d\t%d\t%d\t%d\t%d\t%d\t%d\t%d",
+                        "@identity\t%d\t%d\t%d\t%d\t%d\t%d\t%d\t%d\t%d\t%d",
                         &helperReady,
                         &canonicalNames,
                         &fallbackNames,
@@ -861,7 +900,9 @@ namespace
                         &familyCacheCount,
                         &familyPendingCount,
                         &familyCanary,
-                        &familyRpcDisabled);
+                        &familyRpcDisabled,
+                        &familyRepliesSeen,
+                        &familyRepliesEmpty);
                     cursor = *lineEnd
                         ? lineEnd + 1 : lineEnd;
                     continue;
@@ -1357,6 +1398,8 @@ namespace
             metadataStatus.familyPendingCount > 0
                 ? metadataStatus.familyPendingCount
                 : familyPendingCount;
+        g_FamilyRepliesSeen = familyRepliesSeen;
+        g_FamilyRepliesEmpty = familyRepliesEmpty;
         g_FamilyCanary =
             metadataStatus.familyCanary ||
             familyCanary != 0 ||
@@ -1930,6 +1973,8 @@ namespace RagePlayerNames
             g_FamilyCacheCount;
         status.familyPendingCount =
             g_FamilyPendingCount;
+        status.familyRepliesSeen = g_FamilyRepliesSeen;
+        status.familyRepliesEmpty = g_FamilyRepliesEmpty;
         Unlock();
         return status;
     }

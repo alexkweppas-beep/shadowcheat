@@ -238,11 +238,6 @@ namespace Menu
             T("Seatbelt", "Ремень", "Ремінь"),
             &vm.seatbelt);
         MiscRow(
-            "cars_skip_anim",
-            ICON_FA_FORWARD,
-            T("Skip enter / exit anim", "Пропуск анимации входа", "Пропуск анімації входу"),
-            &vm.skipEnterAnim);
-        MiscRow(
             "cars_autopilot",
             ICON_FA_ROUTE,
             T("Autopilot to waypoint", "Автопилот к метке", "Автопілот до мітки"),

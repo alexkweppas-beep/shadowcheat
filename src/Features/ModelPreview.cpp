@@ -1670,6 +1670,37 @@ bool LoadDefaultAsset()
     g_load_loading = true;
     g_load_attempted = true;
 
+    // Timed here rather than at a call site: there are two of them, and the
+    // one that actually triggers the load is the preview, not the renderer.
+    // This runs on the render thread, so however long it takes is a frame
+    // nobody gets, and a player reported the menu dropping to a handful of
+    // frames on hardware that should never drop any.
+    LARGE_INTEGER loadStart{};
+    QueryPerformanceCounter(&loadStart);
+    struct LoadTimer final
+    {
+        LARGE_INTEGER start;
+        ~LoadTimer() noexcept
+        {
+            LARGE_INTEGER end{};
+            LARGE_INTEGER freq{};
+            QueryPerformanceCounter(&end);
+            QueryPerformanceFrequency(&freq);
+            if (!freq.QuadPart)
+                return;
+            char line[144];
+            const double ms =
+                static_cast<double>(end.QuadPart - start.QuadPart) *
+                1000.0 / static_cast<double>(freq.QuadPart);
+            sprintf_s(
+                line,
+                "ModelPreview: mesh load blocked the render thread "
+                "for %.0f ms",
+                ms);
+            hooks::HLog(line);
+        }
+    } loadTimer{loadStart};
+
     // BMS2 blob lives in PE RCDATA (ModelPreviewMesh.rc) — avoids compiling
     // a multi-MB constexpr array that OOMs MSVC.
     constexpr uint32_t kMagic = embedded_model_preview_mesh::kMagic;

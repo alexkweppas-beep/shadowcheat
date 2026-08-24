@@ -312,6 +312,12 @@ namespace Game {
     // different question every time the native dropped out.
     bool LastViewCamera(Vector3& out) noexcept;
 
+    // Origin and direction of the line the crosshair is on, from the same view
+    // matrix the frame was drawn with. Wanted by anything that has to agree
+    // with where a shot will actually go rather than with where a projected
+    // outline happens to land on screen.
+    bool LastViewRay(Vector3& origin, Vector3& direction) noexcept;
+
     // Dev measurement aid: appends N fake peds in front of the camera so the
     // ESP path can be profiled at crowd size without a full server. 0 = off.
     int& SyntheticCrowdCount() noexcept;

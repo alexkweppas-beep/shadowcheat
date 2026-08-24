@@ -652,13 +652,16 @@ static void NameDbgReport(bool force)
     wsprintfA(
         buf,
         "Names: identity ready=%u canonical=%d fallback=%d "
-        "factions=%d family(cache=%d pending=%d canary=%u disabled=%u)",
+        "factions=%d family(cache=%d pending=%d mine=%d anyRpc=%d "
+        "canary=%u disabled=%u)",
         identity.helperReady ? 1u : 0u,
         identity.canonicalNames,
         identity.fallbackNames,
         identity.stringFactions,
         identity.familyCacheCount,
         identity.familyPendingCount,
+        identity.familyRepliesSeen,
+        identity.familyRepliesEmpty,
         identity.familyCanary ? 1u : 0u,
         identity.familyRpcDisabled ? 1u : 0u);
     NameDbgLog(buf);
@@ -3589,6 +3592,29 @@ namespace Game {
         return std::isfinite(out.x) &&
             std::isfinite(out.y) &&
             std::isfinite(out.z);
+    }
+
+    bool LastViewRay(Vector3& origin, Vector3& direction) noexcept
+    {
+        if (!s_projectionCache.valid)
+            return false;
+        const float* view = s_projectionCache.view;
+        origin = Vector3(view[12], view[13], view[14]);
+        // Third column negated: the view matrix looks down -Z, and this is the
+        // same basis the frame was rendered with, so the ray matches what the
+        // crosshair is actually pointing at.
+        direction = Vector3(-view[8], -view[9], -view[10]);
+        const float length = std::sqrt(
+            direction.x * direction.x +
+            direction.y * direction.y +
+            direction.z * direction.z);
+        if (!(length > 0.001f) || !std::isfinite(length))
+            return false;
+        direction.x /= length;
+        direction.y /= length;
+        direction.z /= length;
+        return std::isfinite(origin.x) && std::isfinite(origin.y) &&
+            std::isfinite(origin.z);
     }
 
     int& SyntheticCrowdCount() noexcept

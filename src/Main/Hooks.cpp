@@ -39,6 +39,7 @@
 #include "../Features/WorldOverlay.h"
 #if defined(RAGEMP_DIAGNOSTICS)
 #include "../Dev/VehicleListProbe.h"
+#include "../Dev/FamilyProbe.h"
 #endif
 #include "../Features/PedPreview.h"
 #include "../Features/ModelPreview.h"
@@ -1696,6 +1697,7 @@ namespace hooks
                         PRESENT_STAGE("ESP");
 #if defined(RAGEMP_DIAGNOSTICS)
                         VehicleListProbe::Update();
+                        FamilyProbe::Update();
 #endif
                         Features::RenderESP(Overlay::GetDrawList());
                         if (logFrame) HLog("hkPresent: RenderESP DONE");
