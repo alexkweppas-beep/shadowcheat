@@ -299,6 +299,43 @@ namespace Menu
         return true;
     }
 
+    // The rest of this file stores numbers. A model label is text, and it has
+    // to survive a round trip through a line-oriented key=value file, so the
+    // two characters that would turn one line into two are replaced.
+    bool AppendConfigText(
+        char* output,
+        std::size_t capacity,
+        std::size_t& used,
+        const char* key,
+        const char* value)
+    {
+        if (!output || !value || used >= capacity)
+            return false;
+        char safe[64]{};
+        int length = 0;
+        for (const char* cursor = value;
+             *cursor &&
+             length < static_cast<int>(sizeof(safe)) - 1;
+             ++cursor)
+        {
+            const char character = *cursor;
+            safe[length++] =
+                (character == '\n' || character == '\r' ||
+                 character == '=')
+                    ? ' ' : character;
+        }
+        const int written = sprintf_s(
+            output + used,
+            capacity - used,
+            "%s=%s\n",
+            key,
+            safe);
+        if (written <= 0)
+            return false;
+        used += static_cast<std::size_t>(written);
+        return true;
+    }
+
     const char* FindConfigValue(
         const char* content,
         const char* key)
@@ -814,6 +851,8 @@ namespace Menu
         CFG_WRITE("object_vis_remote_id", s_ObjectVisualSettings.remoteId);
         CFG_WRITE("object_vis_objects", s_ObjectVisualSettings.showObjects);
         CFG_WRITE("object_vis_pickups", s_ObjectVisualSettings.showPickups);
+        CFG_WRITE("object_vis_show_all", s_ObjectVisualSettings.showAll);
+        CFG_WRITE("object_vis_seeded", s_ObjectFiltersSeeded);
         CFG_WRITE("object_vis_snapline", s_ObjectVisualSettings.snapLine);
         CFG_WRITE(
             "object_vis_snapline_origin",
@@ -876,6 +915,25 @@ namespace Menu
                 static_cast<unsigned>(
                     s_ObjectVisualSettings.excludeModels[i]));
         }
+        CFG_WRITE("model_label_count", s_ModelLabelCount);
+        for (int i = 0;
+             i < s_ModelLabelCount && i < kMaxModelLabels;
+             ++i)
+        {
+            char key[64]{};
+            sprintf_s(key, "model_label_hash_%d", i);
+            CFG_WRITE(
+                key,
+                static_cast<unsigned>(s_ModelLabels[i].hash));
+            sprintf_s(key, "model_label_name_%d", i);
+            if (!AppendConfigText(
+                    output,
+                    capacity,
+                    used,
+                    key,
+                    s_ModelLabels[i].name))
+                return false;
+        }
         {
             const auto& mesh = MeshSilhouette::GetSettings();
             CFG_WRITE("mesh_chams_enabled", mesh.enabled);
@@ -927,6 +985,10 @@ namespace Menu
         if (language >= 0 && language <= 2)
             s_Language = static_cast<Language>(language);
         CFG_READ_INT("ui_scale", s_UIScalePercent);
+        // Snapped on the way in: only the rasterised steps have fonts, and an
+        // arbitrary value out of a hand-edited file would index past them.
+        s_UIScalePercent =
+            75 + ImClamp((s_UIScalePercent - 75 + 12) / 25, 0, 5) * 25;
         CFG_READ_INT("menu_toggle_key", s_MenuToggleKey);
         CFG_READ_INT("menu_unload_key", s_UnloadKey);
         if (s_MenuToggleKey <= 0 || s_MenuToggleKey > 0xA5)
@@ -1573,6 +1635,10 @@ namespace Menu
         CFG_READ_BOOL("object_vis_objects", s_ObjectVisualSettings.showObjects);
         CFG_READ_BOOL("object_vis_pickups", s_ObjectVisualSettings.showPickups);
         CFG_READ_BOOL(
+            "object_vis_show_all",
+            s_ObjectVisualSettings.showAll);
+        CFG_READ_BOOL("object_vis_seeded", s_ObjectFiltersSeeded);
+        CFG_READ_BOOL(
             "object_vis_snapline",
             s_ObjectVisualSettings.snapLine);
         CFG_READ_INT(
@@ -1635,6 +1701,42 @@ namespace Menu
                 s_ObjectVisualSettings.excludeModels[i] =
                     static_cast<std::uint32_t>(
                         std::strtoul(value, nullptr, 10));
+        }
+        {
+            int labels = 0;
+            CFG_READ_INT("model_label_count", labels);
+            labels = ImClamp(labels, 0, kMaxModelLabels);
+            s_ModelLabelCount = 0;
+            for (int i = 0; i < labels; ++i)
+            {
+                char key[64]{};
+                sprintf_s(key, "model_label_hash_%d", i);
+                const char* hashText =
+                    FindConfigValue(content, key);
+                if (!hashText)
+                    continue;
+                const auto hash = static_cast<std::uint32_t>(
+                    std::strtoul(hashText, nullptr, 10));
+                if (!hash)
+                    continue;
+                sprintf_s(key, "model_label_name_%d", i);
+                const char* nameText =
+                    FindConfigValue(content, key);
+                if (!nameText)
+                    continue;
+                char name[28]{};
+                std::size_t length = 0;
+                while (nameText[length] &&
+                       nameText[length] != '\n' &&
+                       nameText[length] != '\r' &&
+                       length + 1 < sizeof(name))
+                {
+                    name[length] = nameText[length];
+                    ++length;
+                }
+                name[length] = '\0';
+                SetModelLabel(hash, name);
+            }
         }
 
         s_VehicleVisualSettings.includeModelCount = ImClamp(
@@ -1703,5 +1805,8 @@ namespace Menu
         const char* payload = LocalConfigSlot(g_DefaultConfigSlot);
         if (payload && payload[0])
             ImportCurrentConfig(payload);
+        // After the import, never before: seeding first would be wiped by
+        // a saved empty list, and the flag would then say it had been done.
+        SeedDefaultObjectFilters();
     }
 }

@@ -11,7 +11,12 @@
 
 namespace
 {
-    constexpr ULONGLONG kRefreshIntervalMs = 150;
+    // This used to be the position source for vehicle ESP, which is why it ran
+    // six times a second. Positions now come from the game's own vehicle array,
+    // read fresh every frame, so all that is left here is what only the server
+    // knows: remote id, class, occupancy, trunk. None of that changes at six
+    // hertz, and each run costs the frame it lands on.
+    constexpr ULONGLONG kRefreshIntervalMs = 500;
     constexpr ULONGLONG kRequestTimeoutMs = 1500;
     constexpr int kFieldCount = 16;
 
@@ -261,7 +266,14 @@ trunk?1:0
 ]);
 };
 const visit=(pool,kind)=>{
-if(full||!pool||typeof pool.forEach!=='function')return;
+if(full||!pool)return;
+/* Only what the server streams to us. emit() drops anything without a handle
+anyway, and this script runs on the thread that draws the frame, so walking
+pools full of entries that will be discarded is stutter paid for nothing. */
+if(typeof pool.forEachInStreamRange==='function'){
+try{pool.forEachInStreamRange(entity=>emit(entity,kind,pool));return;}catch(_){}
+}
+if(typeof pool.forEach!=='function')return;
 try{pool.forEach(entity=>emit(entity,kind,pool));}catch(_){}
 };
 visit(mp&&mp.vehicles,0);

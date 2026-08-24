@@ -383,20 +383,20 @@ namespace Menu
             T("Appearance", "Внешний вид", "Зовнішній вигляд"),
             0.f);
 
-        // Only the five rasterised font variants are valid, so the value snaps
-        // to the nearest 25%.
+        // Only the rasterised font variants are valid, so the value snaps to
+        // the nearest 25%. Six steps from three quarters to double.
         int scalePercent = s_UIScalePercent;
         if (gui->slider_int(
                 T("Size###flyout_scale",
                   "Размер###flyout_scale",
                   "Розмір###flyout_scale"),
                 &scalePercent,
-                100,
+                75,
                 200,
                 "%d%%"))
         {
             s_UIScalePercent =
-                100 + ImClamp((scalePercent - 100 + 12) / 25, 0, 4) * 25;
+                75 + ImClamp((scalePercent - 75 + 12) / 25, 0, 5) * 25;
         }
         gui->color_edit(
             T("Accent###flyout_accent",

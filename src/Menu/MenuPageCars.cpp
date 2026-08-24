@@ -242,11 +242,6 @@ namespace Menu
             ICON_FA_ROUTE,
             T("Autopilot to waypoint", "Автопилот к метке", "Автопілот до мітки"),
             &vm.autopilot);
-        MiscRow(
-            "cars_engine_force",
-            ICON_FA_FIRE,
-            T("Keep engine on", "Держать мотор", "Тримати мотор"),
-            &vm.engineForceOn);
         DrawVehicleDetectionCard();
         MenuUi::EndInspectorIsland();
 
@@ -269,14 +264,6 @@ namespace Menu
             MiscFeatures::RequestRepairVehicle();
         ImGui::SameLine(0.f, gap);
         if (MenuUi::ActionButton(
-                "cars_engine",
-                T("Start engine", "Завести", "Завести"),
-                ImVec2(half, 34.f * scale),
-                false,
-                ICON_FA_KEY,
-                &VehicleMovement::RequestEngineOn))
-            VehicleMovement::RequestEngineOn();
-        if (MenuUi::ActionButton(
                 "cars_stop",
                 T("Stop", "Стоп", "Стоп"),
                 ImVec2(half, 34.f * scale),
@@ -284,7 +271,6 @@ namespace Menu
                 ICON_FA_HAND,
                 &VehicleMovement::RequestStop))
             VehicleMovement::RequestStop();
-        ImGui::SameLine(0.f, gap);
         if (MenuUi::ActionButton(
                 "cars_flip",
                 T("Flip", "Перевернуть", "Перевернути"),
@@ -293,24 +279,15 @@ namespace Menu
                 ICON_FA_ARROWS_ROTATE,
                 &VehicleMovement::RequestFlip))
             VehicleMovement::RequestFlip();
+        ImGui::SameLine(0.f, gap);
         if (MenuUi::ActionButton(
                 "cars_crash",
                 T("Crash / explode", "Авария / взрыв", "Аварія / вибух"),
-                ImVec2(ImGui::GetContentRegionAvail().x, 34.f * scale),
+                ImVec2(half, 34.f * scale),
                 false,
                 ICON_FA_EXPLOSION,
                 &VehicleMovement::RequestCrash))
             VehicleMovement::RequestCrash();
-        if (MenuUi::ActionButton(
-                "cars_trunk_inventory",
-                T("Open trunk (aimed)",
-                  "Открыть багажник (по прицелу)",
-                  "Відкрити багажник (по прицілу)"),
-                ImVec2(ImGui::GetContentRegionAvail().x, 34.f * scale),
-                false,
-                ICON_FA_BOX_OPEN,
-                &MiscFeatures::RequestOpenTrunkInventory))
-            MiscFeatures::RequestOpenTrunkInventory();
         MenuUi::EndInspectorIsland();
         MenuUi::EndPageColumns();
     }

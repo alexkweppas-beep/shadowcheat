@@ -718,7 +718,7 @@ namespace Menu
                         ImGui::GetContentRegionAvail().x,
                         31.f * scale),
                     true,
-                    ICON_FA_PLUS))
+                    ICON_FA_CIRCLE_PLUS))
             {
                 WeaponManagerUi::OpenAddWeapon();
                 state.closing = true;
@@ -1567,7 +1567,7 @@ namespace Menu
         ImGui::SetCursorScreenPos(ImVec2(right - addW, cursorY));
         if (MenuUi::NavTab(
                 "add_weapon",
-                ICON_FA_PLUS,
+                ICON_FA_CIRCLE_PLUS,
                 addLabel,
                 false,
                 false,

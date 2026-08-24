@@ -25,10 +25,20 @@ let failed = 0;
 
 for (const file of walk(root)) {
     const text = fs.readFileSync(file, 'utf8');
-    const pattern = /R"JS\(([\s\S]*?)\)JS"/g;
+    // Adjacent literals are one script. A long hook has to be split because a
+    // single literal may not exceed the compiler's limit, and each half on its
+    // own is of course unbalanced, so checking halves reports errors that do
+    // not exist and buries the ones that do.
+    const pattern = /R"JS\(([\s\S]*?)\)JS"(?:\s*R"JS\(([\s\S]*?)\)JS")*/g;
+    const joiner = /R"JS\(([\s\S]*?)\)JS"/g;
     let match;
     while ((match = pattern.exec(text)) !== null) {
-        const script = match[1];
+        const parts = [];
+        joiner.lastIndex = 0;
+        let piece;
+        while ((piece = joiner.exec(match[0])) !== null)
+            parts.push(piece[1]);
+        const script = parts.join('');
         // Line number of the literal's start, so a failure points somewhere.
         const line = text.slice(0, match.index).split('\n').length;
         const where = `${path.relative(root, file)}:${line}`;

@@ -563,12 +563,18 @@ namespace
             "dying=e.isDeadOrDying(true)?1:0;"
             "else if(typeof e.isDead==='function')dying=e.isDead()?1:0;}"
             "catch(_){}"
-            // Zero roleplay hit points is the reliable signal: the client plays
-            // the death task only on the dying player's own machine, so a
-            // corpse streamed to us need not read as dead natively. The flag
-            // is the fallback when health is unreadable, and -1 means the
-            // native itself was missing.
-            "if(Number.isFinite(hp)){if(hp<=0)dead=1;}"
+            // An empty bar is a hundred, not zero. GTA keeps ped health as
+            // 100 + value and this server maps its own 0..100 hit points onto
+            // exactly that range, which its client code states outright by
+            // writing setHealth(100 + stored). Compared against zero this
+            // never once fired, so nobody ever read as down: the whole death
+            // and knock display was dead code against a threshold no live
+            // player can reach.
+            //
+            // Reported in roleplay points, so a reader sees the same number
+            // the server does.
+            "if(Number.isFinite(hp)){"
+            "hp=hp-100;if(hp<0)hp=0;if(hp<=0)dead=1;}"
             "else if(dying===1)dead=1;"
             // Fatally injured with hit points left is the bleeding-out window,
             // which the overlay draws apart from a finished death.
@@ -594,7 +600,17 @@ namespace
             "hpOut(hpRaw),dying];"
             "rows.push(row.join('\\t'));};"
             "emit(local,0,true);"
-            "if(rage.players&&rage.players.forEach)rage.players.forEach(p=>emit(p,0,p===local));"
+            // emit() discards anything without a handle, which is every player
+            // the server is not streaming to us: on a full server that is two
+            // thousand entries walked and thrown away, several times a second,
+            // on the thread that draws the frame. The pool can hand over just
+            // the streamed ones, so the whole roster is never touched.
+            "if(rage.players){"
+            "if(typeof rage.players.forEachInStreamRange==='function')"
+            "rage.players.forEachInStreamRange(p=>emit(p,0,p===local));"
+            "else if(rage.players.forEach)"
+            "rage.players.forEach(p=>emit(p,0,p===local));"
+            "}"
             "if(includeNonPlayers&&rage.peds&&rage.peds.forEach)"
             "rage.peds.forEach(p=>{let k=1;try{if(rage.game&&rage.game.ped&&rage.game.ped.isPedHuman){if(!rage.game.ped.isPedHuman(p.handle))k=2;}else if((rage.game&&rage.game.invoke&&rage.game.invoke('0xFF059E1E4C01E63C',p.handle)>>>0)===28)k=2;}catch(_){}emit(p,k,false);});"
             // The identity line the reader has always parsed and the script has
@@ -830,9 +846,18 @@ namespace
         for (int index = 0; index < count; ++index)
         {
             const NameEntry& entry = entries[index];
+            // Anyone the state of whose health is worth a line, not only those
+            // already classified: if the classification is the thing that is
+            // wrong, reporting only its hits shows nothing at all. Roleplay
+            // hit points run 0..100, so anything under full is an injury.
+            const bool interesting =
+                entry.dead ||
+                entry.knock ||
+                entry.dyingFlag == 1 ||
+                (entry.hp >= 0.f && entry.hp < 100.f);
             if (entry.kind !=
                     RagePlayerNames::EntityKind::Player ||
-                (!entry.dead && !entry.knock))
+                !interesting)
                 continue;
             if (activeCount < kTracked)
                 active[activeCount++] = entry.remoteId;
@@ -1653,8 +1678,14 @@ namespace RagePlayerNames
             Menu::s_VehicleVisualSettings.enabled ||
             Menu::s_ObjectVisualSettings.enabled ||
             Menu::NeedsPlayerCache();
+        // What this carries is identity and roleplay state: names, factions,
+        // families, admin level, health, downed. Positions and bones come from
+        // the game itself, every frame. None of the rest changes four times a
+        // second, and each run is about two milliseconds spent on the thread
+        // that draws the frame, which is where the standing-still stutter came
+        // from.
         const ULONGLONG refreshInterval =
-            active ? 250ULL : 1000ULL;
+            active ? 400ULL : 1000ULL;
 
         // One script runs per V8 pump, so queueing behind another heavy job
         // only stacks two long ticks back to back on the game's JS thread.

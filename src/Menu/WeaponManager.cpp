@@ -1656,7 +1656,7 @@ bool RenderAddWeaponWindow(std::uint32_t* addedHash) noexcept
                 confirmLabel,
                 ImVec2(buttonW, 32.f * scale),
                 true,
-                ICON_FA_PLUS))
+                ICON_FA_CIRCLE_PLUS))
         {
             for (int i = 0; i < WeaponCatalog::kWeaponCount; ++i)
             {

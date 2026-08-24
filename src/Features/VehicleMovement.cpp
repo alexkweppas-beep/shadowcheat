@@ -1,9 +1,17 @@
 #include "VehicleMovement.h"
 #include "NativeInvoke.hpp"
+#include "RageV8Runtime.h"
 #include "../Menu/Menu.h"
+#include "../SDK/RageBuildFlavor.h"
 
 #include <Windows.h>
 #include <cmath>
+
+#if defined(RAGEMP_DIAGNOSTICS)
+#include <cstdio>
+
+#include "../Main/Hooks.h"
+#endif
 
 namespace VehicleMovement
 {
@@ -18,7 +26,6 @@ namespace
     bool g_PendingStop = false;
     bool g_PendingFlip = false;
     bool g_PendingCrash = false;
-    bool g_PendingEngine = false;
 
     float ClampMultiplier(float value) noexcept
     {
@@ -47,21 +54,26 @@ namespace
     {
         outPed = 0;
         outVehicle = 0;
+        // The script thread's answer is asked for first and on its own terms.
+        // It used to be reached only after PLAYER_PED_ID returned something,
+        // and that native returns zero here: the table it lives in is
+        // encrypted on this build, so every C++ native is a no-op. The result
+        // was that being plainly seated and driving still resolved to "not
+        // driving", and every action on the vehicle page was dropped in
+        // silence.
+        if (g_LocalVehicle.valid)
+        {
+            if (!g_LocalVehicle.isDriver || !g_LocalVehicle.handle)
+                return false;
+            outPed = NativeInvoke::PlayerPedId();
+            outVehicle = g_LocalVehicle.handle;
+            return true;
+        }
         if (!NativeInvoke::Init())
             return false;
         const int ped = NativeInvoke::PlayerPedId();
         if (!ped)
             return false;
-        // Script-thread answer first. Only fall back to the Present natives
-        // when V8 has not published a state yet.
-        if (g_LocalVehicle.valid)
-        {
-            if (!g_LocalVehicle.isDriver || !g_LocalVehicle.handle)
-                return false;
-            outPed = ped;
-            outVehicle = g_LocalVehicle.handle;
-            return true;
-        }
         if (!NativeInvoke::DoesEntityExist(ped))
             return false;
         const int vehicle = NativeInvoke::GetVehiclePedIsIn(ped, false);
@@ -164,6 +176,43 @@ namespace
         g_AutopilotArmed = true;
     }
 
+    // These have to run on the script thread. The C++ native path cannot do
+    // them at all: the game's native table is encrypted on this build, so a
+    // handler lookup returns nothing and the call is a silent no-op.
+    //
+    // The body is handed the driver's vehicle as `v` and is only reached when
+    // there is one.
+    // The outcome is recorded where the vehicle poll can read it back. Without
+    // that, a wrapper this build happens not to expose looks exactly like a
+    // wrapper that ran and did nothing, and telling those two apart by
+    // guesswork has already cost several rounds.
+    bool RunOnVehicle(const char* label, const char* body) noexcept
+    {
+        if (!label || !body)
+            return false;
+        char script[768]{};
+        _snprintf(
+            script,
+            sizeof(script) - 1,
+            // One slot per action. Sharing a single one meant the next press
+            // erased the answer to the previous, so pressing two buttons in a
+            // row reported only the second.
+            "try{var g=typeof globalThis!=='undefined'?globalThis:this;"
+            "g.__bfPl=g.__bfPl||{};g.__bfPl.va=g.__bfPl.va||{};"
+            "var how='none';"
+            "var p=mp.players&&mp.players.local;var v=p&&p.vehicle;"
+            "if(!v||!v.handle){g.__bfPl.va['%s']='noveh';}"
+            "else{try{%s g.__bfPl.va['%s']=how;}"
+            "catch(e){g.__bfPl.va['%s']='err '+"
+            "String((e&&e.message)||e).slice(0,40).replace(/\\s+/g,'_');}}"
+            "}catch(e){}",
+            label,
+            body,
+            label,
+            label);
+        return RageV8Runtime::EnqueueFireAndForget(script);
+    }
+
     void ConsumeOneShots(int ped, int vehicle) noexcept
     {
         if (!vehicle)
@@ -171,38 +220,64 @@ namespace
             g_PendingStop = false;
             g_PendingFlip = false;
             g_PendingCrash = false;
-            g_PendingEngine = false;
             return;
         }
         if (g_PendingStop)
         {
-            NativeInvoke::SetEntityVelocity(vehicle, 0.f, 0.f, 0.f);
             g_PendingStop = false;
+            RunOnVehicle(
+                "stop",
+                "v.setVelocity(0,0,0);how='vel';"
+                "if(typeof v.setBrake==='function'){v.setBrake(1);"
+                "how='vel+brake';}");
         }
         if (g_PendingFlip)
         {
-            NativeInvoke::SetEntityRotation(
-                vehicle,
-                0.f,
-                0.f,
-                NativeInvoke::GetEntityHeading(vehicle),
-                2,
-                true);
             g_PendingFlip = false;
+            // Upright, keeping the way it faces. Roll and pitch are what a
+            // flipped car has, and heading is the part worth preserving.
+            RunOnVehicle(
+                "flip",
+                "var hd=0;"
+                "try{hd=Number(v.getHeading());}catch(e){}"
+                "if(!isFinite(hd)){try{hd=Number(v.heading);}catch(e){hd=0;}}"
+                "if(!isFinite(hd))hd=0;"
+                "if(typeof v.setRotation==='function'){"
+                "v.setRotation(0,0,hd,2,true);how='wrapper';}"
+                "else if(mp.game.entity&&"
+                "typeof mp.game.entity.setEntityRotation==='function'){"
+                "mp.game.entity.setEntityRotation("
+                "v.handle,0,0,hd,2,true);how='ns';}");
         }
         if (g_PendingCrash)
         {
-            NativeInvoke::NetworkExplodeVehicle(vehicle, true, false, 0);
             g_PendingCrash = false;
+            // The vehicle may simply not be ours to blow up: on a roleplay
+            // server the entity belongs to the server and the explosion has to
+            // be its decision. Which of the surfaces exists is measured rather
+            // than assumed.
+            RunOnVehicle(
+                "crash",
+                // Both arguments are required: called bare the wrapper refuses
+                // with "isAudible is not a boolean".
+                "if(typeof v.explode==='function'){v.explode(true,false);"
+                "how='explode';}"
+                "else if(mp.game.vehicle&&typeof "
+                "mp.game.vehicle.networkExplodeVehicle==='function'){"
+                "mp.game.vehicle.networkExplodeVehicle("
+                "v.handle,true,false,0);how='network';}"
+                "else if(mp.game.fire&&typeof "
+                "mp.game.fire.addExplosion==='function'){"
+                "var q=v.position;"
+                "mp.game.fire.addExplosion(q.x,q.y,q.z,7,1,true,false,1);"
+                "how='blast';}");
         }
-        if (g_PendingEngine)
-        {
-            NativeInvoke::SetVehicleEngineOn(vehicle, true, true, false);
-            g_PendingEngine = false;
-        }
-        if (g_Settings.engineForceOn)
-            NativeInvoke::SetVehicleEngineOn(vehicle, true, false, false);
+        // Engine control lived here and was removed. The engine is the
+        // server's: setting it from the client resynced the vehicle and threw
+        // the occupant out, and asking over the server's own event does not
+        // bypass the ownership check, it invokes it. Neither is a feature.
         (void)ped;
+        (void)vehicle;
     }
 } // namespace
 
@@ -231,11 +306,6 @@ void RequestCrash() noexcept
     g_PendingCrash = true;
 }
 
-void RequestEngineOn() noexcept
-{
-    g_PendingEngine = true;
-}
-
 void Update() noexcept
 {
     g_Settings.unlockSpeedLimit = false;
@@ -248,11 +318,9 @@ void Update() noexcept
         g_Settings.seatbelt ||
         g_Settings.skipEnterAnim ||
         g_Settings.autopilot ||
-        g_Settings.engineForceOn ||
         g_PendingStop ||
         g_PendingFlip ||
-        g_PendingCrash ||
-        g_PendingEngine;
+        g_PendingCrash;
 
     if (!NativeInvoke::Init())
     {
@@ -286,6 +354,44 @@ void Update() noexcept
     int ped = 0;
     int vehicle = 0;
     const bool driving = ResolveDriverVehicle(ped, vehicle);
+
+#if defined(RAGEMP_DIAGNOSTICS)
+    // Every one of these actions is dropped on the floor unless the player is
+    // driving, and it is dropped without a word, which is indistinguishable
+    // from the action being broken. The ids are here as well because the
+    // native table resolving is not the same as calls through it working.
+    {
+        static ULONGLONG lastReport = 0;
+        const ULONGLONG nowMs = GetTickCount64();
+        const bool pending =
+            g_PendingStop || g_PendingFlip ||
+            g_PendingCrash;
+        if (pending || nowMs - lastReport >= 2000)
+        {
+            lastReport = nowMs;
+            char line[224]{};
+            _snprintf(
+                line,
+                sizeof(line) - 1,
+                "[VehAct] driving=%d ped=%d veh=%d scriptOwns=%d "
+                "pubValid=%d pubIn=%d pubDriver=%d pubHandle=%d "
+                "pending(stop=%d flip=%d crash=%d engine=%d)",
+                driving ? 1 : 0,
+                ped,
+                vehicle,
+                scriptOwnsFrame ? 1 : 0,
+                g_LocalVehicle.valid ? 1 : 0,
+                g_LocalVehicle.inVehicle ? 1 : 0,
+                g_LocalVehicle.isDriver ? 1 : 0,
+                g_LocalVehicle.handle,
+                g_PendingStop ? 1 : 0,
+                g_PendingFlip ? 1 : 0,
+                g_PendingCrash ? 1 : 0,
+                0);
+            hooks::HLog(line);
+        }
+    }
+#endif
     if (!driving)
     {
         RestoreSpeed();
@@ -294,7 +400,6 @@ void Update() noexcept
         g_PendingStop = false;
         g_PendingFlip = false;
         g_PendingCrash = false;
-        g_PendingEngine = false;
         g_Status = any ? Status::NoVehicle : Status::Off;
         const bool seated = g_LocalVehicle.valid
             ? g_LocalVehicle.inVehicle

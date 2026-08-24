@@ -36,6 +36,39 @@ namespace Offsets
         constexpr uint32_t MaxSlots = 32;
     }
 
+    // CReplayInterface holds one interface per entity kind, and each files its
+    // own array at its own offset: the ped's is not the vehicle's, which is why
+    // asking every interface at the ped's offset finds only peds.
+    //
+    // Measured on this build by walking the table. Capacities came back 300,
+    // 256 and 2300, holding 65 vehicles, 125 peds and 692 objects, and the
+    // vehicle interface sees every vehicle around where the flat global list
+    // sees roughly half. Array stride is 16 with the pointer in the first 8.
+    namespace Replay {
+        constexpr uint32_t VehicleInterface = 0x10;
+        constexpr uint32_t PedInterface     = 0x18;
+        constexpr uint32_t ObjectInterface  = 0x28;
+        constexpr uint32_t VehicleList      = 0x180;
+        constexpr uint32_t VehicleCount     = 0x188;
+        constexpr uint32_t PedList          = 0x100;
+        constexpr uint32_t PedCount         = 0x108;
+        constexpr uint32_t ObjectList       = 0x158;
+        constexpr uint32_t ObjectCount      = 0x160;
+        constexpr uint32_t Stride           = 0x10;
+    }
+
+    // Shared by every entity: the type discriminator and the transform block
+    // that carries the world matrix.
+    namespace Entity {
+        constexpr uint32_t Type           = 0x28;
+        constexpr uint32_t Transform      = 0x30;
+        constexpr uint32_t MatrixForward  = 0x30;
+        constexpr uint32_t MatrixPosition = 0x50;
+        constexpr uint8_t  TypeVehicle    = 3;
+        constexpr uint8_t  TypePed        = 4;
+        constexpr uint8_t  TypeObject     = 5;
+    }
+
     // ---- Resolved pointers (filled by Initialize()) ----
     // These point to the GLOBAL cell in GTA5.exe .data that holds the
     // heap pointer to the corresponding structure (NOT directly to the

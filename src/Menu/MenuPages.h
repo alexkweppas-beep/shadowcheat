@@ -48,6 +48,10 @@ namespace Menu
     void RenderCombatPage();
     void RenderWeaponsPage();
     void RenderVisualsPage();
+    // Drawn by the shell rather than by the objects page, because a
+    // double-click on an object has to open it from wherever the user happens
+    // to be standing in the menu.
+    void RenderObjectFilterPopup() noexcept;
     void RenderPlayersPage();
     void RenderAroundPage();
     void RenderMiscPage();

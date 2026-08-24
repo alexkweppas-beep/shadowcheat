@@ -27,7 +27,6 @@ namespace VehicleMovement
         bool seatbelt{};
         bool skipEnterAnim{};
         bool autopilot{};
-        bool engineForceOn{};
     };
 
     // Resolved on the RAGE script thread and published here. Present cannot
@@ -59,5 +58,4 @@ namespace VehicleMovement
     void RequestStop() noexcept;
     void RequestFlip() noexcept;
     void RequestCrash() noexcept;
-    void RequestEngineOn() noexcept;
 }

@@ -58,8 +58,15 @@ namespace MiscFeatures
 
         // Vehicle
         bool seatbelt{};
-        bool disableCarCollision{};
+        // Where Respawn puts the character: the spot he fell on, or wherever
+        // the server would have sent him.
+        bool respawnInPlace{true};
+
+        // Collision is a property of a pair, not of an entity, so each class
+        // is switched off against us separately.
         bool disablePlayerCollision{};
+        bool disableCarCollision{};
+        bool disableObjectCollision{};
 
         // Players panel
         bool showPlayers{};

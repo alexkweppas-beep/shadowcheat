@@ -2478,23 +2478,45 @@ namespace
                 RuntimeProfiler::End(
                     RuntimeProfiler::Scope::V8Execute,
                     executeProfile);
-#if RAGEMP_DEV_BUILD
-                // Anything this long is a visible hitch, so name the script
-                // that caused it instead of leaving a percentile behind.
+#if defined(RAGEMP_DIAGNOSTICS)
+                // These run on the thread that drives the game's frame, so a
+                // millisecond here is a millisecond of stutter. Naming the
+                // script beats reading a percentile and guessing which one it
+                // was. The gate used to be the development tree's own switch,
+                // which is pinned off, so this had never once fired.
                 const double elapsedMs =
                     ElapsedMilliseconds(executeProfile);
-                if (elapsedMs >= 4.0)
+                if (elapsedMs >= 1.5)
                 {
-                    char line[192]{};
+                    // An unrecognised script is named by its opening line,
+                    // because "other" identifies nothing and the marker list
+                    // only knows the sources someone thought to add.
+                    char head[52]{};
+                    const char* source =
+                        g_ExecutingCommand.script;
+                    if (source)
+                    {
+                        int written = 0;
+                        for (const char* cursor = source;
+                             *cursor && written <
+                                 static_cast<int>(sizeof(head)) - 1;
+                             ++cursor)
+                        {
+                            const char c = *cursor;
+                            head[written++] =
+                                (c == '\n' || c == '\r' || c == '\t')
+                                    ? ' ' : c;
+                        }
+                    }
+                    char line[256]{};
                     _snprintf(
                         line,
                         sizeof(line) - 1,
-                        "V8SLOW: kind=%s len=%d ms=%.1f",
-                        ClassifyScript(g_ExecutingCommand.script),
-                        g_ExecutingCommand.script
-                            ? lstrlenA(g_ExecutingCommand.script)
-                            : 0,
-                        elapsedMs);
+                        "V8SLOW: kind=%s len=%d ms=%.1f | %s",
+                        ClassifyScript(source),
+                        source ? lstrlenA(source) : 0,
+                        elapsedMs,
+                        head);
                     hooks::HLog(line);
                 }
 #endif

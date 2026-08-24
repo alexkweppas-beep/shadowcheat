@@ -31,6 +31,7 @@ namespace Menu
     float UIScale() noexcept
     {
         switch (s_UIScalePercent) {
+        case 75:  return 0.75f;
         case 125: return 1.25f;
         case 150: return 1.50f;
         case 175: return 1.75f;

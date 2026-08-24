@@ -115,6 +115,48 @@ namespace Menu
     RadarSettings s_RadarSettings{};
     VehicleVisualSettings s_VehicleVisualSettings{};
     ObjectVisualSettings s_ObjectVisualSettings{};
+    ModelLabel s_ModelLabels[kMaxModelLabels]{};
+    int s_ModelLabelCount = 0;
+    std::uint32_t s_PickedObjectModel = 0;
+    bool s_ObjectFilterOpenRequest = false;
+    bool s_ObjectFiltersSeeded = false;
+
+    void SeedDefaultObjectFilters() noexcept
+    {
+        if (s_ObjectFiltersSeeded)
+            return;
+        s_ObjectFiltersSeeded = true;
+
+        struct Seed final
+        {
+            std::uint32_t hash;
+            const char* name;
+        };
+        static constexpr Seed kSeeds[] = {
+            { 0x3D2E1AE8u, "Carbine Rifle" },
+            { 0xC0A3098Du, "Special Carbine" },
+            { 0x2D9A5028u, "Spank/Kosyak/Analgetic" },
+            { 0xE210FECFu, "First Aid Kit" },
+            { 0x29CB0F3Cu, "Armor" },
+        };
+
+        ObjectVisualSettings& objects = s_ObjectVisualSettings;
+        for (const Seed& seed : kSeeds)
+        {
+            SetModelLabel(seed.hash, seed.name);
+            bool present = false;
+            for (int index = 0;
+                 index < objects.includeModelCount;
+                 ++index)
+                present = present ||
+                    objects.includeModels[index] == seed.hash;
+            if (present ||
+                objects.includeModelCount >= kMaxVisualModelFilters)
+                continue;
+            objects.includeModels[
+                objects.includeModelCount++] = seed.hash;
+        }
+    }
 
     void InitDefaultEspProfiles() noexcept
     {
@@ -1410,11 +1452,18 @@ namespace Menu
 
 
 
-    static constexpr int kUIFontVariantCount = 5;
+    // Glyphs are rasterised once per step, so the steps are the scales that
+    // exist. The two below one are rasterised as well rather than shrinking the
+    // hundred percent atlas, which would only blur the text at the size where
+    // it can least afford it.
+    static constexpr int kUIFontVariantCount = 6;
     static constexpr float kUIFontScales[
         kUIFontVariantCount] = {
-        1.f, 1.25f, 1.5f, 1.75f, 2.f
+        0.75f, 1.f, 1.25f, 1.5f, 1.75f, 2.f
     };
+    // The step the percentage stands on, counted from the smallest.
+    static constexpr int kUIScaleMinPercent = 75;
+    static constexpr int kUIScaleStepPercent = 25;
     static ImFont* g_weapon_icon_fonts[kUIFontVariantCount]{};
     static ImFont* g_body_fonts[kUIFontVariantCount]{};
     static ImFont* g_label_fonts[kUIFontVariantCount]{};
@@ -1434,7 +1483,8 @@ namespace Menu
     static int UIFontVariantIndex() noexcept
     {
         return ImClamp(
-            (s_UIScalePercent - 100) / 25,
+            (s_UIScalePercent - kUIScaleMinPercent) /
+                kUIScaleStepPercent,
             0,
             kUIFontVariantCount - 1);
     }
@@ -2046,6 +2096,10 @@ namespace Menu
         default:
             break;
         }
+        // Owned by the shell rather than by the objects page: a double-click on
+        // an object in the world has to be able to open it wherever the user
+        // happens to be in the menu.
+        RenderObjectFilterPopup();
     }
 
     namespace
@@ -3241,5 +3295,72 @@ namespace Menu
         if (!IsVisible())
             return false;
         return s_AcceptedMainPage == MainPage::Players;
+    }
+
+    const char* ModelLabelFor(std::uint32_t hash) noexcept
+    {
+        if (!hash)
+            return "";
+        const int count =
+            ImClamp(s_ModelLabelCount, 0, kMaxModelLabels);
+        for (int index = 0; index < count; ++index)
+        {
+            if (s_ModelLabels[index].hash == hash)
+                return s_ModelLabels[index].name;
+        }
+        return "";
+    }
+
+    void SetModelLabel(
+        std::uint32_t hash, const char* name) noexcept
+    {
+        if (!hash)
+            return;
+        s_ModelLabelCount =
+            ImClamp(s_ModelLabelCount, 0, kMaxModelLabels);
+
+        bool blank = true;
+        if (name)
+        {
+            for (const char* cursor = name; *cursor; ++cursor)
+            {
+                if (*cursor != ' ' && *cursor != '\t')
+                {
+                    blank = false;
+                    break;
+                }
+            }
+        }
+
+        for (int index = 0; index < s_ModelLabelCount; ++index)
+        {
+            if (s_ModelLabels[index].hash != hash)
+                continue;
+            if (blank)
+            {
+                // Closed up rather than left as a hole, so the count stays
+                // the number of entries and nothing has to skip gaps.
+                s_ModelLabels[index] =
+                    s_ModelLabels[s_ModelLabelCount - 1];
+                s_ModelLabels[s_ModelLabelCount - 1] = {};
+                --s_ModelLabelCount;
+                return;
+            }
+            lstrcpynA(
+                s_ModelLabels[index].name,
+                name,
+                static_cast<int>(
+                    sizeof(s_ModelLabels[index].name)));
+            return;
+        }
+
+        if (blank || s_ModelLabelCount >= kMaxModelLabels)
+            return;
+        ModelLabel& added = s_ModelLabels[s_ModelLabelCount++];
+        added.hash = hash;
+        lstrcpynA(
+            added.name,
+            name,
+            static_cast<int>(sizeof(added.name)));
     }
 }

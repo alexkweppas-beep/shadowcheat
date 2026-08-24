@@ -278,7 +278,7 @@ namespace Menu
                 T("Add", "Добавить", "Додати"),
                 ImVec2(addWidth, 32.f * scale),
                 false,
-                ICON_FA_PLUS))
+                ICON_FA_CIRCLE_PLUS))
         {
             std::uint32_t parsed = 0;
             bool duplicate = false;
@@ -549,11 +549,281 @@ namespace Menu
         MenuUi::EndInspectorIsland();
     }
 
+    // One row of the object filter editor: the name is edited in place, the
+    // hash is what actually does the filtering and is shown as it is.
+    static bool RenderModelFilterRow(
+        std::uint32_t* values,
+        int& count,
+        int index,
+        float scale) noexcept
+    {
+        bool removed = false;
+        ImGui::PushID(index);
+        const std::uint32_t hash = values[index];
+
+        char name[28]{};
+        lstrcpynA(
+            name,
+            ModelLabelFor(hash),
+            static_cast<int>(sizeof(name)));
+
+        const float removeWidth = 32.f * scale;
+        const float hashWidth = 96.f * scale;
+        const float nameWidth = ImMax(
+            90.f * scale,
+            ImGui::GetContentRegionAvail().x -
+                hashWidth - removeWidth - 14.f * scale);
+
+        if (gui->text_field(
+                "##model_name",
+                T("Name", "Название", "Назва"),
+                ImVec2(nameWidth, 30.f * scale),
+                name,
+                sizeof(name)))
+            SetModelLabel(hash, name);
+
+        ImGui::SameLine(0.f, 7.f * scale);
+        char hashLabel[16]{};
+        _snprintf(
+            hashLabel,
+            sizeof(hashLabel) - 1,
+            "0x%08X",
+            static_cast<unsigned>(hash));
+        const ImVec2 hashMin = ImGui::GetCursorScreenPos();
+        ImGui::Dummy(ImVec2(hashWidth, 30.f * scale));
+        ImDrawList* draw = ImGui::GetWindowDrawList();
+        draw->AddRectFilled(
+            hashMin,
+            hashMin + ImVec2(hashWidth, 30.f * scale),
+            gui->get_clr(clr->element_background, 0.72f),
+            7.f * scale);
+        // Dimmer than the name: the name is what the row is now about, and the
+        // hash is the identifier behind it.
+        draw->AddText(
+            hashMin + ImVec2(9.f, 7.f) * scale,
+            gui->get_clr(clr->text),
+            hashLabel);
+
+        ImGui::SameLine(0.f, 7.f * scale);
+        if (MenuUi::ActionButton(
+                "remove_model",
+                "",
+                ImVec2(removeWidth, 30.f * scale),
+                false,
+                ICON_FA_TRASH))
+        {
+            for (int move = index; move + 1 < count; ++move)
+                values[move] = values[move + 1];
+            values[--count] = 0;
+            removed = true;
+        }
+        ImGui::PopID();
+        ImGui::Dummy(ImVec2(0.f, 3.f * scale));
+        return removed;
+    }
+
+    // The two lists used to sit on the page as bare hash fields, which meant a
+    // filter was a column of hex numbers with nothing saying what any of them
+    // was. They live in their own window now, with a name beside each hash.
+    static char s_FilterHashInput[24]{};
+    static char s_FilterNameInput[28]{};
+    static int  s_FilterListChoice = 0;
+
+    static const char* ObjectFilterPopupId() noexcept
+    {
+        return T(
+            "Object filters###object_filter_editor",
+            "Фильтры объектов###object_filter_editor",
+            "Фільтри об'єктів###object_filter_editor");
+    }
+
+    static void RenderObjectFilterEditor(float scale) noexcept
+    {
+        ObjectVisualSettings& visual = s_ObjectVisualSettings;
+        const char* popup = ObjectFilterPopupId();
+
+        ImGui::SetNextWindowSize(
+            ImVec2(520.f, 0.f) * scale,
+            ImGuiCond_Appearing);
+        // A popup rather than a modal: a modal swallows every click outside
+        // itself by design, and clicking away is how this one is meant to be
+        // dismissed. The title row is drawn below instead of using a title
+        // bar, which a popup does not have.
+        if (!ImGui::BeginPopup(
+                popup,
+                ImGuiWindowFlags_AlwaysAutoResize |
+                    ImGuiWindowFlags_NoSavedSettings))
+            return;
+
+        {
+            const float closeSize = 26.f * scale;
+            ImGui::AlignTextToFramePadding();
+            ImGui::TextUnformatted(
+                T("Object filters", "Фильтры объектов",
+                  "Фільтри об'єктів"));
+            ImGui::SameLine(0.f, 0.f);
+            ImGui::SetCursorPosX(
+                ImGui::GetCursorPosX() +
+                ImMax(0.f,
+                      ImGui::GetContentRegionAvail().x - closeSize));
+            if (MenuUi::ActionButton(
+                    "object_filter_x",
+                    "",
+                    ImVec2(closeSize, closeSize),
+                    false,
+                    ICON_FA_XMARK))
+            {
+                ImGui::CloseCurrentPopup();
+                ImGui::EndPopup();
+                return;
+            }
+        }
+
+        char* const hashInput = s_FilterHashInput;
+        char* const nameInput = s_FilterNameInput;
+        int& listChoice = s_FilterListChoice;
+
+        visual.includeModelCount =
+            ImClamp(visual.includeModelCount, 0, kMaxVisualModelFilters);
+        visual.excludeModelCount =
+            ImClamp(visual.excludeModelCount, 0, kMaxVisualModelFilters);
+
+        // Which list is being edited carries the count, so the choice and the
+        // state of both lists read as one thing instead of a label, a dropdown
+        // and a paragraph explaining them.
+        char shownLabel[40]{};
+        char hiddenLabel[40]{};
+        _snprintf(
+            shownLabel,
+            sizeof(shownLabel) - 1,
+            "%s  %d",
+            T("Shown", "Показывать", "Показувати"),
+            visual.includeModelCount);
+        _snprintf(
+            hiddenLabel,
+            sizeof(hiddenLabel) - 1,
+            "%s  %d",
+            T("Hidden", "Скрывать", "Ховати"),
+            visual.excludeModelCount);
+        const MenuUi::IconTabDesc lists[2] = {
+            { "shown", ICON_FA_EYE, shownLabel },
+            { "hidden", ICON_FA_EYE_SLASH, hiddenLabel },
+        };
+        MenuUi::ChipTabs("object_filter_lists", lists, 2, &listChoice);
+        if (listChoice < 0 || listChoice > 1)
+            listChoice = 0;
+
+        std::uint32_t* values = listChoice == 0
+            ? visual.includeModels
+            : visual.excludeModels;
+        int& count = listChoice == 0
+            ? visual.includeModelCount
+            : visual.excludeModelCount;
+
+        MenuUi::BeginInspectorIsland(
+            "object_filter_add_island",
+            T("ADD MODEL", "ДОБАВИТЬ МОДЕЛЬ", "ДОДАТИ МОДЕЛЬ"),
+            8.f,
+            listChoice == 0
+                ? T("Only these models are drawn.",
+                    "Рисуются только эти модели.",
+                    "Малюються лише ці моделі.")
+                : T("Everything except these is drawn.",
+                    "Рисуется всё, кроме этих.",
+                    "Малюється усе, крім цих."));
+        const float addWidth = 92.f * scale;
+        const float half = ImMax(
+            88.f * scale,
+            (ImGui::GetContentRegionAvail().x -
+                addWidth - 14.f * scale) * 0.5f);
+        gui->text_field(
+            "##add_hash",
+            "0x12345678",
+            ImVec2(half, 32.f * scale),
+            hashInput,
+            sizeof(s_FilterHashInput));
+        ImGui::SameLine(0.f, 7.f * scale);
+        gui->text_field(
+            "##add_name",
+            T("Name", "Название", "Назва"),
+            ImVec2(half, 32.f * scale),
+            nameInput,
+            sizeof(s_FilterNameInput));
+        ImGui::SameLine(0.f, 7.f * scale);
+        const bool full = count >= kMaxVisualModelFilters;
+        // Not ICON_FA_CIRCLE_PLUS: that one is defined as the ASCII "+", and the icon
+        // font is rasterised only over the Font Awesome range starting at
+        // 0xE005, so it comes out as an empty box. CIRCLE_PLUS is U+F055 and
+        // is actually in the atlas.
+        if (MenuUi::ActionButton(
+                "object_filter_add",
+                T("Add", "Добавить", "Додати"),
+                ImVec2(addWidth, 32.f * scale),
+                !full,
+                ICON_FA_CIRCLE_PLUS) &&
+            !full)
+        {
+            std::uint32_t parsed = 0;
+            if (ParseVisualModelHash(hashInput, parsed))
+            {
+                bool duplicate = false;
+                for (int index = 0; index < count; ++index)
+                    duplicate = duplicate || values[index] == parsed;
+                if (!duplicate)
+                {
+                    values[count++] = parsed;
+                    SetModelLabel(parsed, nameInput);
+                    hashInput[0] = '\0';
+                    nameInput[0] = '\0';
+                }
+            }
+        }
+        if (full)
+            ImGui::TextDisabled(
+                "%s",
+                T("List is full.", "Список заполнен.",
+                  "Список заповнений."));
+        MenuUi::EndInspectorIsland();
+
+        MenuUi::BeginInspectorIsland(
+            "object_filter_list_island",
+            T("ENTRIES", "ЗАПИСИ", "ЗАПИСИ"),
+            8.f);
+        if (count <= 0)
+        {
+            // Centred and stated plainly: an empty filter list looks exactly
+            // like a broken one otherwise.
+            // A hyphen, not a dash: the atlas carries Latin and Cyrillic, and
+            // an em dash came out as a question mark.
+            const char* empty = T(
+                "Empty - this list filters nothing",
+                "Пусто - этот список ничего не фильтрует",
+                "Порожньо - цей список нічого не фільтрує");
+            const float width = ImGui::CalcTextSize(empty).x;
+            ImGui::Dummy(ImVec2(0.f, 6.f * scale));
+            ImGui::SetCursorPosX(
+                ImGui::GetCursorPosX() +
+                ImMax(0.f,
+                      (ImGui::GetContentRegionAvail().x - width) * 0.5f));
+            ImGui::TextDisabled("%s", empty);
+            ImGui::Dummy(ImVec2(0.f, 6.f * scale));
+        }
+        for (int index = 0; index < count;)
+        {
+            if (!RenderModelFilterRow(values, count, index, scale))
+                ++index;
+        }
+        MenuUi::EndInspectorIsland();
+
+        // No Done button. With a cross in the corner and a click anywhere
+        // outside both closing the window, a third way to do the same thing is
+        // only one more thing to read.
+        ImGui::EndPopup();
+    }
+
     static void RenderObjectVisualsInspector() noexcept
     {
         ObjectVisualSettings& visual = s_ObjectVisualSettings;
-        static char includeInput[24]{};
-        static char excludeInput[24]{};
 
         MenuUi::BeginInspectorIsland(
             "object_general",
@@ -616,25 +886,34 @@ namespace Menu
         VisualsRow("objects_pickups", ICON_FA_BOX_OPEN,
             T("Pickups", "Подбираемые", "Підбирані"),
             &visual.showPickups, visual.pickupColor, false);
+        VisualsRow("objects_show_all", ICON_FA_EYE,
+            T("Show all", "Показывать всё", "Показувати все"),
+            &visual.showAll, nullptr, false);
         MenuUi::EndInspectorIsland();
 
         MenuUi::BeginInspectorIsland(
             "object_models",
-            T("MODEL HASHES", "ХЕШИ МОДЕЛЕЙ", "ХЕШІ МОДЕЛЕЙ"));
-        RenderModelHashCollection(
-            "object_include",
-            "Include: 0x12345678",
-            visual.includeModels,
+            T("MODEL FILTERS", "ФИЛЬТРЫ МОДЕЛЕЙ", "ФІЛЬТРИ МОДЕЛЕЙ"));
+        const float scale = UIScale();
+        char summary[96]{};
+        _snprintf(
+            summary,
+            sizeof(summary) - 1,
+            "%s  %d / %d",
+            T("Edit list", "Изменить список", "Змінити список"),
             visual.includeModelCount,
-            includeInput,
-            sizeof(includeInput));
-        RenderModelHashCollection(
-            "object_exclude",
-            "Exclude: 0x12345678",
-            visual.excludeModels,
-            visual.excludeModelCount,
-            excludeInput,
-            sizeof(excludeInput));
+            visual.excludeModelCount);
+        if (MenuUi::ActionButton(
+                "object_filter_open",
+                summary,
+                ImVec2(
+                    ImGui::GetContentRegionAvail().x,
+                    34.f * scale),
+                false,
+                ICON_FA_FILTER))
+            s_ObjectFilterOpenRequest = true;
+        // The window itself is drawn by the shell, once, so that a
+        // double-click opens it from any page.
         MenuUi::EndInspectorIsland();
     }
 
@@ -1236,6 +1515,34 @@ namespace Menu
         }
         ImGui::EndChild();
         ImGui::PopStyleVar();
+    }
+
+    void RenderObjectFilterPopup() noexcept
+    {
+        // A pick arrives from the world, where there is no page context, so it
+        // is turned into an open request here and the hash is put straight
+        // into the field the user would otherwise have typed it into.
+        if (s_PickedObjectModel != 0)
+        {
+            _snprintf(
+                s_FilterHashInput,
+                sizeof(s_FilterHashInput) - 1,
+                "0x%08X",
+                static_cast<unsigned>(s_PickedObjectModel));
+            lstrcpynA(
+                s_FilterNameInput,
+                ModelLabelFor(s_PickedObjectModel),
+                static_cast<int>(sizeof(s_FilterNameInput)));
+            s_FilterListChoice = 0;
+            s_PickedObjectModel = 0;
+            s_ObjectFilterOpenRequest = true;
+        }
+        if (s_ObjectFilterOpenRequest)
+        {
+            s_ObjectFilterOpenRequest = false;
+            ImGui::OpenPopup(ObjectFilterPopupId());
+        }
+        RenderObjectFilterEditor(UIScale());
     }
 
     void RenderVisualsPage()

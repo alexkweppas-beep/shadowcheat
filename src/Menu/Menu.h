@@ -16,7 +16,8 @@
 //    Menu::Watermark()         — Minimal on-screen watermark (always visible)
 //
 //  UI Scale:
-//    s_UIScalePercent — 100/125/150/175/200, selects DPI font + layout scale.
+//    s_UIScalePercent — 75..200 in steps of 25, selects DPI font + layout
+//      scale. Each step has its own rasterised font atlas.
 // =====================================================================
 
 struct ImGuiIO;
@@ -259,6 +260,9 @@ namespace Menu
         bool remoteId{};
         bool showObjects{true};
         bool showPickups{true};
+        // Bypasses the shown-list without emptying it: keep the list you
+        // built and still see everything for a moment.
+        bool showAll{};
         bool snapLine{};
         int  snapLineOrigin{}; // EspSnapOrigin
         float maxDistance{180.f};
@@ -444,6 +448,44 @@ namespace Menu
     extern RadarSettings s_RadarSettings;
     extern VehicleVisualSettings s_VehicleVisualSettings;
     extern ObjectVisualSettings s_ObjectVisualSettings;
+
+    // A name the user gave to a model hash, so a filter list reads as words
+    // instead of eight hex digits. Kept apart from the filter lists and keyed
+    // by the hash, because a hash means the same object wherever it appears:
+    // naming it once names it in every list that mentions it.
+    inline constexpr int kMaxModelLabels = 96;
+
+    struct ModelLabel final
+    {
+        std::uint32_t hash{};
+        char name[28]{};
+    };
+
+    extern ModelLabel s_ModelLabels[kMaxModelLabels];
+    extern int s_ModelLabelCount;
+
+    // A model the user double-clicked on screen while the menu was open, so
+    // the filter editor can open on it already filled in. Zero when nothing is
+    // waiting; the editor clears it as it takes it.
+    extern std::uint32_t s_PickedObjectModel;
+
+    // Asking for the window has to happen where the window is drawn: an
+    // ImGui popup is keyed by the id stack it was opened from, and the page
+    // sits inside child windows, so a request raised there never matches the
+    // one the shell begins. The page raises this instead.
+    extern bool s_ObjectFilterOpenRequest;
+
+    // Empty string when the hash has no name, never null.
+    const char* ModelLabelFor(std::uint32_t hash) noexcept;
+    // An empty or blank name removes the entry.
+    void SetModelLabel(std::uint32_t hash, const char* name) noexcept;
+
+    // The shown-list starts with the pickups worth seeing on this server. They
+    // are seeded exactly once and the fact is written to the config, so
+    // deleting one keeps it deleted instead of having it come back on the next
+    // launch.
+    extern bool s_ObjectFiltersSeeded;
+    void SeedDefaultObjectFilters() noexcept;
     extern int s_VisualCategoryTab;
     // Ped profile scope inside VisualCategory::Peds (EspProfileId).
     extern int s_VisualPedProfile;

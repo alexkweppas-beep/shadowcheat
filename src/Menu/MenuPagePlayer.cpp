@@ -134,6 +134,13 @@ namespace Menu
                 ICON_FA_SKULL,
                 &MiscFeatures::RequestSuicide))
             MiscFeatures::RequestSuicide();
+        MiscRow(
+            "misc_respawn_inplace",
+            ICON_FA_MAP_PIN,
+            T("Respawn where you fell",
+              "Респавн на месте смерти",
+              "Респавн на місці смерті"),
+            &s.respawnInPlace);
         MenuUi::EndInspectorIsland();
 
         MenuUi::BeginInspectorIsland(
@@ -286,6 +293,30 @@ namespace Menu
                 ICON_FA_KEY);
             EndAimReveal(s.freecam);
         }
+
+        // Applies to whatever the player is riding in: seated it is the car
+        // that has to pass through, on foot the ped.
+        MiscRow(
+            "misc_nocol_ped",
+            ICON_FA_PERSON,
+            T("No collision: players",
+              "Без коллизии: игроки",
+              "Без колізії: гравці"),
+            &s.disablePlayerCollision);
+        MiscRow(
+            "misc_nocol_veh",
+            ICON_FA_CAR,
+            T("No collision: vehicles",
+              "Без коллизии: транспорт",
+              "Без колізії: транспорт"),
+            &s.disableCarCollision);
+        MiscRow(
+            "misc_nocol_obj",
+            ICON_FA_CUBE,
+            T("No collision: objects",
+              "Без коллизии: объекты",
+              "Без колізії: об'єкти"),
+            &s.disableObjectCollision);
         MenuUi::EndInspectorIsland();
 
         MenuUi::NextPageColumn();

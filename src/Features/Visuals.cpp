@@ -10,7 +10,7 @@
 #include "RagePlayerNames.h"
 #include "RageWorldEntities.h"
 #include "WorldEntityMotion.h"
-#include "GameVehicles.h"
+#include "GameEntities.h"
 #include "RuntimeProfiler.h"
 #include "VisualPolicy.h"
 #include "WeaponNames.h"
@@ -53,19 +53,21 @@ namespace Features {
     // static of a type with a constructor needs a thread-safe init guard, and
     // that guard makes the whole function need unwinding, which it cannot have
     // while it also uses structured exception handling.
-    constexpr int kMaxLiveVehicles = 256;
-    static GameVehicles::Live s_LiveVehicles[kMaxLiveVehicles]{};
+    // Objects outnumber vehicles by an order of magnitude: around seven
+    // hundred are live where sixty-five vehicles are.
+    constexpr int kMaxLiveEntities = 1024;
+    static GameEntities::Live s_LiveEntities[kMaxLiveEntities]{};
 
-    // Snapshot handle -> the vehicle object it was tied to. Small and fixed:
-    // there are never more vehicles on screen than the list can hold.
+    // Snapshot handle -> the game object it was tied to. Small and fixed:
+    // there are never more entities on screen than the list can hold.
     struct LiveBinding final
     {
         std::uint32_t handle{};
         const void* object{};
     };
-    static LiveBinding s_LiveBindings[kMaxLiveVehicles]{};
+    static LiveBinding s_LiveBindings[kMaxLiveEntities]{};
 
-    const void* LiveVehicleBinding(std::uint32_t handle) noexcept
+    const void* LiveEntityBinding(std::uint32_t handle) noexcept
     {
         if (handle == 0)
             return nullptr;
@@ -77,7 +79,7 @@ namespace Features {
         return nullptr;
     }
 
-    void BindLiveVehicle(
+    void BindLiveEntity(
         std::uint32_t handle, const void* object) noexcept
     {
         if (handle == 0 || !object)
@@ -445,10 +447,14 @@ namespace Features {
                     distance > objects.maxDistance ||
                     (pickup && !objects.showPickups) ||
                     (!pickup && !objects.showObjects) ||
+                    // Show all only sets the shown-list aside; the hidden-list
+                    // still hides, because that is what a hidden-list is for.
                     !PassesModelFilter(
                         entry.modelHash,
                         objects.includeModels,
-                        objects.includeModelCount,
+                        objects.showAll
+                            ? 0
+                            : objects.includeModelCount,
                         objects.excludeModels,
                         objects.excludeModelCount))
                     continue;
@@ -481,6 +487,27 @@ namespace Features {
                         projection.maximum.y),
                     snapColor);
             }
+            // Double-clicking a drawn object hands its model to the filter
+            // editor. Only while the menu is open, and never through a menu
+            // window: the click there belongs to whatever it landed on.
+            //
+            // Only what is drawn can be clicked, so a model kept out by a
+            // non-empty shown-list cannot be picked this way. That is what
+            // "show all" is for: switch it on, click, switch it back.
+            if (entry.kind !=
+                    RageWorldEntities::EntityKind::Vehicle &&
+                Menu::IsVisible() &&
+                !ImGui::GetIO().WantCaptureMouse &&
+                ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left))
+            {
+                const ImVec2 at = ImGui::GetIO().MousePos;
+                if (at.x >= projection.minimum.x &&
+                    at.x <= projection.maximum.x &&
+                    at.y >= projection.minimum.y &&
+                    at.y <= projection.maximum.y &&
+                    entry.modelHash != 0)
+                    Menu::s_PickedObjectModel = entry.modelHash;
+            }
             if (drawBox)
                 DrawProjectedWorldBox(draw, projection, boxCol);
 
@@ -500,15 +527,31 @@ namespace Features {
                 }
                 else
                 {
-                    _snprintf(
-                        label,
-                        sizeof(label) - 1,
-                        "%s 0x%08X",
-                        entry.kind ==
-                                RageWorldEntities::EntityKind::Pickup
-                            ? "Pickup"
-                            : "Object",
-                        static_cast<unsigned>(entry.modelHash));
+                    // A name the user gave this model, if there is one. Eight
+                    // hex digits identify a thing without saying what it is,
+                    // which is the whole reason naming exists.
+                    const char* named =
+                        Menu::ModelLabelFor(entry.modelHash);
+                    if (named && named[0])
+                    {
+                        _snprintf(
+                            label,
+                            sizeof(label) - 1,
+                            "%s",
+                            named);
+                    }
+                    else
+                    {
+                        _snprintf(
+                            label,
+                            sizeof(label) - 1,
+                            "%s 0x%08X",
+                            entry.kind ==
+                                    RageWorldEntities::EntityKind::Pickup
+                                ? "Pickup"
+                                : "Object",
+                            static_cast<unsigned>(entry.modelHash));
+                    }
                 }
                 DrawWorldEntityLabel(
                     draw,
@@ -1437,6 +1480,7 @@ namespace Features {
             frame.localPosition;
         const bool hasLocalPosition =
             frame.localPositionValid;
+
         static RageWorldEntities::Entry
             worldEntries[RageWorldEntities::kMaxEntries]{};
         int worldEntryCount = 0;
@@ -1453,30 +1497,36 @@ namespace Features {
                     IM_ARRAYSIZE(worldEntries),
                     &worldGeneration,
                     &worldCapturedAtMs);
-            // Vehicles get their position from the game itself, matched to the
-            // snapshot by proximity. The snapshot still owns everything only
-            // the server knows, but where a car is and which way it points is
-            // read fresh every frame, so there is nothing left to interpolate.
-            const int liveCount =
-                GameVehicles::Copy(s_LiveVehicles, kMaxLiveVehicles);
-            GameVehicles::Live* live = s_LiveVehicles;
+            // Positions come from the game itself, matched to the snapshot by
+            // proximity once and then followed by pointer. The snapshot still
+            // owns everything only the server knows, but where a thing is and
+            // which way it faces is read fresh every frame, so there is
+            // nothing left to interpolate.
+            const int liveCount = GameEntities::Copy(
+                s_LiveEntities,
+                kMaxLiveEntities,
+                GameEntities::kVehicles | GameEntities::kObjects);
+            GameEntities::Live* live = s_LiveEntities;
             int refreshed = 0;
             if (liveCount > 0)
             {
                 for (int index = 0; index < worldEntryCount; ++index)
                 {
                     RageWorldEntities::Entry& entry = worldEntries[index];
-                    if (entry.kind !=
-                        RageWorldEntities::EntityKind::Vehicle)
-                        continue;
+                    // A vehicle must not be matched to a crate that happens to
+                    // sit closer than any car.
+                    const GameEntities::Kind wanted =
+                        entry.kind ==
+                            RageWorldEntities::EntityKind::Vehicle
+                            ? GameEntities::Kind::Vehicle
+                            : GameEntities::Kind::Object;
 
-                    // Once a snapshot entry has been tied to a vehicle object
-                    // the pairing is kept and followed by pointer. Re-matching
-                    // by distance every frame is what left fast cars behind:
-                    // they outrun the search radius before the next snapshot
-                    // arrives, which is exactly when smooth motion matters.
+                    // Re-matching by distance every frame is what left fast
+                    // cars behind: they outrun the search radius before the
+                    // next snapshot arrives, which is exactly when smooth
+                    // motion matters.
                     int best = -1;
-                    const void* bound = LiveVehicleBinding(entry.handle);
+                    const void* bound = LiveEntityBinding(entry.handle);
                     if (bound)
                     {
                         for (int other = 0; other < liveCount; ++other)
@@ -1493,6 +1543,8 @@ namespace Features {
                         float bestDistance = 36.f;
                         for (int other = 0; other < liveCount; ++other)
                         {
+                            if (live[other].kind != wanted)
+                                continue;
                             const float dx =
                                 live[other].position.x - entry.x;
                             const float dy =
@@ -1508,7 +1560,7 @@ namespace Features {
                             }
                         }
                         if (best >= 0)
-                            BindLiveVehicle(
+                            BindLiveEntity(
                                 entry.handle, live[best].object);
                     }
                     if (best < 0)
@@ -1532,7 +1584,7 @@ namespace Features {
                         line,
                         sizeof(line),
                         _TRUNCATE,
-                        "GameVehicles: list=%d snapshot=%d refreshed=%d",
+                        "LiveEntities: list=%d snapshot=%d refreshed=%d",
                         liveCount,
                         worldEntryCount,
                         refreshed);
@@ -1541,8 +1593,9 @@ namespace Features {
             }
 #endif
 
-            // Smoothing still covers objects and pickups, which have no such
-            // list, and any vehicle the match did not reach.
+            // Smoothing still covers whatever the match did not reach: a
+            // pickup has no entry in these lists, and an object held or
+            // attached to something carries no transform of its own.
             WorldEntityMotion::Smooth(
                 worldEntries,
                 worldEntryCount,

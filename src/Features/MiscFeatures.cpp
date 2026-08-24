@@ -41,6 +41,10 @@ namespace
     Settings g_LastSynced{};
     bool g_HaveSynced = false;
     bool g_PendingSuicide = false;
+    // Fixed HP rewrites the health field every frame, so it would stand the
+    // corpse back up the same frame the kill lands. Held off for the length of
+    // the death instead of switching the user's toggle off behind their back.
+    ULONGLONG g_HealthHoldUntil = 0;
     bool g_PendingResetAnim = false;
     bool g_PendingHeal = false;
     bool g_PendingArmor = false;
@@ -613,14 +617,28 @@ namespace
         }
     }
 
+    void WriteLocalHealth(float value) noexcept
+    {
+        CPed* ped = Game::GetLocalPed();
+        if (!ped)
+            return;
+        __try {
+            *reinterpret_cast<float*>(
+                reinterpret_cast<uint8_t*>(ped) + Offsets::Ped::Health) =
+                value;
+        } __except (EXCEPTION_EXECUTE_HANDLER) {
+        }
+    }
+
     void ApplyFixedStats() noexcept
     {
         CPed* ped = Game::GetLocalPed();
         if (!ped)
             return;
+        const bool holdHealth = GetTickCount64() < g_HealthHoldUntil;
         auto* base = reinterpret_cast<uint8_t*>(ped);
         __try {
-            if (g_Settings.fixedHp) {
+            if (g_Settings.fixedHp && !holdHealth) {
                 float* hp = reinterpret_cast<float*>(
                     base + Offsets::Ped::Health);
                 // GTA stores health as 100 + value (dead at 100).
@@ -2078,6 +2096,10 @@ guard flag this replaces made re-injection a no-op: the handler from the
 previous payload stayed registered and kept answering with its own logic, so a
 rebuilt hook changed nothing until the whole V8 context was recreated. */
 if(g.__bfPlFn){try{mp.events.remove('render',g.__bfPlFn);}catch(e){}}
+/* A rebuild lands while a respawn may be mid-flight, and its coordinate
+wrappers would then be left on the player with nothing to take them off. */
+if(g.__bfRsFreeze){try{g.__bfRsFreeze(false);}catch(e){}}
+g.__bfRs=null;
 /* Left null until the first render tick, so C++ can tell "the hook is up and
 you are on foot" from "the hook never ran" and keep its own fallback. */
 g.__bfVeh=null;
@@ -2095,6 +2117,17 @@ try{o+=(mp.game.vehicle&&typeof mp.game.vehicle.getPedInVehicleSeat==='function'
 try{o+=(mp.game.vehicle&&typeof mp.game.vehicle.setVehicleGravity==='function')?'G':'g';}catch(e){o+='?';}
 try{o+=(mp.game.ui&&typeof mp.game.ui.getFirstBlipInfoId==='function')?'B':'b';}catch(e){o+='?';}
 try{o+=(mp.game.gameplay&&typeof mp.game.gameplay.getGroundZFor3dCoord==='function')?'Z':'z';}catch(e){o+='?';}
+/* Which surface can switch a pair's collision off. Guessing between them has
+already cost one round of "does nothing and says nothing". */
+try{o+=(mp.game.entity&&typeof mp.game.entity.setEntityNoCollisionEntity==='function')?'N':'n';}catch(e){o+='?';}
+/* Whether the vehicle physics surfaces exist as wrappers. Raw hashes through
+invoke fail silently on this build for anything missing from the table, so
+which of these is real has to be measured, not assumed. */
+try{o+=(mp.game.vehicle&&typeof mp.game.vehicle.modifyVehicleTopSpeed==='function')?'M':'m';}catch(e){o+='?';}
+try{o+=(mp.game.vehicle&&typeof mp.game.vehicle.setVehicleEngineTorqueMultiplier==='function')?'Q':'q';}catch(e){o+='?';}
+try{o+=(mp.game.entity&&typeof mp.game.entity.applyForceToEntityCenterOfMass==='function')?'F':'f';}catch(e){o+='?';}
+try{var lpc=mp.players&&mp.players.local;
+o+=(lpc&&typeof lpc.setNoCollision==='function')?'X':'x';}catch(e){o+='?';}
 return o;
 })();
 g.__bfAfkPoke=function(){
@@ -2127,6 +2160,160 @@ if(!driver){try{driver=(p.seat===-1);}catch(e){}}
 }
 var entering=false;try{entering=!!p.isGettingIntoVehicle();}catch(e){}
 g.__bfVeh={in:inVeh,driver:driver,entering:entering,handle:vh};
+
+)JS" R"JS(
+/* ---- no collision, per class ----
+Collision belongs to a pair of entities, not to one, so it is switched off
+against us and re-asserted every frame: the flag is per-frame and a permanent
+one would outlive the entity, whose handle the game reuses. Only what is close
+enough to touch us is worth a call, which keeps the cost independent of how
+many objects the map has streamed in. In a vehicle it is the vehicle that must
+pass through, not the ped sitting inside it. */
+if(s.ncPed||s.ncVeh||s.ncObj){
+var me=v||p,mh=vh||h,ncPos=null;
+try{ncPos=me.position;}catch(e){ncPos=null;}
+var ncCand=0,ncHit=0,ncErr=0,ncNear=-1,ncMsg='';
+if(ncPos){
+var ncOff=function(list,on){
+if(!on||!list)return;
+var visit=function(e){try{
+var eh=e&&e.handle;
+if(!eh||eh===mh||eh===h)return;
+var q=e.position;if(!q)return;
+++ncCand;
+var dx=q.x-ncPos.x,dy=q.y-ncPos.y,dz=q.z-ncPos.z;
+var d2=dx*dx+dy*dy+dz*dz;
+if(ncNear<0||d2<ncNear)ncNear=d2;
+/* 120 m. Collision only matters within arm's reach, but the flag lasts one
+frame and a car covers ground between frames, so the margin is generous. */
+if(d2>14400)return;
+/* Both directions. The pair is symmetric in principle, but only one of the
+two entities is ours to control, and which one the game listens to has not
+been true in both directions on every build. */
+/* Handles, not entity objects: the wrapper rejects an object outright with
+"expected Number", which is how this spent a round doing nothing at all. */
+if(typeof e.setNoCollision==='function'){e.setNoCollision(mh,true);++ncHit;}
+else if(mp.game.entity&&
+typeof mp.game.entity.setEntityNoCollisionEntity==='function'){
+mp.game.entity.setEntityNoCollisionEntity(mh,eh,true);
+mp.game.entity.setEntityNoCollisionEntity(eh,mh,true);
+++ncHit;
+}
+else{inv('0xA53ED5520C07654A',mh,eh,true);
+inv('0xA53ED5520C07654A',eh,mh,true);++ncHit;}
+if(typeof me.setNoCollision==='function'){try{me.setNoCollision(eh,true);}catch(_2){}}
+}catch(_){++ncErr;
+if(!ncMsg)ncMsg=String((_&&_.message)||_).slice(0,50).replace(/\s+/g,'_');
+}};
+/* mp.players is the server's whole roster, thousands of entries almost all of
+which are nowhere near us. The pool can do the distance filter itself, which
+is the difference between a few property reads a frame and a few thousand. */
+if(typeof list.forEachInRange==='function'){
+try{list.forEachInRange(ncPos,120,visit);return;}catch(_1){}
+}
+if(typeof list.forEach==='function')list.forEach(visit);
+};
+ncOff(mp.players,s.ncPed);
+ncOff(mp.peds,s.ncPed);
+ncOff(mp.vehicles,s.ncVeh);
+ncOff(mp.objects,s.ncObj);
+}
+if(s.dbg)s.ncdbg=(ncPos?'':'nopos ')+'cand'+ncCand+
+' hit'+ncHit+' err'+ncErr+
+' near'+(ncNear<0?-1:Math.round(Math.sqrt(ncNear)))+
+' f'+(s.ncPed?1:0)+(s.ncVeh?1:0)+(s.ncObj?1:0)+
+(ncMsg?' e:'+ncMsg:'');
+}
+else if(s.dbg)s.ncdbg='off';
+
+)JS" R"JS(
+/* ---- respawn on the spot ----
+Two things have to be waited out. The server refuses to finish the death while
+its own bleed-out timer runs, so the event is repeated rather than sent once;
+and it decides where the character wakes up, which is a hospital, so the only
+way to stay put is to notice the jump and come back.
+
+The jump is what marks the respawn, not health: the roleplay scale is mapped
+onto the game's own and reading it right takes assumptions, while a hundred
+metres in one frame is unambiguous. */
+var rs=g.__bfRs;
+if(rs){
+var nowRs=Date.now();
+/* The server's own flag, which its client code reads everywhere to mean the
+character is down and the death screen is up. Health is the fallback: the
+roleplay scale sits on top of the game's, where an empty bar is 100. */
+var dd=false;
+try{dd=!!g.isPlayerDeath;}catch(e){}
+if(!dd){try{
+var rhp=mp.game.entity.getEntityHealth(h);
+if(typeof rhp==='number'&&rhp>0&&rhp<=100)dd=true;
+}catch(e){}}
+if(dd&&!rs.seen)rs.seen=nowRs;
+/* Only once the death has registered, which is what the death screen showing
+up means. Repeated rather than timed: the server refuses while its bleed-out
+counter runs and it does not tell us how long that is. */
+if(rs.seen&&!rs.up&&nowRs-rs.sent>1500){rs.sent=nowRs;
+try{
+if(mp.events&&typeof mp.events.callRemote==='function'){
+var rid='bf'+Math.random().toString(36).slice(2,10);
+mp.events.callRemote('__rpc:process',JSON.stringify({req:1,id:rid,
+name:'__rpc:triggerEvent',env:'client',
+args:['server_playerDeath_die',null],noRet:1}));
+}
+}catch(e){}
+}
+)JS" R"JS(
+/* The hospital spawn is a coordinate write from the server's own client
+script, so it is refused rather than undone: the writers are shadowed on the
+local player for the length of the window and handed straight back after.
+Undoing the move would mean letting it happen first and then teleporting, and
+a teleport is exactly what is not wanted here. */
+if(!g.__bfRsFreeze)g.__bfRsFreeze=function(on){try{
+var lp=mp.players&&mp.players.local;if(!lp)return;
+if(on){
+if(g.__bfRsW)return;
+var w={ent:null};
+try{w.noOff=lp.setCoordsNoOffset;lp.setCoordsNoOffset=function(){};}catch(e){}
+try{w.coords=lp.setCoords;lp.setCoords=function(){};}catch(e){}
+try{
+var pd=Object.getOwnPropertyDescriptor(Object.getPrototypeOf(lp),'position');
+if(pd&&pd.get){w.posGet=pd.get;
+Object.defineProperty(lp,'position',{configurable:true,
+get:function(){return w.posGet.call(this);},set:function(){}});}
+}catch(e){}
+try{var en=mp.game&&mp.game.entity;
+if(en){w.ent=en;w.eC=en.setEntityCoords;w.eN=en.setEntityCoordsNoOffset;
+en.setEntityCoords=function(){};en.setEntityCoordsNoOffset=function(){};}
+}catch(e){}
+g.__bfRsW=w;
+}else{
+var w2=g.__bfRsW;if(!w2)return;
+try{if(w2.noOff)lp.setCoordsNoOffset=w2.noOff;else delete lp.setCoordsNoOffset;}catch(e){}
+try{if(w2.coords)lp.setCoords=w2.coords;else delete lp.setCoords;}catch(e){}
+try{if(w2.posGet)delete lp.position;}catch(e){}
+try{if(w2.ent){if(w2.eC)w2.ent.setEntityCoords=w2.eC;
+if(w2.eN)w2.ent.setEntityCoordsNoOffset=w2.eN;}}catch(e){}
+g.__bfRsW=null;
+}
+}catch(e){}};
+if(rs.seen){
+if(!dd&&!rs.up)rs.up=nowRs;
+if(rs.hold){
+g.__bfRsFreeze(true);
+/* Facing the way he fell, which the spawn also resets and which no wrapper
+covers because heading is not a coordinate. */
+try{p.heading=rs.hd;}catch(e){}
+}
+if(rs.up&&nowRs-rs.up>6000){g.__bfRsFreeze(false);g.__bfRs=null;}
+}
+if(g.__bfRs&&nowRs>rs.until){
+if(g.__bfRsFreeze)g.__bfRsFreeze(false);
+g.__bfRs=null;
+}
+if(s.dbg&&nowRs-(rs.log||0)>2000){rs.log=nowRs;
+g.__bfRsDbg='dead='+(dd?1:0)+' seen='+(rs.seen?1:0)+
+' up='+(rs.up?1:0)+' left='+Math.round((rs.until-nowRs)/1000);}
+}
 
 /* ---- on-foot speed ---- */
 if(s.speed&&!inVeh){
@@ -2344,15 +2531,28 @@ if(!cok)inv('0xAAA34F8A7CB32098',h);
 if(vh&&driver){
 if(s.vSpeed){
 var vm=cl(s.vSpeedMul,1,10);
-inv('0x93A3996368C94158',vh,vm);
-inv('0xB59E4BD37AE292DB',vh,vm);
+var vhow='invoke';
+try{
+if(mp.game.vehicle&&typeof mp.game.vehicle.modifyVehicleTopSpeed==='function'){
+mp.game.vehicle.modifyVehicleTopSpeed(vh,vm);vhow='wrapper';}
+else inv('0x93A3996368C94158',vh,vm);
+if(mp.game.vehicle&&
+typeof mp.game.vehicle.setVehicleEngineTorqueMultiplier==='function')
+mp.game.vehicle.setVehicleEngineTorqueMultiplier(vh,vm);
+else inv('0xB59E4BD37AE292DB',vh,vm);
+}catch(e){vhow='err '+String((e&&e.message)||e).slice(0,30).replace(/\s+/g,'_');}
 s._vs=vh;
+/* GET_ENTITY_SPEED is known to answer here, so the effect can be seen rather
+than assumed: a multiplier that changes nothing shows up as a flat number. */
+if(s.dbg){var vsp=0;
+try{var vr=inv('0xD5037BA82E12416F',vh);
+if(typeof vr==='number'&&isFinite(vr))vsp=vr;}catch(e){}
+s.spdbg=vhow+' x'+vm.toFixed(1)+' v='+vsp.toFixed(1);}
 }else if(s._vs){
 inv('0x93A3996368C94158',s._vs,1);
 inv('0xB59E4BD37AE292DB',s._vs,1);
 s._vs=0;
 }
-if(s.vEngine)inv('0x2497C4717C8B881E',vh,true,false,false);
 /* ---- autopilot to the map waypoint ----
 Lives here because the C++ path is built on native calls and none resolve on
 this target. The blip walk is the same one the waypoint teleport uses: type 4 is
@@ -2465,8 +2665,19 @@ Reading the velocity property and writing it back was worse than useless here:
 it reports zero on this build, so the write pinned the car to a standstill,
 which is the handbrake feel. Centre of mass means no torque, so no tumbling,
 and world space means "down" stays down whatever the car is doing. */
-inv('0x18FF00FC7EFF559E',vh,1,0,0,-(mul-1)*9.8*dt,
+var ghow='invoke';
+try{
+if(mp.game.entity&&
+typeof mp.game.entity.applyForceToEntityCenterOfMass==='function'){
+mp.game.entity.applyForceToEntityCenterOfMass(
+vh,1,0,0,-(mul-1)*9.8*dt,false,false,false,true);
+ghow='wrapper';
+}
+else inv('0x18FF00FC7EFF559E',vh,1,0,0,-(mul-1)*9.8*dt,
 false,false,false,true);
+}catch(e){ghow='err '+String((e&&e.message)||e).slice(0,30).replace(/\s+/g,'_');}
+if(s.dbg)s.gvdbg=ghow+' x'+mul.toFixed(1)+
+' dz='+(-(mul-1)*9.8*dt).toFixed(3);
 }
 }else{s._gt=0;}
 }else{s._gt=0;}
@@ -2495,7 +2706,7 @@ mp.events.add('render',g.__bfPlFn);
             g_AntiAfkNextPokeAt = 22000 +
                 static_cast<ULONGLONG>(rand() % 13000);
 
-        char state[512]{};
+        char state[640]{};
         sprintf_s(
             state,
             "try{var g=typeof globalThis!=='undefined'?globalThis:this;"
@@ -2503,8 +2714,9 @@ mp.events.add('render',g.__bfPlFn);
             "s.speed=%s;s.speedMul=%.2f;s.jump=%s;s.stamina=%s;"
             "s.infAmmo=%s;s.infClip=%s;s.noReload=%s;"
             "s.afk=%s;s.afkMs=%llu;s.tpSeq=%d;"
+            "s.ncPed=%s;s.ncVeh=%s;s.ncObj=%s;"
             "s.vSeatbelt=%s;s.vSkipAnim=%s;s.vSpeed=%s;s.vSpeedMul=%.2f;"
-            "s.vGrav=%s;s.vGravMul=%.2f;s.vEngine=%s;"
+            "s.vGrav=%s;s.vGravMul=%.2f;"
             "s.vAuto=%s;s.dbg=%s;}catch(e){}",
             g_Settings.speedhack ? "true" : "false",
             g_Settings.speedhackValue,
@@ -2516,13 +2728,15 @@ mp.events.add('render',g.__bfPlFn);
             g_Settings.antiAfk ? "true" : "false",
             g_AntiAfkNextPokeAt,
             g_TpSeq,
+            g_Settings.disablePlayerCollision ? "true" : "false",
+            g_Settings.disableCarCollision ? "true" : "false",
+            g_Settings.disableObjectCollision ? "true" : "false",
             vm.seatbelt ? "true" : "false",
             vm.skipEnterAnim ? "true" : "false",
             vm.speedEnable ? "true" : "false",
             vm.speedMult,
             vm.gravityEnable ? "true" : "false",
             vm.gravityMult,
-            vm.engineForceOn ? "true" : "false",
             vm.autopilot ? "true" : "false",
             // Off in a shipping build, so the bookkeeping strings below are not
             // assembled at all rather than merely not printed.
@@ -2661,7 +2875,13 @@ mp.events.add('render',g.__bfPlFn);
             "return '1 '+(v.in?1:0)+' '+(v.driver?1:0)+' '+"
             "(v.entering?1:0)+' '+(v.handle|0)+' '+"
             "((g.__bfPl&&g.__bfPl.caps)||'-')+' ap['+"
-            "((g.__bfPl&&g.__bfPl.apdbg)||'-')+']';"
+            "((g.__bfPl&&g.__bfPl.apdbg)||'-')+'] nc['+"
+            "((g.__bfPl&&g.__bfPl.ncdbg)||'-')+'] sp['+"
+            "((g.__bfPl&&g.__bfPl.spdbg)||'-')+'] gv['+"
+            "((g.__bfPl&&g.__bfPl.gvdbg)||'-')+'] va['+"
+            "(function(){try{var m=g.__bfPl&&g.__bfPl.va;if(!m)return '-';"
+            "var o=[];for(var k in m)o.push(k+':'+m[k]);"
+            "return o.length?o.join(' '):'-';}catch(_){return '?';}})()+']';"
             "}catch(e){return '0 0 0 0 0';}})()";
         std::uint64_t id = 0;
         if (RageV8Runtime::Enqueue(kQuery, &id))
@@ -4177,9 +4397,8 @@ try{mp.game.invoke('0x0AE73D8DF3A762B2',false);}catch(e){}
             "misc_god:on",
             "misc_god:off");
         // Combat (no spread / recoil / reload) is CWeaponInfo only — no JS.
-        // Noclip / freecam run on our V8 render hook. Do not Quant-sync them.
-        g_Settings.disableCarCollision = false;
-        g_Settings.disablePlayerCollision = false;
+        // Noclip / freecam and the collision switches run on our V8 render
+        // hook. Do not Quant-sync them.
         SyncFloatCmd(
             g_Settings.fixedHp,
             g_Settings.fixedHpValue,
@@ -4195,7 +4414,29 @@ try{mp.game.invoke('0x0AE73D8DF3A762B2',false);}catch(e){}
 
         if (g_PendingSuicide) {
             g_PendingSuicide = false;
-            Queue("misc_suicide");
+            // Queue() only reaches Quant servers, so the button did nothing
+            // everywhere else. Damage first, because that is the death the
+            // game reports to everyone watching; the health write behind it
+            // is what makes the outcome certain, and is also all that is left
+            // in a session where the script thread never came up.
+            //
+            // Below the fatal floor rather than at it: GTA5RP maps its own
+            // 0..100 bar onto 100..200, so a flat 0 is what its own client
+            // writes when the server says the character is down.
+            static constexpr char kSuicideJs[] =
+                "try{"
+                "var p=mp.players&&mp.players.local;"
+                "if(p){"
+                "var h=p.handle;"
+                "try{if(mp.game.ped&&mp.game.ped.applyDamageTo)"
+                "mp.game.ped.applyDamageTo(h,10000,true);}catch(e){}"
+                "try{p.setHealth(0);}catch(e){"
+                "try{mp.game.entity.setEntityHealth(h,0);}catch(e2){}"
+                "}"
+                "}"
+                "}catch(e){}";
+            EnqueuePlayerScript(kSuicideJs);
+            WriteLocalHealth(0.f);
         }
         // Reset animations is V8 clearTasksImmediately in ApplyPlayerNatives.
         if (g_PendingHeal) {
@@ -4208,7 +4449,46 @@ try{mp.game.invoke('0x0AE73D8DF3A762B2',false);}catch(e){}
         }
         if (g_PendingRespawn) {
             g_PendingRespawn = false;
-            Queue("misc_respawn");
+            // The whole sequence is armed here and driven by the render hook,
+            // because none of it happens in one frame: the kill lands, the
+            // server runs its own death flow on its own schedule, and only
+            // then is there a spawn point to override.
+            //
+            // The spot is remembered first, since after the kill the server
+            // decides where the character wakes up and that is a hospital.
+            char respawn[900]{};
+            sprintf_s(
+                respawn,
+                "try{"
+                "var g=typeof globalThis!=='undefined'?globalThis:this;"
+                "var p=mp.players&&mp.players.local;"
+                "if(p){var at=null;try{at=p.position;}catch(e){}"
+                "if(at){var hd=0;try{hd=p.heading;}catch(e){}"
+                // Already down means the server's death flow is running, and
+                // killing again only adds a second death to it. In that case
+                // the wait is already over as far as we are concerned, so the
+                // sequence starts at the finishing step.
+                "var dn=false;try{dn=!!g.isPlayerDeath;}catch(e){}"
+                "if(!dn){try{var hp0=mp.game.entity.getEntityHealth(p.handle);"
+                "if(typeof hp0==='number'&&hp0>0&&hp0<=100)dn=true;}catch(e){}}"
+                // Generous, because the wait is the server's bleed-out timer
+                // and that is minutes, not seconds. A short window shut before
+                // the respawn even happened, leaving nothing holding the spot
+                // when the hospital spawn arrived.
+                "g.__bfRs={x:at.x,y:at.y,z:at.z,hd:hd,hold:%s,"
+                "until:Date.now()+600000,sent:0,"
+                "seen:dn?Date.now():0,up:0};"
+                "if(!dn){"
+                "try{if(mp.game.ped&&mp.game.ped.applyDamageTo)"
+                "mp.game.ped.applyDamageTo(p.handle,10000,true);}catch(e){}"
+                "try{p.setHealth(0);}catch(e){"
+                "try{mp.game.entity.setEntityHealth(p.handle,0);}catch(e2){}"
+                "}}"
+                "}}"
+                "}catch(e){}",
+                g_Settings.respawnInPlace ? "true" : "false");
+            if (!EnqueuePlayerScript(respawn))
+                Queue("misc_respawn");
         }
         if (g_PendingRepairVehicle) {
             g_PendingRepairVehicle = false;
@@ -4359,8 +4639,6 @@ void Initialize() noexcept
     // Do not auto-arm camera writers from a previous session.
     g_Settings.aspectEnabled = false;
     g_Settings.cameraFovEnabled = false;
-    g_Settings.disableCarCollision = false;
-    g_Settings.disablePlayerCollision = false;
 
     // VehicleMovement is the sole owner of vehicle speed/gravity.
     VehicleMovement::GetSettings().unlockSpeedLimit = false;
@@ -4400,7 +4678,6 @@ void Shutdown() noexcept
         vm.gravityEnable = false;
         vm.seatbelt = false;
         vm.skipEnterAnim = false;
-        vm.engineForceOn = false;
         g_PlJsPushed = false;
         PushPlayerState();
     }
@@ -4438,6 +4715,7 @@ void Update() noexcept
 void RequestSuicide() noexcept
 {
     g_PendingSuicide = true;
+    g_HealthHoldUntil = GetTickCount64() + 6000;
 }
 
 void RequestResetAnimations() noexcept
@@ -4476,6 +4754,9 @@ void RequestArmor() noexcept
 void RequestRespawn() noexcept
 {
     g_PendingRespawn = true;
+    // Covers the kill and the whole wait on the server's bleed-out timer, so
+    // a fixed-HP setting cannot stand the character up halfway through.
+    g_HealthHoldUntil = GetTickCount64() + 600000;
 }
 
 void RequestRepairVehicle() noexcept
@@ -4792,6 +5073,18 @@ bool Export(
     MF_WRITE("mf_time_min", g_Settings.timeMinute);
     MF_WRITE("mf_time_freeze", g_Settings.freezeTime ? 1 : 0);
     MF_WRITE("mf_nofog", g_Settings.noFog ? 1 : 0);
+    MF_WRITE(
+        "mf_respawn_inplace",
+        g_Settings.respawnInPlace ? 1 : 0);
+    MF_WRITE(
+        "mf_nocol_ped",
+        g_Settings.disablePlayerCollision ? 1 : 0);
+    MF_WRITE(
+        "mf_nocol_veh",
+        g_Settings.disableCarCollision ? 1 : 0);
+    MF_WRITE(
+        "mf_nocol_obj",
+        g_Settings.disableObjectCollision ? 1 : 0);
     {
         const auto& vehicle =
             VehicleMovement::GetSettings();
@@ -4810,7 +5103,6 @@ bool Export(
         MF_WRITE("mf_seatbelt", vehicle.seatbelt ? 1 : 0);
         MF_WRITE("mf_veh_skip_anim", vehicle.skipEnterAnim ? 1 : 0);
         MF_WRITE("mf_veh_autopilot", vehicle.autopilot ? 1 : 0);
-        MF_WRITE("mf_veh_engine", vehicle.engineForceOn ? 1 : 0);
     }
 #undef MF_WRITE
     return true;
@@ -4875,6 +5167,12 @@ void Import(const char* content) noexcept
     MF_READ_INT("mf_time_min", g_Settings.timeMinute);
     MF_READ_BOOL("mf_time_freeze", g_Settings.freezeTime);
     MF_READ_BOOL("mf_nofog", g_Settings.noFog);
+    MF_READ_BOOL(
+        "mf_respawn_inplace",
+        g_Settings.respawnInPlace);
+    MF_READ_BOOL("mf_nocol_ped", g_Settings.disablePlayerCollision);
+    MF_READ_BOOL("mf_nocol_veh", g_Settings.disableCarCollision);
+    MF_READ_BOOL("mf_nocol_obj", g_Settings.disableObjectCollision);
     {
         auto& vehicle =
             VehicleMovement::GetSettings();
@@ -4893,7 +5191,6 @@ void Import(const char* content) noexcept
         MF_READ_BOOL("mf_seatbelt", vehicle.seatbelt);
         MF_READ_BOOL("mf_veh_skip_anim", vehicle.skipEnterAnim);
         MF_READ_BOOL("mf_veh_autopilot", vehicle.autopilot);
-        MF_READ_BOOL("mf_veh_engine", vehicle.engineForceOn);
 
         if (!(vehicle.speedMult >= 1.f))
             vehicle.speedMult = 1.f;
@@ -4913,8 +5210,6 @@ void Import(const char* content) noexcept
     // Quarantine: never re-arm camera writers from config.
     g_Settings.aspectEnabled = false;
     g_Settings.cameraFovEnabled = false;
-    g_Settings.disableCarCollision = false;
-    g_Settings.disablePlayerCollision = false;
     g_HaveSynced = false;
 }
 } // namespace MiscFeatures

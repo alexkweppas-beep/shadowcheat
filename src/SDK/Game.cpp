@@ -438,7 +438,16 @@ struct IngestRecord final
     Vector3 position;
     float health;
     float distanceSquared;
+    // Distance decides who stays only within a group; see the ingest loop.
+    float rank;
 };
+
+// Squared metres cannot reach this, so adding it to a ped's rank puts it
+// behind every player no matter how close it is standing.
+constexpr float kCrowdRank = 1.0e9f;
+
+// GTA keeps ped health as 100 + value, so an empty bar reads 100.
+constexpr float kEmptyHealth = 100.f;
 
 static IngestRecord s_ingestHeap[Game::kMaxFramePeds]{};
 static Game::FramePedContext s_frameContext{};
@@ -3189,10 +3198,14 @@ namespace Game {
             record.health = 0.f;
             record.distanceSquared = 0.f;
             bool valid = false;
+            const void* playerInfo = nullptr;
             __try
             {
                 record.position = ped->GetPosition();
                 record.health = ped->GetHealth();
+                playerInfo = *reinterpret_cast<void* const*>(
+                    reinterpret_cast<const std::uint8_t*>(ped) +
+                    Offsets::Ped::PlayerInfo);
                 valid =
                     std::isfinite(record.position.x) &&
                     std::isfinite(record.position.y) &&
@@ -3220,6 +3233,15 @@ namespace Game {
                 if (record.distanceSquared < 0.01f)
                     continue;
             }
+            // A street full of NPCs was outranking real players: with more
+            // than 256 peds around, the nearest 256 won and a player 250 m
+            // out lost his slot to the crowd at arm's length. That read as a
+            // draw distance that moved with how busy the area happened to be.
+            // Players are kept ahead of the crowd as a group, and distance
+            // only orders within each.
+            record.rank = record.distanceSquared;
+            if (!IsValidPtr(playerInfo))
+                record.rank += kCrowdRank;
             if (heapCount < kMaxFramePeds)
             {
                 heap[heapCount] = record;
@@ -3227,8 +3249,7 @@ namespace Game {
                 while (child > 0)
                 {
                     const int parent = (child - 1) / 2;
-                    if (heap[parent].distanceSquared >=
-                        heap[child].distanceSquared)
+                    if (heap[parent].rank >= heap[child].rank)
                         break;
                     const IngestRecord swap = heap[parent];
                     heap[parent] = heap[child];
@@ -3237,8 +3258,7 @@ namespace Game {
                 }
                 continue;
             }
-            if (record.distanceSquared >=
-                heap[0].distanceSquared)
+            if (record.rank >= heap[0].rank)
                 continue;
             heap[0] = record;
             int parent = 0;
@@ -3248,12 +3268,10 @@ namespace Game {
                 const int right = left + 1;
                 int largest = parent;
                 if (left < heapCount &&
-                    heap[largest].distanceSquared <
-                        heap[left].distanceSquared)
+                    heap[largest].rank < heap[left].rank)
                     largest = left;
                 if (right < heapCount &&
-                    heap[largest].distanceSquared <
-                        heap[right].distanceSquared)
+                    heap[largest].rank < heap[right].rank)
                     largest = right;
                 if (largest == parent)
                     break;
@@ -3272,7 +3290,12 @@ namespace Game {
             entry.distanceSquared =
                 heap[index].distanceSquared;
             entry.valid = true;
-            entry.dead = entry.health <= 0.f;
+            // GTA stores health as 100 + value: an empty bar is 100, not 0,
+            // which is also how this server maps its own 0..100 hit points
+            // (see ApplyFixedStats, which writes 100 + the wanted value).
+            // Comparing against zero therefore never fired, and a player
+            // lying on the ground read as perfectly healthy.
+            entry.dead = entry.health <= kEmptyHealth;
             active[index] = heap[index].ped;
         }
         next.count = heapCount;
