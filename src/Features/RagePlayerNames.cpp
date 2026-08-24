@@ -244,6 +244,12 @@ namespace
             "(Number(v.x)!==0||Number(v.y)!==0||Number(v.z)!==0);"
             "const cache=root.__butterflyNameCache||"
             "(root.__butterflyNameCache={chars:{},families:{},pendingFam:{}});"
+            // The cache lives on the game's global object, so it outlives the
+            // payload: after a rebuild the new code kept reading identities the
+            // old code had computed, which is why a corrected faction rule
+            // appeared to change nothing. Stamped with the schema it was filled
+            // under, and dropped when that no longer matches.
+            "if(cache.rev!==3){cache.rev=3;cache.ident={};}"
             "const cleanLabel=(v,id)=>{let s=String(v==null?'':v).trim();"
             "if(!s)return '';if(id!=null&&id>=0){const q=String(id);"
             "if(s.endsWith('('+q+')'))s=s.slice(0,-q.length-2).trim();"
@@ -386,7 +392,15 @@ namespace
             // api.players roster map: 14 populated keys plus Marabunta and
             // Vagos, which exist but currently have no members.
             "const isFactionKey=k=>/^F_[A-Z0-9_]+$/.test(k);"
-            "const factionLabel=(key,type)=>{const m={"
+            "const factionLabel=(key,type)=>{"
+            // Membership is decided by the key alone. The type used to be
+            // enough by itself, which is what put a faction on players who
+            // belong to none: the server leaves a type behind on characters
+            // with no faction, so a citizen came out tagged Gang or Police. A
+            // missing tag is a far smaller lie than a wrong one, and the type
+            // is still used below once a key has established membership.
+            "if(!key||/^0+$/.test(String(key)))return '';"
+            "const m={"
             "F_LSPD:'LSPD',F_LSSD:'LSSD',F_FIB:'FIB',"
             "F_LSARMY:'Army',F_LSCITYHALL:'Gov',F_EMS:'EMS',F_NEWS:'News',F_PRISON:'Prison',"
             "F_GANG_BALLAS:'Ballas',F_GANG_BLOODS:'Bloods',"
@@ -468,6 +482,10 @@ namespace
             "fr=first(e,['serverFactionId','factionKey','factionId','faction']);"
             "factionKey=String(fr==null?'':fr).trim();"
             "if(!isFactionKey(factionKey)&&!/^\\d+$/.test(factionKey))factionKey='';"
+            // Zero is how "no faction" arrives on the numeric channel, and it
+            // passes the digit test above, so it read as a member of faction
+            // zero and let the tag lookups below run on a non-member.
+            "if(/^0+$/.test(factionKey))factionKey='';"
             "if(/^\\d+$/.test(factionKey))factionId=Number(factionKey);"
             "const fty=Number(first(e,['serverFactionType','factionType']));"
             "if(Number.isFinite(fty)&&fty>0)factionType=fty;"

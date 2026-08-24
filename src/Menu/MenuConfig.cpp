@@ -25,6 +25,7 @@
 #include "../Features/FeatureBinds.h"
 #include "../Features/Friends.h"
 #include "../Features/MeshSilhouette.h"
+#include "../Features/AutoLoot.h"
 #include "../Features/MiscFeatures.h"
 #include "../Features/ObsBypass.h"
 #include "../SDK/WeaponCatalog.h"
@@ -954,6 +955,8 @@ namespace Menu
 #undef CFG_WRITE
         if (!MiscFeatures::Export(output, capacity, used))
             return false;
+        if (!AutoLoot::Export(output, capacity, used))
+            return false;
         if (!Friends::Export(output, capacity, used))
             return false;
         return FeatureBinds::Export(
@@ -1791,6 +1794,7 @@ namespace Menu
 #undef CFG_READ_INT
 #undef CFG_READ_BOOL
         MiscFeatures::Import(content);
+        AutoLoot::Import(content);
         Friends::Import(content);
         FeatureBinds::Import(content);
     }

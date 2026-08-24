@@ -10,8 +10,13 @@
 #include "IconsFontAwesome6.h"
 #include "MenuUiHelpers.h"
 #include "MenuState.h"
+#include "MenuTheme.h"
 #include "../Features/AntiCheatShield.h"
+#include "../Features/AutoLoot.h"
 #include "../Features/MiscFeatures.h"
+
+#include <cfloat>
+#include <cstdio>
 
 namespace Menu
 {
@@ -363,17 +368,328 @@ namespace Menu
         s.aspectEnabled = false;
     }
 
+    // Opened from a button inside the page's islands, which sit under pushed
+    // IDs; OpenPopup has to be called at the same level as BeginPopup, so the
+    // click only raises a flag and the window is opened after the columns end.
+    static bool s_LootFilterOpenRequest = false;
+    static char s_LootNameInput[AutoLoot::kFilterLength]{};
+
+    // A bare glyph rather than ActionButton: that one always lays a filled
+    // plate and a border under its icon, which turned the list into a column of
+    // little boxes. Tinted on hover so it still reads as clickable.
+    static bool LootTrashButton(float size) noexcept
+    {
+        const ImVec2 min = ImGui::GetCursorScreenPos();
+        const bool pressed = ImGui::InvisibleButton(
+            "##loot_trash",
+            ImVec2(size, size));
+        const bool hovered = ImGui::IsItemHovered();
+        if (set && set->icon)
+        {
+            const MenuTheme::Palette& tokens = MenuTheme::Colors();
+            const float glyph = size * 0.72f;
+            const ImVec2 extent = set->icon->CalcTextSizeA(
+                glyph,
+                FLT_MAX,
+                0.f,
+                ICON_FA_TRASH);
+            ImGui::GetWindowDrawList()->AddText(
+                set->icon,
+                glyph,
+                min + (ImVec2(size, size) - extent) * 0.5f,
+                gui->get_clr(
+                    hovered ? tokens.error : tokens.textFaint,
+                    1.f),
+                ICON_FA_TRASH);
+        }
+        return pressed;
+    }
+
+    static const char* LootFilterPopupId() noexcept
+    {
+        return T(
+            "Item list###loot_filter_editor",
+            "Список предметов###loot_filter_editor",
+            "Список предметів###loot_filter_editor");
+    }
+
+    static void RenderLootFilterEditor(float scale) noexcept
+    {
+        ImGui::SetNextWindowSize(
+            ImVec2(430.f, 0.f) * scale,
+            ImGuiCond_Appearing);
+        // A popup, not a modal: clicking away is how it is meant to close, and
+        // a modal would swallow that click by design.
+        if (!ImGui::BeginPopup(
+                LootFilterPopupId(),
+                ImGuiWindowFlags_AlwaysAutoResize |
+                    ImGuiWindowFlags_NoSavedSettings))
+            return;
+
+        {
+            const float closeSize = 26.f * scale;
+            ImGui::AlignTextToFramePadding();
+            ImGui::TextUnformatted(
+                T("Item list", "Список предметов", "Список предметів"));
+            ImGui::SameLine(0.f, 0.f);
+            ImGui::SetCursorPosX(
+                ImGui::GetCursorPosX() +
+                ImMax(0.f, ImGui::GetContentRegionAvail().x - closeSize));
+            if (MenuUi::ActionButton(
+                    "loot_filter_x",
+                    "",
+                    ImVec2(closeSize, closeSize),
+                    false,
+                    ICON_FA_XMARK))
+            {
+                ImGui::CloseCurrentPopup();
+                ImGui::EndPopup();
+                return;
+            }
+        }
+
+        const int count = AutoLoot::FilterCount();
+        const bool full = count >= AutoLoot::kMaxFilters;
+
+        MenuUi::BeginInspectorIsland(
+            "loot_filter_add_island",
+            T("ADD ITEM", "ДОБАВИТЬ ПРЕДМЕТ", "ДОДАТИ ПРЕДМЕТ"),
+            8.f,
+            T("Part of the name is enough: the server appends state, as in "
+              "\"Carbine Rifle (96%)\".",
+              "Достаточно части названия: сервер дописывает состояние, "
+              "например \"Carbine Rifle (96%)\".",
+              "Достатньо частини назви: сервер дописує стан, наприклад "
+              "\"Carbine Rifle (96%)\"."));
+        const float addWidth = 92.f * scale;
+        gui->text_field(
+            "##loot_add_name",
+            T("Name", "Название", "Назва"),
+            ImVec2(
+                ImMax(110.f * scale,
+                      ImGui::GetContentRegionAvail().x -
+                          addWidth - 7.f * scale),
+                32.f * scale),
+            s_LootNameInput,
+            sizeof(s_LootNameInput));
+        ImGui::SameLine(0.f, 7.f * scale);
+        if (MenuUi::ActionButton(
+                "loot_filter_add",
+                T("Add", "Добавить", "Додати"),
+                ImVec2(addWidth, 32.f * scale),
+                !full,
+                ICON_FA_CIRCLE_PLUS) &&
+            !full)
+        {
+            if (AutoLoot::AddFilter(s_LootNameInput))
+                s_LootNameInput[0] = '\0';
+        }
+        if (full)
+            ImGui::TextDisabled(
+                "%s",
+                T("List is full.", "Список заполнен.",
+                  "Список заповнений."));
+        MenuUi::EndInspectorIsland();
+
+        MenuUi::BeginInspectorIsland(
+            "loot_filter_list_island",
+            T("ENTRIES", "ЗАПИСИ", "ЗАПИСИ"),
+            8.f);
+        if (count <= 0)
+        {
+            // Stated plainly: an empty list looks exactly like a broken one.
+            const char* empty = T(
+                "Empty - nothing will be picked up",
+                "Пусто - ничего не будет подбираться",
+                "Порожньо - нічого не підбиратиметься");
+            const float width = ImGui::CalcTextSize(empty).x;
+            ImGui::Dummy(ImVec2(0.f, 6.f * scale));
+            ImGui::SetCursorPosX(
+                ImGui::GetCursorPosX() +
+                ImMax(0.f,
+                      (ImGui::GetContentRegionAvail().x - width) * 0.5f));
+            ImGui::TextDisabled("%s", empty);
+            ImGui::Dummy(ImVec2(0.f, 6.f * scale));
+        }
+        // The seeded list runs to several dozen weapons, so it scrolls instead
+        // of growing the window past the screen.
+        ImGui::BeginChild(
+            "loot_filter_rows",
+            ImVec2(0.f, ImMin(300.f, count * 26.f + 8.f) * scale),
+            false);
+        int remove = -1;
+        for (int index = 0; index < count; ++index)
+        {
+            ImGui::PushID(index);
+            const float trashSize = 22.f * scale;
+            ImGui::AlignTextToFramePadding();
+            ImGui::TextUnformatted(AutoLoot::FilterAt(index));
+            ImGui::SameLine(0.f, 0.f);
+            ImGui::SetCursorPosX(
+                ImGui::GetCursorPosX() +
+                ImMax(0.f, ImGui::GetContentRegionAvail().x - trashSize));
+            if (LootTrashButton(trashSize))
+                remove = index;
+            ImGui::PopID();
+        }
+        ImGui::EndChild();
+        if (remove >= 0)
+            AutoLoot::RemoveFilter(remove);
+        MenuUi::EndInspectorIsland();
+
+        ImGui::EndPopup();
+    }
+
+    static void RenderPlayerLootPage()
+    {
+        auto& s = AutoLoot::Access();
+        const AutoLoot::Status status = AutoLoot::GetStatus();
+
+        MenuUi::BeginInspectorIsland(
+            "loot_main",
+            T("AUTO LOOT", "АВТОЛУТ", "АВТОЛУТ"),
+            2.f);
+        MiscRow(
+            "loot_enabled",
+            ICON_FA_HAND_HOLDING,
+            T("Pick up ground items",
+              "Подбирать предметы с земли",
+              "Підбирати предмети з землі"),
+            &s.enabled);
+        gui->slider_float_icon(
+            ICON_FA_RULER_HORIZONTAL,
+            T("Radius###loot_radius",
+              "Радиус###loot_radius",
+              "Радіус###loot_radius"),
+            &s.radius,
+            AutoLoot::kMinRadius,
+            AutoLoot::kMaxRadius,
+            "%.1f m");
+        // Past the measured limit the slider still moves, but it is worth
+        // saying whose rule it is, since a refusal there is not a bug here.
+        if (s.radius > AutoLoot::kServerLimit)
+            MenuUi::LabelWithHelp(
+                T("Past the server limit",
+                  "Больше лимита сервера",
+                  "Більше ліміту сервера"),
+                "Takes were accepted at 7 m and refused at 12, so most items "
+                "out here will be turned down. Refused items back off instead "
+                "of being retried.",
+                "Подъём принимался на 7 м и отклонялся на 12, так что дальше "
+                "почти всё будет отклонено. Отказавшие предметы уходят в "
+                "паузу, а не долбятся повторно.",
+                "Підйом приймався на 7 м і відхилявся на 12, тож далі майже "
+                "все буде відхилено. Відмовлені предмети йдуть у паузу, а не "
+                "запитуються повторно.");
+        float delay = static_cast<float>(s.intervalMs);
+        if (gui->slider_float_icon(
+                ICON_FA_STOPWATCH,
+                T("Delay###loot_delay",
+                  "Задержка###loot_delay",
+                  "Затримка###loot_delay"),
+                &delay,
+                250.f,
+                3000.f,
+                "%.0f ms"))
+            s.intervalMs = static_cast<int>(delay);
+        MenuUi::EndInspectorIsland();
+
+        MenuUi::NextPageColumn();
+
+        MenuUi::BeginInspectorIsland(
+            "loot_filter",
+            T("WHAT TO TAKE", "ЧТО ПОДБИРАТЬ", "ЩО ПІДБИРАТИ"),
+            2.f);
+        MiscRow(
+            "loot_take_all",
+            ICON_FA_BOXES_STACKED,
+            T("Take everything", "Собирать всё", "Збирати все"),
+            &s.takeAll);
+        char listLabel[64]{};
+        _snprintf_s(
+            listLabel,
+            sizeof(listLabel),
+            _TRUNCATE,
+            "%s  %d",
+            T("Edit list", "Список предметов", "Список предметів"),
+            AutoLoot::FilterCount());
+        if (MenuUi::ActionButton(
+                "loot_open_list",
+                listLabel,
+                ImVec2(
+                    ImGui::GetContentRegionAvail().x,
+                    34.f * UIScale()),
+                !s.takeAll,
+                ICON_FA_FILTER))
+            s_LootFilterOpenRequest = true;
+        if (s.takeAll)
+            ImGui::TextDisabled(
+                "%s",
+                T("The list applies once this is off",
+                  "Список работает, когда это выключено",
+                  "Список працює, коли це вимкнено"));
+        MenuUi::EndInspectorIsland();
+
+        MenuUi::BeginInspectorIsland(
+            "loot_status",
+            T("STATUS", "СОСТОЯНИЕ", "СТАН"),
+            2.f);
+        // Reachable next to known: an idle run on an empty street reads exactly
+        // like a filter that matches nothing unless both numbers are shown.
+        char summary[160]{};
+        _snprintf_s(
+            summary,
+            sizeof(summary),
+            _TRUNCATE,
+            T("In range: %d of %d known\nTaken %d, refused %d",
+              "В радиусе: %d из %d известных\nПоднято %d, отказов %d",
+              "У радіусі: %d з %d відомих\nПіднято %d, відмов %d"),
+            status.reachable,
+            status.knownItems,
+            status.taken,
+            status.refused);
+        ImGui::TextUnformatted(summary);
+        if (status.slotsKnown)
+        {
+            char slots[96]{};
+            _snprintf_s(
+                slots,
+                sizeof(slots),
+                _TRUNCATE,
+                T("Free inventory slots: %d",
+                  "Свободных слотов: %d",
+                  "Вільних слотів: %d"),
+                status.freeSlots);
+            ImGui::TextUnformatted(slots);
+        }
+        if (status.detail[0])
+            ImGui::TextUnformatted(status.detail);
+        MenuUi::EndInspectorIsland();
+    }
+
     void RenderPlayerPage()
     {
-        if (s_MiscSubTab < 0 || s_MiscSubTab > 1)
+        if (s_MiscSubTab < 0 || s_MiscSubTab > 2)
             s_MiscSubTab = 0;
 
         MenuUi::BeginPageColumns("player_columns");
-        if (s_MiscSubTab == 1)
+        if (s_MiscSubTab == 2)
+            RenderPlayerLootPage();
+        else if (s_MiscSubTab == 1)
             RenderPlayerMovePage();
         else
             RenderPlayerSelfPage();
         MenuUi::EndPageColumns();
+
+        if (s_MiscSubTab == 2)
+        {
+            if (s_LootFilterOpenRequest)
+            {
+                s_LootFilterOpenRequest = false;
+                ImGui::OpenPopup(LootFilterPopupId());
+            }
+            RenderLootFilterEditor(UIScale());
+        }
     }
 
     void RenderMiscPage()

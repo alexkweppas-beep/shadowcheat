@@ -103,6 +103,12 @@ roster map: 14 populated keys plus Marabunta and Vagos, which exist but
 currently have no members. */
 const isFactionKey=k=>/^F_[A-Z0-9_]+$/.test(k);
 const factionLabel=(keyValue,typeValue)=>{const key=safe(keyValue);
+/* Membership is decided by the key alone. The type used to be enough on its
+own, and that is what tagged players who belong to nothing: the server leaves a
+type behind on characters with no faction, so a plain citizen came out labelled
+Gang or Police. A missing tag is a far smaller lie than a wrong one, and the
+type is still consulted below once a key has established membership. */
+if(!key||key==='0')return '';
 const named={F_LSPD:'LSPD',F_LSSD:'LSSD',F_FIB:'FIB',F_LSARMY:'Army',F_LSCITYHALL:'Gov',F_EMS:'EMS',F_NEWS:'News',F_PRISON:'Prison',F_GANG_BALLAS:'Ballas',F_GANG_BLOODS:'Bloods',F_GANG_GROVE:'Grove',F_GANG_MARABUNTA:'Marabunta',F_GANG_VAGOS:'Vagos',F_RUSSIANMAFIA:'RM',F_ARMENIAMAFIA:'Armenian',F_MEXICOMAFIA:'Mexican'};
 if(named[key])return named[key];
 const numeric={1:'Gov',2:'LSPD',3:'BCSD',4:'FIB',5:'EMS',6:'Army',7:'News'};
@@ -138,6 +144,9 @@ try{if(helpers&&typeof helpers.getServerFactionId==='function')factionKey=safe(h
 such as REDNECKS, which are not factions. */
 if(!factionKey)factionKey=safe(variable(player,'serverFactionId')||variable(player,'factionKey'));
 if(!isFactionKey(factionKey)&&!/^\d+$/.test(factionKey))factionKey='';
+/* Zero is how "no faction" arrives on the numeric channel, and it passed the
+digit test above, so it read as a member of faction zero. */
+if(/^0+$/.test(factionKey))factionKey='';
 try{if(helpers&&typeof helpers.getServerFactionType==='function')factionType=num(helpers.getServerFactionType.call(helpers,player));}catch(_){}
 const familyId=num(variable(player,'familyId')||variable(player,'famId'));
 if(familyId>0&&familyIds.indexOf(familyId)===-1)familyIds.push(familyId);

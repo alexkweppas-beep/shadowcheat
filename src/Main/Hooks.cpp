@@ -27,6 +27,7 @@
 #include "../Features/AntiCheatShield.h"
 #include "../Features/QuantTools.h"
 #include "../Features/UkraineTools.h"
+#include "../Features/AutoLoot.h"
 #include "../Features/FiveRpFarmBot.h"
 #include "../Features/MiscFeatures.h"
 #include "../Features/ScriptBridge.h"
@@ -39,7 +40,6 @@
 #include "../Features/WorldOverlay.h"
 #if defined(RAGEMP_DIAGNOSTICS)
 #include "../Dev/VehicleListProbe.h"
-#include "../Dev/FamilyProbe.h"
 #endif
 #include "../Features/PedPreview.h"
 #include "../Features/ModelPreview.h"
@@ -1557,6 +1557,12 @@ namespace hooks
                 HLog("hkPresent: FiveRpFarmBot::Update FAULTED");
             }
 
+            __try {
+                AutoLoot::Update();
+            } __except (SafeFilter(GetExceptionInformation(), "hkPresent:AutoLoot")) {
+                HLog("hkPresent: AutoLoot::Update FAULTED");
+            }
+
             ObsBypass::Tick();
 
             if (!cefDumpBusy) {
@@ -1697,7 +1703,6 @@ namespace hooks
                         PRESENT_STAGE("ESP");
 #if defined(RAGEMP_DIAGNOSTICS)
                         VehicleListProbe::Update();
-                        FamilyProbe::Update();
 #endif
                         Features::RenderESP(Overlay::GetDrawList());
                         if (logFrame) HLog("hkPresent: RenderESP DONE");

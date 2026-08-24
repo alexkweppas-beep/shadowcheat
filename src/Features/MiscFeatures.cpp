@@ -2398,23 +2398,33 @@ try{if(typeof g.antiAFK_sendAFK==='function')g.antiAFK_sendAFK=function(){};}cat
 }
 }else{s._afkAt=0;}
 
+)JS" R"JS(
 /* ---- waypoint teleport: multi-frame, on the script thread ---- */
 var tp=s._tp;
 if(!tp)tp=s._tp={seq:0,phase:0,x:0,y:0,at:0};
 if((s.tpSeq|0)!==tp.seq){
 tp.seq=s.tpSeq|0;tp.phase=0;
 var wx=0,wy=0,got=false;
+/* Sprite 8 is the stock map waypoint and is tried first, but a server that
+draws its own route marker uses a sprite of its own choosing, which read as "no
+mark" however plainly the cross was on the map. Blip type 4 is the waypoint
+whatever it is drawn as, so a match on type wins and ends the search. */
+var sprites=[8,1,162,225,430];
 try{
-var b=mp.game.ui.getFirstBlipInfoId(8);
+for(var si=0;si<sprites.length;si++){
+var b=mp.game.ui.getFirstBlipInfoId(sprites[si]);
+var exact=false;
 while(b&&mp.game.ui.doesBlipExist(b)){
 var c=null;
 try{c=mp.game.ui.getBlipInfoIdCoord(b);}catch(e){}
 if(c&&(c.x||c.y)){
-wx=c.x;wy=c.y;got=true;
 var ty=0;try{ty=mp.game.ui.getBlipInfoIdType(b);}catch(e){}
-if(ty===4)break;
+if(ty===4||!got){wx=c.x;wy=c.y;got=true;}
+if(ty===4){exact=true;break;}
 }
-b=mp.game.ui.getNextBlipInfoId(8);
+b=mp.game.ui.getNextBlipInfoId(sprites[si]);
+}
+if(exact)break;
 }
 }catch(e){}
 if(got){tp.x=wx;tp.y=wy;tp.at=Date.now();tp.phase=1;
@@ -2422,6 +2432,27 @@ g.__bfTp={seq:tp.seq,state:'probing'};}
 else g.__bfTp={seq:tp.seq,state:'nomark'};
 }
 if(tp.phase===1){
+var ent=(vh&&driver&&v)?v:p;
+/* Collision streams around the player, not around a coordinate, so asking for
+the ground under a far waypoint answered nothing and the teleport gave up after
+its timeout. This is why it worked near home and failed across the map. The
+destination is entered from above instead: hop high over it, which puts the
+streamer to work there, then come down once the ground is known. */
+if(!tp.up){
+try{var op=ent.position;
+if(op&&isFinite(op.x)){tp.ox=op.x;tp.oy=op.y;tp.oz=op.z;tp.hasOrigin=true;}
+}catch(e){}
+/* The server's own scripts announce a coming position jump before they move
+the player; a warp that skips this looks like what they hunt. */
+try{mp.events.call('c:ac:check',9000);}catch(e){}
+try{ent.setCoordsNoOffset(tp.x,tp.y,700,false,false,false);}catch(e){}
+try{if(typeof ent.freezePosition==='function')ent.freezePosition(true);}catch(e){}
+try{ent.setVelocity(0,0,0);}catch(e){}
+tp.up=true;tp.at=Date.now();
+}
+/* Held in place while the area loads: without this the fall starts immediately
+and, with nothing streamed yet, ends under the map. */
+try{ent.setVelocity(0,0,0);}catch(e){}
 try{mp.game.streaming.requestCollisionAtCoord(tp.x,tp.y,0);}catch(e){}
 try{mp.game.streaming.requestCollisionAtCoord(tp.x,tp.y,300);}catch(e){}
 var gz=null;
@@ -2432,23 +2463,34 @@ new mp.Vector3(tp.x,tp.y,-250),p,1|16);
 if(hit&&hit.position&&isFinite(hit.position.z))gz=hit.position.z;
 }catch(e){}
 if(gz===null){
-try{var r=mp.game.gameplay.getGroundZFor3dCoord(tp.x,tp.y,1200,false);
+/* Sampled from several heights: this native only answers for a point that is
+above the ground and inside what has streamed, and one fixed height was not
+enough on hills or indoors. */
+var probes=[1200,700,400,200,80,20];
+for(var pi=0;pi<probes.length&&gz===null;pi++){
+try{var r=mp.game.gameplay.getGroundZFor3dCoord(tp.x,tp.y,probes[pi],false);
 if(typeof r==='number'&&isFinite(r)&&r>-200&&r<1000)gz=r;}catch(e){}
 }
+}
 if(gz!==null&&gz>-200&&gz<1000){
-var ent=(vh&&driver&&v)?v:p;
-/* The server's own scripts announce a coming position jump before they
-move the player; a warp that skips this looks like what they hunt. */
+try{if(typeof ent.freezePosition==='function')ent.freezePosition(false);}catch(e){}
 try{mp.events.call('c:ac:check',3000);}catch(e){}
 try{ent.setCoordsNoOffset(tp.x,tp.y,gz+1,false,false,false);}catch(e){}
 try{ent.setVelocity(0,0,0);}catch(e){}
-tp.phase=0;
+tp.phase=0;tp.up=false;
 var moved=false;
 try{var np=ent.position;
 moved=(Math.abs(np.x-tp.x)<10&&Math.abs(np.y-tp.y)<10);}catch(e){}
 g.__bfTp={seq:tp.seq,state:moved?'ok':'blocked'};
-}else if(Date.now()-tp.at>6000){
-tp.phase=0;
+}else if(Date.now()-tp.at>9000){
+/* Never left hanging in the sky: if the ground never resolves the player goes
+back where they started, which is a failed teleport rather than a fall. */
+try{if(typeof ent.freezePosition==='function')ent.freezePosition(false);}catch(e){}
+if(tp.hasOrigin){
+try{ent.setCoordsNoOffset(tp.ox,tp.oy,tp.oz,false,false,false);}catch(e){}
+try{ent.setVelocity(0,0,0);}catch(e){}
+}
+tp.phase=0;tp.up=false;
 g.__bfTp={seq:tp.seq,state:'noground'};
 }
 }

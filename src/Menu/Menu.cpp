@@ -1165,6 +1165,14 @@ namespace Menu
             MainPage::Player, 1
         },
         {
+            "autoloot", ICON_FA_HAND_HOLDING,
+            "Auto loot", "Автолут", "Автолут",
+            "Ground item pickup",
+            "Подбор предметов",
+            "Підбір предметів",
+            MainPage::Player, 2
+        },
+        {
             "cars", ICON_FA_CAR,
             "Cars", "Машины", "Авто",
             "Vehicle motion",
