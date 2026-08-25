@@ -3,6 +3,7 @@
 #include "FiveRpFarmBotScript.h"
 #include "FiveRpMetadataResolver.h"
 #include "RageV8Runtime.h"
+#include "ServerProfile.h"
 #include "../Menu/Menu.h"
 #include "../Menu/IconsFontAwesome6.h"
 #include "../Menu/Leyawin/custom_widgets.hpp"
@@ -24,8 +25,7 @@ namespace
     {
         Load,
         Command,
-        Status,
-        Detect
+        Status
     };
 
     enum class ServerKind : std::uint8_t
@@ -65,27 +65,11 @@ namespace
     ServerKind g_ServerKind = ServerKind::Unknown;
     FarmStatus g_Status{};
     std::uint64_t g_RuntimeGeneration{};
-    ULONGLONG g_LastDetectAttempt{};
     ULONGLONG g_LastLoadAttempt{};
     ULONGLONG g_LastStatusRequest{};
-    bool g_DetectRequested{};
     bool g_LoadRequested{};
     bool g_Loaded{};
     bool g_WasRuntimeReady{};
-
-    constexpr char kDetectScript[] =
-        "return (function(){try{"
-        "var h='';"
-        "try{h=String(mp.game.gxt.get('PM_PAUSE_HDR')||'');}"
-        "catch(e){}"
-        "h=h.toLowerCase();"
-        "if(h.indexOf('quant')!==-1)return 'OTHER';"
-        "if(h.indexOf('ukraine')!==-1)return 'OTHER';"
-        "if(h.indexOf('gta5rp')!==-1||h.indexOf('5rp')!==-1)"
-        "return '5RP';"
-        "if(global&&global.__ctx__&&global.__ctx__.api)return '5RP';"
-        "return 'OTHER';"
-        "}catch(e){return 'OTHER';}})();";
 
     void CopyText(
         char* output,
@@ -104,8 +88,6 @@ namespace
             pending = {};
         g_Loaded = false;
         g_LoadRequested = false;
-        g_DetectRequested = false;
-        g_LastDetectAttempt = 0;
         g_LastLoadAttempt = 0;
         g_LastStatusRequest = 0;
         g_Status = {};
@@ -150,18 +132,25 @@ namespace
         return TrackRequest(id, kind, label, silent);
     }
 
-    void QueueDetect() noexcept
+    // Mirrors the shared probe's answer: one fingerprint now serves every
+    // module instead of each one asking the script runtime itself.
+    void SyncServerKind() noexcept
     {
-        if (g_DetectRequested)
+        const ServerProfile::Kind kind = ServerProfile::Current();
+        const ServerKind next =
+            kind == ServerProfile::Kind::FiveRp
+                ? ServerKind::FiveRp
+                : (kind == ServerProfile::Kind::Unknown
+                       ? ServerKind::Unknown
+                       : ServerKind::Other);
+        if (g_ServerKind == next)
             return;
-        g_LastDetectAttempt = GetTickCount64();
-        if (!QueueScript(
-                kDetectScript,
-                RequestKind::Detect,
-                "Detect 5RP",
-                true))
-            return;
-        g_DetectRequested = true;
+        g_ServerKind = next;
+        if (next != ServerKind::FiveRp)
+        {
+            g_Loaded = false;
+            g_LoadRequested = false;
+        }
     }
 
     void QueueLoad() noexcept
@@ -376,7 +365,6 @@ namespace FiveRpFarmBot
         {
             g_Loaded = false;
             g_LoadRequested = false;
-            g_DetectRequested = false;
             g_PendingCount = 0;
             g_WasRuntimeReady = false;
             return;
@@ -387,8 +375,6 @@ namespace FiveRpFarmBot
             g_WasRuntimeReady = true;
             g_LastLoadAttempt = 0;
             g_LoadRequested = false;
-            g_LastDetectAttempt = 0;
-            g_DetectRequested = false;
             g_ServerKind = ServerKind::Unknown;
         }
 
@@ -397,8 +383,6 @@ namespace FiveRpFarmBot
         {
             if (now - g_Pending[index].timestamp >= 3500)
             {
-                if (g_Pending[index].kind == RequestKind::Detect)
-                    g_DetectRequested = false;
                 if (g_Pending[index].kind == RequestKind::Status ||
                     g_Pending[index].kind == RequestKind::Load)
                 {
@@ -432,22 +416,6 @@ namespace FiveRpFarmBot
                 }
                 continue;
             }
-            if (request.kind == RequestKind::Detect)
-            {
-                g_DetectRequested = false;
-                const bool isFive =
-                    result.success &&
-                    strncmp(result.text, "5RP", 3) == 0;
-                g_ServerKind = isFive
-                    ? ServerKind::FiveRp
-                    : ServerKind::Other;
-                if (!isFive)
-                {
-                    g_Loaded = false;
-                    g_LoadRequested = false;
-                }
-                continue;
-            }
             if (request.kind == RequestKind::Load)
             {
                 g_LoadRequested = false;
@@ -469,9 +437,7 @@ namespace FiveRpFarmBot
         }
         g_PendingCount = write;
 
-        if (g_ServerKind == ServerKind::Unknown &&
-            now - g_LastDetectAttempt > 2500)
-            QueueDetect();
+        SyncServerKind();
         if (g_ServerKind == ServerKind::FiveRp &&
             !g_Loaded &&
             !g_LoadRequested &&

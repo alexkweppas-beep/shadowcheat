@@ -4,6 +4,7 @@
 #include "FiveRpMetadataResolver.h"
 #include "RageV8Runtime.h"
 #include "RuntimeProfiler.h"
+#include "ServerProfile.h"
 #include "Visuals.h"
 #include "../Menu/Menu.h"
 #include "../SDK/Game.h"
@@ -89,6 +90,10 @@ namespace
         bool needsVisibility{};
         bool includeNonPlayers{};
         bool familyLookup{};
+        // Which server's identity layout the built script is asking for. A
+        // reconnect can land on a different one, and the script has to be
+        // rebuilt when it does.
+        int identity{-1};
         char adminKey[sizeof(Menu::s_AdminVariableKey) * 2]{};
     };
 
@@ -198,10 +203,34 @@ namespace
                 profile.familyTag;
         }
 
+        // Where names, factions and the admin flag live differs per server, and
+        // asking the wrong place returns nothing rather than failing loudly, so
+        // the layout is chosen here instead of being tried blind.
+        const int identity =
+            static_cast<int>(ServerProfile::IdentitySource());
+        const bool families = ServerProfile::HasFamilies();
+        const bool roleplayHealth = ServerProfile::RoleplayHealth();
+        // Their own admin ESP reads these, so the same names are what we ask
+        // for. GTA5RP is absent on purpose: it rotates the name and publishes
+        // the current one in mp.serverDataKeys, which the script reads live.
+        const char* adminVars = "";
+        switch (ServerProfile::IdentitySource())
+        {
+        case ServerProfile::Identity::Quant:
+            adminVars = "'admin','adminLevel'";
+            break;
+        case ServerProfile::Identity::Ukraine:
+            adminVars = "'redNick','adminLevel','admin'";
+            break;
+        default:
+            break;
+        }
+
         if (g_ScriptKey.built &&
             g_ScriptKey.needsVisibility == needsVisibility &&
             g_ScriptKey.includeNonPlayers == includeNonPlayers &&
             g_ScriptKey.familyLookup == familyLookupDemand &&
+            g_ScriptKey.identity == identity &&
             lstrcmpA(g_ScriptKey.adminKey, adminKey) == 0)
             return g_SnapshotScript[0] != 0;
 
@@ -210,6 +239,8 @@ namespace
             sizeof(g_SnapshotScript),
             "const rows=[],seen={};"
             "const adminKey='%s';"
+            "const adminVars=[%s];"
+            "const ident=%d,famSrc=%d,rpHp=%d;"
             "const needVis=%d,includeNonPlayers=%d,familyLookup=%d;"
             "const root=(typeof globalThis!=='undefined'&&globalThis)||(typeof global!=='undefined'&&global)||(typeof window!=='undefined'&&window)||{};"
             "const ctx=root.__ctx__;"
@@ -229,14 +260,22 @@ namespace
             // Several mp instances coexist after a reconnect and the one our
             // scripts run in carries an empty serverDataKeys, so the native
             // probe pins the live table as __butterflyFiveRpDataKeys.
-            "let adminVar='';"
-            "try{const dk=root.__butterflyFiveRpDataKeys||rage.serverDataKeys;"
-            "if(dk&&dk.isAdmin)adminVar=String(dk.isAdmin).trim();}catch(_){}"
-            "if(!adminVar&&adminKey)adminVar=adminKey;"
-            "let adminHash=null;"
-            "try{const am=rage.game&&rage.game.misc;"
-            "if(adminVar&&am&&typeof am.getVariableHashKey==='function')"
-            "adminHash=am.getVariableHashKey(adminVar);}catch(_){}"
+            // Several names, tried in order: the rotating one this server
+            // publishes, then the manual override, then whatever its own admin
+            // display reads. A server that uses none of them yields nothing,
+            // which is the honest answer.
+            "const adminList=[];"
+            "if(ident===1){try{"
+            "const dk=root.__butterflyFiveRpDataKeys||rage.serverDataKeys;"
+            "if(dk&&dk.isAdmin)adminList.push(String(dk.isAdmin).trim());"
+            "}catch(_){}}"
+            "if(adminKey)adminList.push(adminKey);"
+            "for(const v of adminVars)"
+            "if(v&&adminList.indexOf(v)<0)adminList.push(v);"
+            "const adminHashes=adminList.map(v=>{try{"
+            "const am=rage.game&&rage.game.misc;"
+            "return (am&&typeof am.getVariableHashKey==='function')"
+            "?am.getVariableHashKey(v):null;}catch(_){return null;}});"
             "const local=rage.players.local;"
             "const valid=v=>v&&Number.isFinite(Number(v.x))&&"
             "Number.isFinite(Number(v.y))&&"
@@ -249,7 +288,7 @@ namespace
             // old code had computed, which is why a corrected faction rule
             // appeared to change nothing. Stamped with the schema it was filled
             // under, and dropped when that no longer matches.
-            "if(cache.rev!==3){cache.rev=3;cache.ident={};}"
+            "if(cache.rev!==4){cache.rev=4;cache.ident={};}"
             "const cleanLabel=(v,id)=>{let s=String(v==null?'':v).trim();"
             "if(!s)return '';if(id!=null&&id>=0){const q=String(id);"
             "if(s.endsWith('('+q+')'))s=s.slice(0,-q.length-2).trim();"
@@ -351,9 +390,11 @@ namespace
             // hideAdmintag is deliberately ignored: the game uses it to drop the
             // badge, but the flag itself keeps syncing, so hidden admins stay
             // visible to us.
-            "let admin=0;if(kind===0&&adminVar){try{"
-            "let raw=adminHash!=null?e.getVariable(adminHash):undefined;"
-            "if(raw===undefined||raw===null)raw=e.getVariable(adminVar);"
+            "let admin=0;"
+            "if(kind===0)for(let ai=0;ai<adminList.length&&!admin;++ai){try{"
+            "let raw=adminHashes[ai]!=null"
+            "?e.getVariable(adminHashes[ai]):undefined;"
+            "if(raw===undefined||raw===null)raw=e.getVariable(adminList[ai]);"
             "if(raw===true)admin=1;"
             "else{const n=Number(raw);"
             "admin=Number.isFinite(n)&&n>0?n:(raw?1:0);}}catch(_){}}"
@@ -475,6 +516,7 @@ namespace
             // authoritative source; entity variables are just a fallback.
             // groupId and clubs are deliberately absent: they carry biker
             // clubs such as REDNECKS, which are not factions.
+            "if(ident===1){"
             "let fr=null;"
             "if(helpers&&typeof helpers.getServerFactionId==='function'){"
             "try{fr=helpers.getServerFactionId.call(helpers,e);}catch(_){}}"
@@ -496,6 +538,13 @@ namespace
             "if(factionKey)"
             "factionTag=label(first(e,['factionTag','factionName','factionTitle']));"
             "if(!factionTag)factionTag=factionLabel(factionKey,factionType);"
+            "}else if(ident>1){"
+            // These servers publish the tag itself and have no roster to ask,
+            // so the tag is the whole answer: there is no key to validate it
+            // against, and inventing one would only throw the tag away.
+            "const ft=label(first(e,['factionTag','factionName','faction']));"
+            "if(ft){factionTag=ft;factionKey=ft;}"
+            "}"
             // Looked up through the roster as well as on the entity in hand.
             // Several mp instances coexist after a reconnect, and the one this
             // script runs in can carry entities whose variables are empty;
@@ -503,6 +552,10 @@ namespace
             // while the family is a plain variable and came back blank every
             // time. The server's own code reads it off atRemoteId, so that is
             // the path followed here too.
+            // Families are a GTA5RP concept; the other servers have no
+            // equivalent, so the lookup is not attempted there at all rather
+            // than reading variables that will never exist.
+            "if(famSrc){"
             "let famRaw=first(e,['familyId','famId']);"
             "if(famRaw==null&&rage.players&&"
             "typeof rage.players.atRemoteId==='function'){"
@@ -529,23 +582,32 @@ namespace
             // server for an answer that cannot be collected, and the tag shows
             // what is actually known.
             "familyName='#'+familyId;}"
+            "}"
             "const sid=first(e,['sqlId','characterId']);"
             "sqlId=Number(sid);"
             "if(!Number.isFinite(sqlId)||sqlId<0)sqlId=0;"
             "const cands=[];"
+            // The roster walk and the two page-scoped globals below belong to
+            // GTA5RP's own client. Elsewhere they are absent, and walking a
+            // helpers object that is not there cost a bridge trip per key for
+            // nothing.
+            "if(ident===1){"
             "try{if(helpers&&typeof helpers.getName==='function')cands.push(helpers.getName.call(helpers,e));}catch(_){}"
             "try{if(helpers&&typeof helpers.getRpPlayerName==='function')cands.push(helpers.getRpPlayerName.call(helpers,e));}catch(_){}"
             "try{if(helpers){for(const k in helpers){const m=helpers[k];if(m&&typeof m==='object'){"
             "try{if(m[id])cands.push(m[id]);if(m[h])cands.push(m[h]);if(sqlId>0&&m[sqlId])cands.push(m[sqlId]);"
             "if(typeof m.get==='function'){cands.push(m.get(e));cands.push(m.get(id));if(sqlId>0)cands.push(m.get(sqlId));}}"
             "catch(_){}}}}}catch(_){}"
+            "}"
             "if(cache.chars['r_'+id])cands.push(cache.chars['r_'+id]);"
             "if(cache.chars['h_'+h])cands.push(cache.chars['h_'+h]);"
             "if(sqlId>0&&cache.chars[String(sqlId)])cands.push(cache.chars[String(sqlId)]);"
-            "if(rage.serverDataKeys){for(const k in rage.serverDataKeys){"
+            "if(ident===1&&rage.serverDataKeys){for(const k in rage.serverDataKeys){"
             "const sk=rage.serverDataKeys[k];if(sk){try{cands.push(e.getVariable(sk));}catch(_){}}}}"
+            "if(ident===1){"
             "try{if(root.playerFriendsReplaceString)cands.push(root.playerFriendsReplaceString(id));}catch(_){}"
             "try{if(root.getEntityVariable)cands.push(root.getEntityVariable(e,'charName',''));}catch(_){}"
+            "}"
             "cands.push(read(e,'charName'));cands.push(read(e,'__displayCharName'));"
             "cands.push(read(e,'characterName'));cands.push(read(e,'realName'));"
             "cands.push(read(e,'playerName'));cands.push(read(e,'Nickname'));"
@@ -559,7 +621,12 @@ namespace
             "if(!realName&&h>0&&cache.chars['h_'+h])realName=cache.chars['h_'+h];"
             "displayName=realName;"
             "if(!displayName){for(const c of cands){const cl=cleanLabel(c,id);if(cl&&!isTitle(cl)&&!isIdLabel(cl)&&cl!=='Player'&&cl!=='Unknown'&&cl!=='Citizen'){displayName=cl;break;}}}"
-            "if(!displayName)displayName='\\u0413\\u0440\\u0430\\u0436\\u0434\\u0430\\u043d\\u0438\\u043d';"
+            // The roleplay servers call an unresolved character a citizen,
+            // which is what their own nametag shows. Anywhere else that word
+            // would be an invention, so the id stands in for the name.
+            "if(!displayName)displayName=ident"
+            "?'\\u0413\\u0440\\u0430\\u0436\\u0434\\u0430\\u043d\\u0438\\u043d'"
+            ":(id>=0?('#'+id):'');"
             "nickname=realName;"
             "}catch(_){}"
             "cache.ident[ik]={n:realName,d:displayName,fi:factionId,"
@@ -590,9 +657,12 @@ namespace
             // player can reach.
             //
             // Reported in roleplay points, so a reader sees the same number
-            // the server does.
+            // the server does. A server that does not do this mapping keeps its
+            // health as the game reports it: subtracting a hundred there read
+            // every healthy player as dead.
             "if(Number.isFinite(hp)){"
-            "hp=hp-100;if(hp<0)hp=0;if(hp<=0)dead=1;}"
+            "if(rpHp){hp=hp-100;if(hp<0)hp=0;}"
+            "if(hp<=0)dead=1;}"
             "else if(dying===1)dead=1;"
             // Fatally injured with hit points left is the bleeding-out window,
             // which the overlay draws apart from a finished death.
@@ -643,6 +713,10 @@ namespace
             "0,0,0,0].join('\\t'));"
             "return rows.join('\\n');",
             adminKey,
+            adminVars,
+            identity,
+            families ? 1 : 0,
+            roleplayHealth ? 1 : 0,
             needsVisibility ? 1 : 0,
             includeNonPlayers ? 1 : 0,
             familyLookupDemand ? 1 : 0);
@@ -655,6 +729,7 @@ namespace
             g_ScriptKey.needsVisibility = needsVisibility;
             g_ScriptKey.includeNonPlayers = includeNonPlayers;
             g_ScriptKey.familyLookup = familyLookupDemand;
+            g_ScriptKey.identity = identity;
             lstrcpynA(
                 g_ScriptKey.adminKey,
                 adminKey,

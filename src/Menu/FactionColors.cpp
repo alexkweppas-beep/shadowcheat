@@ -48,7 +48,8 @@ namespace
     Entry g_Entries[kCapacity]{};
     // Colours read from config for factions that have not been seen yet.
     SavedColor g_Saved[kCapacity]{};
-    bool g_Enabled = true;
+    // Off until asked for, like everything else a fresh injection carries.
+    bool g_Enabled = false;
     bool g_Initialized = false;
 
     std::uint32_t HashKey(const char* key) noexcept

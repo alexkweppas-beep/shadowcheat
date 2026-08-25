@@ -38,6 +38,7 @@
 #include "../Features/QuantTools.h"
 #include "../Features/UkraineTools.h"
 #include "../Features/FiveRpFarmBot.h"
+#include "../Features/ServerProfile.h"
 #include "../Features/RagePlayerNames.h"
 #include "../Features/VehicleMovement.h"
 #include "../Features/SilentAim.h"
@@ -81,8 +82,11 @@ namespace Menu
     bool  s_Aim_HitboxChest = true;
     bool  s_Aim_HitboxPelvis = false;
     bool  s_Aim_DrawFov = false;
-    float s_Aim_FOV = 50.0f;
-    bool  s_Aim_MarkTarget = true;
+    // These two are copied over the General aim profile at init, so they are
+    // the values that actually apply and they match the profile defaults
+    // rather than quietly overriding them.
+    float s_Aim_FOV = 40.0f;
+    bool  s_Aim_MarkTarget = false;
     bool  s_Aim_LockOnLast = false;
     int   s_Aim_TargetBone = 0;
     bool  s_Aim_EnableHitchance = true;
@@ -165,10 +169,14 @@ namespace Menu
             return;
         done = true;
 
+        // Nothing is enabled here. An injection leaves every profile off and
+        // the user turns on what they want: a payload that arrived already
+        // drawing gave no way to tell what it had switched on for you.
+        //
         // Players
         {
             EspProfileSettings& p = s_EspProfiles[0];
-            p.enabled = true;
+            p.enabled = false;
             p.box = true;
             p.healthBar = true;
             p.armorBar = true;
@@ -190,21 +198,23 @@ namespace Menu
             p.boxStyle = EspBoxFull;
             p.healthStyle = EspBarDynamic;
             p.armorStyle = EspBarSolid;
-            p.boxColor[0] = 1.0f; p.boxColor[1] = 0.1f; p.boxColor[2] = 0.1f;
-            p.boxFillColor[0] = 1.0f; p.boxFillColor[1] = 0.1f; p.boxFillColor[2] = 0.1f;
+            // Plain white for an ordinary player, so the only coloured player
+            // on screen is one the game says something about.
+            p.boxColor[0] = 1.0f; p.boxColor[1] = 1.0f; p.boxColor[2] = 1.0f;
+            p.boxFillColor[0] = 1.0f; p.boxFillColor[1] = 1.0f; p.boxFillColor[2] = 1.0f;
             p.nameColor[0] = 1.0f; p.nameColor[1] = 1.0f; p.nameColor[2] = 1.0f;
             p.factionColor[0] = 1.0f; p.factionColor[1] = 0.85f; p.factionColor[2] = 0.25f;
             p.familyColor[0] = 0.85f; p.familyColor[1] = 0.45f; p.familyColor[2] = 1.0f;
             p.healthColor[0] = 0.0f; p.healthColor[1] = 1.0f; p.healthColor[2] = 0.0f;
             p.armorColor[0] = 0.25f; p.armorColor[1] = 0.55f; p.armorColor[2] = 1.0f;
-            p.skeletonColor[0] = 1.0f; p.skeletonColor[1] = 0.55f; p.skeletonColor[2] = 0.1f;
+            p.skeletonColor[0] = 1.0f; p.skeletonColor[1] = 1.0f; p.skeletonColor[2] = 1.0f;
             p.distanceColor[0] = 0.8f; p.distanceColor[1] = 0.8f; p.distanceColor[2] = 0.8f;
             p.hiddenColor[0] = 0.45f; p.hiddenColor[1] = 0.45f; p.hiddenColor[2] = 0.45f;
         }
         // Faction Players
         {
             EspProfileSettings& p = s_EspProfiles[1];
-            p.enabled = true;
+            p.enabled = false;
             p.box = true;
             p.healthBar = true;
             p.armorBar = true;
@@ -240,7 +250,7 @@ namespace Menu
         // Family Players
         {
             EspProfileSettings& p = s_EspProfiles[2];
-            p.enabled = true;
+            p.enabled = false;
             p.box = true;
             p.healthBar = true;
             p.armorBar = true;
@@ -276,7 +286,7 @@ namespace Menu
         // NPC
         {
             EspProfileSettings& p = s_EspProfiles[3];
-            p.enabled = true;
+            p.enabled = false;
             p.box = true;
             p.healthBar = true;
             p.armorBar = false;
@@ -308,7 +318,7 @@ namespace Menu
         // Admin
         {
             EspProfileSettings& p = s_EspProfiles[4];
-            p.enabled = true;
+            p.enabled = false;
             p.box = true;
             p.healthBar = true;
             p.armorBar = true;
@@ -326,13 +336,15 @@ namespace Menu
             p.boxStyle = EspBoxFilled;
             p.healthStyle = EspBarDynamic;
             p.armorStyle = EspBarSolid;
-            p.boxColor[0] = 0.7f; p.boxColor[1] = 0.25f; p.boxColor[2] = 1.0f;
-            p.boxFillColor[0] = 0.7f; p.boxFillColor[1] = 0.25f; p.boxFillColor[2] = 1.0f;
-            p.nameColor[0] = 1.0f; p.nameColor[1] = 0.85f; p.nameColor[2] = 0.2f;
+            // Red, and only admins are red: the one thing worth spotting from
+            // across a street without reading anything.
+            p.boxColor[0] = 1.0f; p.boxColor[1] = 0.0f; p.boxColor[2] = 0.0f;
+            p.boxFillColor[0] = 1.0f; p.boxFillColor[1] = 0.0f; p.boxFillColor[2] = 0.0f;
+            p.nameColor[0] = 1.0f; p.nameColor[1] = 0.0f; p.nameColor[2] = 0.0f;
             p.healthColor[0] = 0.15f; p.healthColor[1] = 1.0f; p.healthColor[2] = 0.4f;
             p.armorColor[0] = 0.35f; p.armorColor[1] = 0.7f; p.armorColor[2] = 1.0f;
-            p.skeletonColor[0] = 0.85f; p.skeletonColor[1] = 0.35f; p.skeletonColor[2] = 1.0f;
-            p.distanceColor[0] = 1.0f; p.distanceColor[1] = 0.85f; p.distanceColor[2] = 0.2f;
+            p.skeletonColor[0] = 1.0f; p.skeletonColor[1] = 0.0f; p.skeletonColor[2] = 0.0f;
+            p.distanceColor[0] = 1.0f; p.distanceColor[1] = 0.35f; p.distanceColor[2] = 0.35f;
             p.hiddenColor[0] = 0.4f; p.hiddenColor[1] = 0.2f; p.hiddenColor[2] = 0.45f;
             p.factionColor[0] = 1.0f; p.factionColor[1] = 0.75f; p.factionColor[2] = 0.2f;
             p.familyColor[0] = 0.9f; p.familyColor[1] = 0.5f; p.familyColor[2] = 1.0f;
@@ -340,7 +352,7 @@ namespace Menu
         // Animal (not NPC — ambient/scripted fauna)
         {
             EspProfileSettings& p = s_EspProfiles[5];
-            p.enabled = true;
+            p.enabled = false;
             p.box = true;
             p.healthBar = false;
             p.armorBar = false;
@@ -1144,6 +1156,15 @@ namespace Menu
             "Автоогонь по цели",
             "Автовогонь по цілі",
             MainPage::Combat, 2
+        },
+        {
+            // 3 belongs to the weapon manager, which opens as its own window.
+            "damager", ICON_FA_HAND_FIST,
+            "Damager", "Дамагер", "Дамагер",
+            "Fist damage in FOV",
+            "Урон кулаком в FOV",
+            "Шкода кулаком у FOV",
+            MainPage::Combat, 4
         }
     };
 
@@ -1286,6 +1307,17 @@ namespace Menu
         }
     }
 
+    // A child that stands for a server-side feature is dropped from the strip
+    // where that feature does not exist. Filtered at draw time rather than
+    // compiled out: the answer arrives after the menu is built and changes on a
+    // reconnect to a different server.
+    static bool IsChildAvailable(const DestChild& child) noexcept
+    {
+        if (child.page == MainPage::Player && child.value == 2)
+            return ServerProfile::HasItemBridge();
+        return true;
+    }
+
     static bool IsChildActive(const DestChild& child) noexcept
     {
         if (s_MainPage != child.page)
@@ -1314,7 +1346,7 @@ namespace Menu
         switch (child.page)
         {
         case MainPage::Combat:
-            s_AimMode = ImClamp(child.value, 0, 3);
+            s_AimMode = ImClamp(child.value, 0, 4);
                 break;
         case MainPage::Visuals:
             s_VisualCategoryTab = child.value;
@@ -1443,7 +1475,15 @@ namespace Menu
         style.Colors[ImGuiCol_TabSelectedOverline] = tokens.accent.fill;
         style.Colors[ImGuiCol_TabDimmed] = tokens.base;
         style.Colors[ImGuiCol_TabDimmedSelected] = tokens.panel;
-        style.Colors[ImGuiCol_NavHighlight] = tokens.borderFocus;
+        // Nothing here is driven by keyboard navigation, and its highlight is a
+        // 2 px rect with the frame rounding rather than the panel's, so on a
+        // card rounded at twelve it read as a faint white square laid over the
+        // corners. Invisible, not disabled: nav still works, it just stops
+        // drawing a box that belongs to a different shape.
+        style.Colors[ImGuiCol_NavHighlight] =
+            ImVec4(0.f, 0.f, 0.f, 0.f);
+        style.Colors[ImGuiCol_NavWindowingHighlight] =
+            ImVec4(0.f, 0.f, 0.f, 0.f);
         style.Colors[ImGuiCol_DragDropTarget] = tokens.accent.fill;
         style.Colors[ImGuiCol_ResizeGrip] = ImVec4(0.f, 0.f, 0.f, 0.f);
         style.Colors[ImGuiCol_ResizeGripHovered] = tokens.borderStrong;
@@ -2027,7 +2067,7 @@ namespace Menu
         switch (s_AcceptedMainPage)
         {
         case MainPage::Combat:
-            s_AimMode = ImClamp(tab, 0, 3);
+            s_AimMode = ImClamp(tab, 0, 4);
             break;
         case MainPage::Visuals:
             s_VisualCategoryTab =
@@ -2124,6 +2164,57 @@ namespace Menu
     {
         const char* phase = g_RenderPhase;
         return phase ? phase : "?";
+    }
+
+    UiStackDepth CaptureUiStackDepth() noexcept
+    {
+        UiStackDepth depth{};
+        ImGuiContext* context = ImGui::GetCurrentContext();
+        if (!context)
+            return depth;
+        depth.windows = context->CurrentWindowStack.Size;
+        depth.styleVars = context->StyleVarStack.Size;
+        depth.colors = context->ColorStack.Size;
+        depth.fonts = context->FontStack.Size;
+        depth.ids = context->CurrentWindow
+            ? context->CurrentWindow->IDStack.Size
+            : 0;
+        depth.valid = true;
+        return depth;
+    }
+
+    void UnwindUiStack(const UiStackDepth& depth) noexcept
+    {
+        ImGuiContext* context = ImGui::GetCurrentContext();
+        if (!context || !depth.valid)
+            return;
+        // Windows last: closing one pops the id stack with it, and the pushes
+        // it is holding have to go first or End asserts on them.
+        while (context->CurrentWindowStack.Size > depth.windows)
+        {
+            const int windows = context->CurrentWindowStack.Size;
+            ImGuiWindow* window = context->CurrentWindow;
+            while (window && window->IDStack.Size > 1)
+            {
+                ImGui::PopID();
+                if (context->CurrentWindow != window)
+                    break;
+            }
+            if (window && window->Flags & ImGuiWindowFlags_ChildWindow)
+                ImGui::EndChild();
+            else
+                ImGui::End();
+            // A guard against a shape this loop cannot pop: better a leaked
+            // window for one frame than a hang inside the render hook.
+            if (context->CurrentWindowStack.Size >= windows)
+                break;
+        }
+        while (context->StyleVarStack.Size > depth.styleVars)
+            ImGui::PopStyleVar();
+        while (context->ColorStack.Size > depth.colors)
+            ImGui::PopStyleColor();
+        while (context->FontStack.Size > depth.fonts)
+            ImGui::PopFont();
     }
 
     void Render(bool& bOpen)
@@ -2364,6 +2455,12 @@ namespace Menu
                 s_MainPage = MainPage::Combat;
                 s_AcceptedMainPage = MainPage::Combat;
             }
+            // A sub-tab whose feature has just gone away with a reconnect would
+            // otherwise stay open with nothing behind it.
+            if (s_MainPage == MainPage::Player &&
+                s_MiscSubTab == 2 &&
+                !ServerProfile::HasItemBridge())
+                s_MiscSubTab = 0;
 
             // One search entry point: CTRL+F or the button in the bottom bar.
             static bool s_SearchOpen = false;
@@ -2603,21 +2700,32 @@ namespace Menu
                     metrics.stroke);
 
                 const float inner = 4.f * scale;
+                // Widths come from what is actually drawn, so a hidden child
+                // closes its gap instead of leaving a dead segment.
+                int shownCount = 0;
+                for (int i = 0; i < stripRoot.childCount; ++i)
+                    if (IsChildAvailable(stripRoot.children[i]))
+                        ++shownCount;
+                if (shownCount < 1)
+                    shownCount = 1;
                 const float childW =
                     (stripMax.x - stripMin.x - inner * 2.f) /
-                    static_cast<float>(stripRoot.childCount);
+                    static_cast<float>(shownCount);
                 const float childH = subStripH - inner * 2.f;
                 const float lift = (1.f - ease) * 12.f * scale;
                 ImGui::PushStyleVar(
                     ImGuiStyleVar_Alpha, style->Alpha * ease);
                 ImGui::PushID("nav_child");
+                int slot = 0;
                 for (int i = 0; i < stripRoot.childCount; ++i)
                 {
                     const DestChild& child = stripRoot.children[i];
+                    if (!IsChildAvailable(child))
+                        continue;
                     ImGui::SetCursorScreenPos(
                         ImVec2(
                             stripMin.x + inner +
-                                childW * static_cast<float>(i),
+                                childW * static_cast<float>(slot++),
                             stripMin.y + inner - lift));
                     if (MenuUi::NavTab(
                             child.id,

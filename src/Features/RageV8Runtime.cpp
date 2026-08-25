@@ -1,6 +1,7 @@
 #define WIN32_LEAN_AND_MEAN
 #include "RageV8Runtime.h"
 #include "RuntimeProfiler.h"
+#include "ServerProfile.h"
 
 #ifdef RESOURCE_DUMPER_SAFE_JS
 #include "../../ResourceDumperStandalone/StandaloneLog.h"
@@ -2202,8 +2203,19 @@ namespace
         native.ownerThreadId = g_Api.ownerThreadId;
         // Kept in its own guard so a probe fault cannot tear down the
         // event logger callback, and a callback fault cannot stall the probe.
+        //
+        // Skipped once the server has been positively identified as one of the
+        // other two we know: the objects this hunts are GTA5RP's own, and
+        // walking the global handles for them every tick there finds nothing.
+        //
+        // Deliberately not skipped on an unrecognised server. One of the things
+        // that identifies GTA5RP is a pin this walk installs, so refusing to
+        // walk until it is identified would be a circle with no way out.
         __try {
-            ProbeFiveRpPlayers(native);
+            const ServerProfile::Kind server = ServerProfile::Current();
+            if (server != ServerProfile::Kind::Quant &&
+                server != ServerProfile::Kind::Ukraine)
+                ProbeFiveRpPlayers(native);
         } __except (EXCEPTION_EXECUTE_HANDLER) {
             InterlockedIncrement64(&g_NativeTickFaults);
             g_FiveRpPlayersProbe.retryAt =

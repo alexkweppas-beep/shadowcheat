@@ -1,6 +1,7 @@
 #include "AutoLoot.h"
 
 #include "RageV8Runtime.h"
+#include "ServerProfile.h"
 
 #include <Windows.h>
 #include <cstdio>
@@ -386,11 +387,12 @@ namespace AutoLoot
             output + used,
             capacity - used,
             _TRUNCATE,
-            "loot_on=%d\nloot_take_all=%d\nloot_notify=%d\n"
+            "loot_on=%d\nloot_take_all=%d\nloot_notify=%d\nloot_ring=%d\n"
             "loot_radius=%.3f\nloot_delay=%d\nloot_seeded=%d\nloot_names=%d\n",
             g_Settings.enabled ? 1 : 0,
             g_Settings.takeAll ? 1 : 0,
             g_Settings.notify ? 1 : 0,
+            g_Settings.showRadius ? 1 : 0,
             static_cast<double>(g_Settings.radius),
             g_Settings.intervalMs,
             g_Seeded ? 1 : 0,
@@ -440,6 +442,8 @@ namespace AutoLoot
             g_Settings.takeAll = std::atoi(value) != 0;
         if (const char* value = find("loot_notify"))
             g_Settings.notify = std::atoi(value) != 0;
+        if (const char* value = find("loot_ring"))
+            g_Settings.showRadius = std::atoi(value) != 0;
         if (const char* value = find("loot_radius"))
         {
             const float radius = static_cast<float>(std::atof(value));
@@ -537,7 +541,10 @@ namespace AutoLoot
                 g_PendingCommand = 0;
         }
 
-        if (!g_Settings.enabled)
+        // The whole feature is their own item bridge: the objects carry their
+        // own payload property and the take is their own local call. On a
+        // server without it there is nothing to scan and nothing to raise.
+        if (!g_Settings.enabled || !ServerProfile::HasItemBridge())
         {
             if (g_Status.reachable || g_Status.detail[0])
             {

@@ -28,10 +28,8 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
-#include <time.h>
 
 #include "CloudStorage.h"
-#include "../Menu/Menu.h"
 
 #pragma comment(lib, "winhttp.lib")
 
@@ -275,12 +273,6 @@ namespace CloudStorage
                 auth->version == 1 && auth->token[0])
             {
                 lstrcpynA(g_Token, auth->token, sizeof(g_Token));
-                
-                // Set the account profile for the Menu settings tab
-                std::int64_t now = static_cast<std::int64_t>(time(nullptr));
-                std::int64_t expires = now + (static_cast<std::int64_t>(auth->days_remaining) * 86400);
-                Menu::SetAccountProfile(auth->username, expires);
-                
                 ok = true;
             }
             if (auth) UnmapViewOfFile(auth);

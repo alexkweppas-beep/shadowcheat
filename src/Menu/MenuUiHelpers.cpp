@@ -1601,6 +1601,9 @@ FeatureRowResult FeatureRow(
         // while the stock checkbox toggled, which taught two different rules.
         *desc.enabled = !*desc.enabled;
         result.toggled = true;
+        // A click is a decision, so the row stops showing a bind demonstration
+        // and goes back to showing what it is set to.
+        FeatureBinds::ClearPreview(desc.enabled);
         ImGui::MarkItemEdited(ImGui::GetItemID());
     }
 
@@ -1628,7 +1631,16 @@ FeatureRowResult FeatureRow(
     };
     RowAnim& anim =
         LeyawinAnim<RowAnim, 7211>().get(ImGui::GetID("##row"));
-    const bool on = desc.enabled && *desc.enabled;
+    // While a bind for this row is pressed with the menu open, the switch shows
+    // the press rather than the setting: that is the whole point of the
+    // demonstration, and the setting behind it is deliberately untouched.
+    bool on = desc.enabled && *desc.enabled;
+    if (desc.enabled)
+    {
+        bool preview = false;
+        if (FeatureBinds::PreviewState(desc.enabled, preview))
+            on = preview;
+    }
     anim.on = MenuMotion::Approach(
         anim.on, on ? 1.f : 0.f, MenuMotion::kSelection);
     anim.hot = MenuMotion::Approach(

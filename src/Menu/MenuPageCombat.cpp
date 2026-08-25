@@ -35,6 +35,7 @@
 #include "../Features/VehicleMovement.h"
 #include "../Features/SilentAim.h"
 #include "../Features/Aimbot.h"
+#include "../Features/Damager.h"
 #include "../Features/FiveRpMetadataResolver.h"
 #include "../Features/RageV8Runtime.h"
 #include "../Features/RuntimeProfiler.h"
@@ -129,6 +130,15 @@ namespace Menu
         return &GetAimProfile(s_AimPresetGroup);
     }
 
+    // Only changes which profile is being looked at.
+    //
+    // It used to copy General into the group and latch useCustom on, so a
+    // single click on a weapon chip silently made that group's frozen copy the
+    // one the aimbot reads, for good. Every later edit to General then did
+    // nothing while that weapon was held: the FOV slider moved, the aim kept
+    // the value from the moment of the click, and the bones did too. Turning a
+    // group into its own configuration is now something asked for, on the
+    // toggle inside the group.
     static void SelectAimGroup(int group) noexcept
     {
         s_AimPresetKind = AimPresetKind::Group;
@@ -136,16 +146,6 @@ namespace Menu
             group,
             0,
             kAimWeaponGroupCount - 1);
-        if (s_AimPresetGroup > 0)
-        {
-            AimWeaponProfile& profile =
-                GetAimProfile(s_AimPresetGroup);
-            if (!profile.useCustom)
-            {
-                profile = s_AimWeaponProfiles[0];
-                profile.useCustom = true;
-            }
-        }
         s_AimPresetWeapon = 0;
         s_AimWeaponTab = s_AimPresetGroup;
     }
@@ -1296,6 +1296,226 @@ namespace Menu
             ImGui::EndDisabled();
     }
 
+    // A weapon group starts out following the shared profile and takes over the
+    // moment something in it is actually changed.
+    //
+    // Nothing is asked of the user for this: an explicit "use own settings"
+    // switch is one more thing to forget, and merely opening a group used to be
+    // enough to freeze a copy of the shared profile into it, which is how the
+    // aim ended up reading values the page was no longer showing. A group that
+    // has never been touched is not a configuration, so the held weapon falls
+    // back to the shared one.
+    static void MarkEditedScopeConfigured(
+        const AimWeaponProfile& before,
+        AimWeaponProfile* edited) noexcept
+    {
+        if (!edited ||
+            s_AimPresetKind != AimPresetKind::Group ||
+            s_AimPresetGroup <= 0 ||
+            edited->useCustom)
+            return;
+        // Both sides are copies of the same trivially copyable object, so the
+        // padding matches and only a real field change shows up here.
+        if (std::memcmp(
+                &before,
+                edited,
+                sizeof(AimWeaponProfile)) == 0)
+            return;
+        edited->useCustom = true;
+    }
+
+    static void RenderAimDamager(bool layerEnabled) noexcept
+    {
+        Damager::Settings& damager = Damager::Access();
+        if (!layerEnabled)
+            ImGui::BeginDisabled();
+        MenuUi::BeginInspectorIsland(
+            "aim_damager_general_island",
+            T("Damager", "Дамагер", "Дамагер"),
+            0.f,
+            T("Damage without shooting",
+              "Урон без выстрела",
+              "Шкода без вистрілу"));
+        DrawAimBooleanRow(
+            "damager_enabled",
+            ICON_FA_POWER_OFF,
+            T("Enabled", "Включено", "Увімкнено"),
+            &damager.enabled);
+        // Unbound means armed for as long as the feature is on, which is how
+        // the trigger reads its own key too.
+        gui->keybind(
+            T("Hold key###aim_damager_key",
+              "Клавиша удержания###aim_damager_key",
+              "Клавіша утримання###aim_damager_key"),
+            &damager.holdKey,
+            ICON_FA_KEY);
+        gui->slider_float_icon(
+            ICON_FA_BULLSEYE,
+            T("FOV###aim_damager_fov",
+              "FOV###aim_damager_fov",
+              "FOV###aim_damager_fov"),
+            &damager.fov,
+            Damager::kMinFov,
+            Damager::kMaxFov,
+            "%.0f px");
+        gui->slider_float_icon(
+            ICON_FA_RULER_HORIZONTAL,
+            T("Range###aim_damager_range",
+              "Дистанция###aim_damager_range",
+              "Дистанція###aim_damager_range"),
+            &damager.maxDistance,
+            Damager::kMinDistance,
+            Damager::kMaxDistance,
+            "%.0f m");
+        float damage = static_cast<float>(damager.damage);
+        if (gui->slider_float_icon(
+                ICON_FA_HAND_FIST,
+                T("Damage per hit###aim_damager_damage",
+                  "Урон за удар###aim_damager_damage",
+                  "Шкода за удар###aim_damager_damage"),
+                &damage,
+                1.f,
+                200.f,
+                "%.0f"))
+            damager.damage = static_cast<int>(damage);
+        // Hits land inside one pass, so this is what decides whether the target
+        // drops now or bleeds slowly: the rate below only spaces the passes out.
+        float hits = static_cast<float>(damager.hits);
+        if (gui->slider_float_icon(
+                ICON_FA_LAYER_GROUP,
+                T("Hits per pass###aim_damager_hits",
+                  "Ударов за проход###aim_damager_hits",
+                  "Ударів за прохід###aim_damager_hits"),
+                &hits,
+                1.f,
+                20.f,
+                "%.0f"))
+            damager.hits = static_cast<int>(hits);
+        float interval = static_cast<float>(damager.intervalMs);
+        if (gui->slider_float_icon(
+                ICON_FA_STOPWATCH,
+                T("Interval###aim_damager_interval",
+                  "Интервал###aim_damager_interval",
+                  "Інтервал###aim_damager_interval"),
+                &interval,
+                40.f,
+                1000.f,
+                "%.0f ms"))
+            damager.intervalMs = static_cast<int>(interval);
+        MenuUi::SectionTitle(
+            T("Reported as", "Считается как", "Рахується як"));
+        const MenuUi::IconTabDesc weaponTabs[3] = {
+            {"damager_wp_fist",
+             ICON_FA_HAND_FIST,
+             T("Fist", "Кулак", "Кулак")},
+            {"damager_wp_knife",
+             ICON_FA_KHANDA,
+             T("Knife", "Нож", "Ніж")},
+            {"damager_wp_current",
+             ICON_FA_GUN,
+             T("Held", "В руках", "В руках")}
+        };
+        MenuUi::ChipTabs(
+            "aim_damager_weapon",
+            weaponTabs,
+            3,
+            &damager.weapon);
+        MenuUi::LabelWithHelp(
+            T("Fists need nothing in hand",
+              "Кулаку ничего не нужно в руках",
+              "Кулаку нічого не потрібно в руках"),
+            "The hit is reported to the server as this weapon. A roleplay "
+            "server checks it against what you are holding, and fists are the "
+            "one weapon everybody always has.",
+            "Удар уходит на сервер как это оружие. RP-сервер сверяет его с тем, "
+            "что у вас в руках, а кулаки есть у всех и всегда.",
+            "Удар іде на сервер як ця зброя. RP-сервер зіставляє його з тим, "
+            "що у вас в руках, а кулаки є в усіх і завжди.");
+        MenuUi::DrawBoneDropdown(
+            damager.bones,
+            "aim_damager");
+        MenuUi::EndInspectorIsland();
+        if (!layerEnabled)
+            ImGui::EndDisabled();
+    }
+
+    static void RenderAimDamagerFilters(
+        AimWeaponProfile& profile,
+        bool layerEnabled) noexcept
+    {
+        Damager::Settings& damager = Damager::Access();
+        const Damager::Status status = Damager::GetStatus();
+        if (!layerEnabled)
+            ImGui::BeginDisabled();
+        MenuUi::BeginInspectorIsland(
+            "aim_damager_filters_island",
+            T("Filters", "Фильтры", "Фільтри"),
+            0.f,
+            T("Ignore logic", "Логика игнора", "Логіка ігнору"));
+        DrawAimFilters(
+            profile,
+            "aim_damager_filters",
+            &damager.visibleCheck,
+            false);
+        DrawAimBooleanRow(
+            "damager_stop_when_down",
+            ICON_FA_SKULL,
+            T("Stop when down", "Стоп когда упал", "Стоп коли впав"),
+            &damager.stopWhenDown);
+        DrawAimBooleanRow(
+            "damager_notify",
+            ICON_FA_BELL,
+            T("Notify", "Уведомления", "Повідомлення"),
+            &damager.notify);
+        MenuUi::EndInspectorIsland();
+
+        MenuUi::BeginInspectorIsland(
+            "aim_damager_status_island",
+            T("Status", "Состояние", "Стан"),
+            0.f,
+            T("What the target reports",
+              "Что сообщает цель",
+              "Що повідомляє ціль"));
+        char summary[192]{};
+        if (!status.armed)
+            _snprintf_s(
+                summary,
+                sizeof(summary),
+                _TRUNCATE,
+                "%s",
+                T("Disarmed", "Не активен", "Не активний"));
+        else if (!status.hasTarget)
+            _snprintf_s(
+                summary,
+                sizeof(summary),
+                _TRUNCATE,
+                "%s",
+                T("Nobody in the FOV",
+                  "В FOV никого",
+                  "У FOV нікого"));
+        else
+            _snprintf_s(
+                summary,
+                sizeof(summary),
+                _TRUNCATE,
+                T("Target %d at %.1f m\nHealth %d, hits sent %d",
+                  "Цель %d на %.1f м\nЗдоровье %d, ударов отправлено %d",
+                  "Ціль %d на %.1f м\nЗдоров'я %d, ударів надіслано %d"),
+                status.remoteId,
+                static_cast<double>(status.distance),
+                status.health,
+                status.hits);
+        ImGui::TextUnformatted(summary);
+        // The health line is the only honest answer to "does this work here":
+        // it is the number the victim's own client publishes, so a value that
+        // never moves means the server dropped every hit.
+        if (status.detail[0])
+            ImGui::TextDisabled("%s", status.detail);
+        MenuUi::EndInspectorIsland();
+        if (!layerEnabled)
+            ImGui::EndDisabled();
+    }
+
     static void RenderAimTriggerFilters(
         AimWeaponProfile& profile,
         bool layerEnabled) noexcept
@@ -1678,7 +1898,9 @@ namespace Menu
         // Arsenal is gone too; the weapon bar at the bottom replaced it.
         if (s_AimMode == 1 || s_AimMode == 3)
             s_AimMode = 0;
-        const int requestedMode = ImClamp(s_AimMode, 0, 2);
+        const int requestedMode = s_AimMode == 4
+            ? 4
+            : ImClamp(s_AimMode, 0, 2);
         if (requestedMode != transition.to)
         {
             transition.from =
@@ -1775,7 +1997,7 @@ namespace Menu
                 contentSize,
                 ImGuiChildFlags_None,
                 flags);
-            if (mode == 0 || mode == 1 || mode == 2)
+            if (mode == 0 || mode == 1 || mode == 2 || mode == 4)
             {
                 // One scroll for both halves: two independent scrollbars meant
                 // the two configs drifted out of step while reading them, and
@@ -1809,7 +2031,9 @@ namespace Menu
                         ImGuiWindowFlags_NoSavedSettings |
                         ImGuiWindowFlags_NoScrollbar |
                         ImGuiWindowFlags_NoScrollWithMouse);
-                if (mode == 2)
+                if (mode == 4)
+                    RenderAimDamager(true);
+                else if (mode == 2)
                     RenderAimTrigger(*profile, true);
                 else
                     RenderAimSilent(*profile, true);
@@ -1822,7 +2046,9 @@ namespace Menu
                         ImGuiWindowFlags_NoSavedSettings |
                         ImGuiWindowFlags_NoScrollbar |
                         ImGuiWindowFlags_NoScrollWithMouse);
-                if (mode == 2)
+                if (mode == 4)
+                    RenderAimDamagerFilters(*profile, true);
+                else if (mode == 2)
                     RenderAimTriggerFilters(*profile, true);
                 else
                     RenderAimVector(*profile, true);
@@ -1840,6 +2066,10 @@ namespace Menu
             ImGui::PopID();
         };
 
+        // Taken before the controls are drawn and compared after: a change to
+        // any of them is what turns a weapon group into a configuration of its
+        // own, without asking for a switch to be flipped first.
+        const AimWeaponProfile beforeEdit = *profile;
         if (transition.progress < 1.f)
         {
             RenderModeLayer(
@@ -1862,6 +2092,7 @@ namespace Menu
                 0.f,
                 true);
         }
+        MarkEditedScopeConfigured(beforeEdit, profile);
         DrawAimWeaponBar(
             ImVec2(
                 contentStart.x,

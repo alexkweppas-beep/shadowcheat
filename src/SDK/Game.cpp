@@ -3331,12 +3331,35 @@ namespace Game {
                 entry.visual.isPlayer;
             if (!entry.visualValid)
             {
-                __try {
-                    entry.isPlayer =
-                        IsPedPlayer(entry.ped);
-                } __except (
-                    EXCEPTION_EXECUTE_HANDLER) {
+                // A live snapshot lists every streamed player, whatever the
+                // profiles are set to: only peds are conditional. So while it
+                // has rows, a ped missing from it is not a player, and the
+                // guessing below is not just unnecessary but wrong.
+                //
+                // It was wrong in a way that showed: the guess accepts a hit in
+                // a name cache keyed by ped address, ped memory is pooled and
+                // handed out again, and an NPC spawning where a player used to
+                // be inherited that entry and got drawn as a player. It
+                // appeared as soon as the NPC profile was switched off, because
+                // that is when NPCs stop being in the snapshot and reach this
+                // fallback at all.
+                //
+                // With no rows at all the bridge is down, and then the old
+                // guess is the only thing there is: remote players on this
+                // build often carry no CPlayerInfo either.
+                if (RagePlayerNames::Count() > 0)
+                {
                     entry.isPlayer = false;
+                }
+                else
+                {
+                    __try {
+                        entry.isPlayer =
+                            IsPedPlayer(entry.ped);
+                    } __except (
+                        EXCEPTION_EXECUTE_HANDLER) {
+                        entry.isPlayer = false;
+                    }
                 }
             }
             __try {

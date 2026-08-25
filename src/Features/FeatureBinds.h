@@ -21,6 +21,12 @@ namespace FeatureBinds
         int key{};
         int mode{Toggle};
         bool previousDown{};
+        // A press made with the menu open is shown here and nowhere else: the
+        // setting is left exactly as it was, so the key can be checked against
+        // the row it belongs to without the feature ever running. Dropped as
+        // the menu closes.
+        bool previewActive{};
+        bool previewShown{};
         char label[96]{};
     };
 
@@ -32,7 +38,16 @@ namespace FeatureBinds
         const char* id,
         const char* label,
         void (*action)()) noexcept;
-    void Tick(bool suppressActivation) noexcept;
+    // previewOnly: the menu is up, so a press is a demonstration. The switch
+    // moves and nothing else happens, and the setting is never written.
+    void Tick(bool suppressActivation, bool previewOnly = false) noexcept;
+
+    // What a row should draw instead of its setting, while a bind for it is
+    // being pressed with the menu open. False means "draw the setting".
+    bool PreviewState(const bool* value, bool& shown) noexcept;
+    // Clicked by hand: the demonstration is over and the row goes back to
+    // showing what it is actually set to.
+    void ClearPreview(const bool* value) noexcept;
     void SetCaptureActive(bool active) noexcept;
     bool IsCaptureActive() noexcept;
     void ResetEdge(Binding* binding) noexcept;

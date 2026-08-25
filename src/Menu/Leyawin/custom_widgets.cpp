@@ -1244,13 +1244,22 @@ bool c_widgets::checkbox(const char* label, bool* callback, bool popup, int* key
     if (pressed)
     {
         *callback = !(*callback);
+        FeatureBinds::ClearPreview(callback);
         MarkItemEdited(id);
     }
 
     auto& anim = LEYAWIN_ANIM(ImGuiID, checkbox_state);
     checkbox_state& state = MapGet(anim, id);
+    // A bind pressed with the menu open is shown on the switch and nowhere
+    // else: the setting stays as it is, so nothing starts running behind it.
+    bool shown = *callback;
+    {
+        bool preview = false;
+        if (FeatureBinds::PreviewState(callback, preview))
+            shown = preview;
+    }
     state.on = MenuMotion::Approach(
-        state.on, *callback ? 1.f : 0.f, MenuMotion::kSelection);
+        state.on, shown ? 1.f : 0.f, MenuMotion::kSelection);
     state.hot = MenuMotion::Approach(
         state.hot, hovered ? 1.f : 0.f, MenuMotion::kHover);
     state.press = MenuMotion::Approach(
@@ -4052,26 +4061,67 @@ bool c_widgets::dropdown(const char* label, int* current_item, const char* const
     return value_changed;
 }
 
+// Joins the ticked labels into a fixed buffer, and stops at its end.
+//
+// This used to be an unbounded lstrcatA loop into 256 bytes, which was inside
+// the English labels and past the end of the buffer in Russian and Ukrainian,
+// where every character costs two bytes. Sixteen bone names in Cyrillic came to
+// around 270 bytes: the overrun corrupted the stack, the SEH guard around the
+// menu swallowed the fault, and the page it happened on rendered as empty for
+// as long as the language stayed set. It also left the menu's own ImGui window
+// unclosed, which is what made the separate on-screen panels vanish with it.
+static void BuildMultiPreview(
+    char* preview,
+    int capacity,
+    const bool variable[],
+    const char* const labels[],
+    int count) noexcept
+{
+    if (!preview || capacity <= 0)
+        return;
+    int used = 0;
+    int selected = 0;
+    const auto append = [&](const char* text) noexcept {
+        if (!text)
+            return;
+        while (*text && used < capacity - 1)
+            preview[used++] = *text++;
+        preview[used] = '\0';
+    };
+    preview[0] = '\0';
+    for (int i = 0; i < count; ++i)
+    {
+        if (!variable[i])
+            continue;
+        if (selected)
+            append(", ");
+        // One character short of the end means the next name cannot start, so
+        // the list says it continues rather than ending mid-word.
+        if (used >= capacity - 2)
+        {
+            const int mark = capacity - 4 > 0 ? capacity - 4 : 0;
+            if (mark < used)
+                used = mark;
+            preview[used] = '\0';
+            append("...");
+            return;
+        }
+        append(labels[i]);
+        ++selected;
+    }
+    if (!selected)
+        lstrcpynA(preview, "Select", capacity);
+}
+
 void c_widgets::multi_dropdown(const char* label, bool variable[], const char* labels[], int count, int max_count)
 {
-    ImGuiContext& g = *GImGui;
-
-    char preview[256] = "Select";
-    int preview_len = 0;
-
-    for (auto i = 0, j = 0; i < count; i++)
-    {
-        if (variable[i])
-        {
-            if (j) {
-                lstrcatA(preview, ", ");
-            } else {
-                preview[0] = '\0';
-            }
-            lstrcatA(preview, labels[i]);
-            j++;
-        }
-    }
+    char preview[256]{};
+    BuildMultiPreview(
+        preview,
+        static_cast<int>(sizeof(preview)),
+        variable,
+        labels,
+        count);
 
     if (begin_combo(label, preview, count, max_count, 0, true))
     {
@@ -4089,18 +4139,13 @@ void c_widgets::multi_dropdown_icon(
     int count,
     int max_count)
 {
-    char preview[256] = "Select";
-    for (int i = 0, selected = 0; i < count; ++i)
-    {
-        if (!variable[i])
-            continue;
-        if (selected)
-            lstrcatA(preview, ", ");
-        else
-            preview[0] = '\0';
-        lstrcatA(preview, labels[i]);
-        ++selected;
-    }
+    char preview[256]{};
+    BuildMultiPreview(
+        preview,
+        static_cast<int>(sizeof(preview)),
+        variable,
+        labels,
+        count);
 
     if (begin_combo(
             label,

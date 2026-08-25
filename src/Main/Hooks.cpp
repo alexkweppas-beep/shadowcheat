@@ -28,6 +28,8 @@
 #include "../Features/QuantTools.h"
 #include "../Features/UkraineTools.h"
 #include "../Features/AutoLoot.h"
+#include "../Features/Damager.h"
+#include "../Features/ServerProfile.h"
 #include "../Features/FiveRpFarmBot.h"
 #include "../Features/MiscFeatures.h"
 #include "../Features/ScriptBridge.h"
@@ -1455,9 +1457,21 @@ namespace hooks
             // Set while a keybind row is capturing, so the key being assigned
             // does not also fire the action it is being assigned to.
             const bool bindCapture = FeatureBinds::IsCaptureActive();
+            // Only a text field being typed into stops a bind.
+            //
+            // WantCaptureKeyboard used to stop them as well, and with keyboard
+            // navigation on that is true for the whole time the menu is open:
+            // pressing a bind while looking at the switch it belongs to did
+            // nothing at all, which read as the bind being broken. Now the
+            // switch flips under the cursor, which is the plainest proof the
+            // key is bound to the thing you think it is.
+            //
+            // With the menu up that flip is all that happens: the feature is
+            // not started and the value goes back as the menu closes, so a
+            // check does not leave anything switched on behind it.
             FeatureBinds::Tick(
-                ImGui::GetIO().WantTextInput ||
-                ImGui::GetIO().WantCaptureKeyboard);
+                ImGui::GetIO().WantTextInput,
+                g_MenuOpen);
             FeatureBinds::SetCaptureActive(false);
 
             bool curMenuKey = !bindCapture &&
@@ -1529,6 +1543,14 @@ namespace hooks
                 AntiCheatShield::Update();
             } __except (SafeFilter(GetExceptionInformation(), "hkPresent:AntiCheatShield")) {
                 HLog("hkPresent: AntiCheatShield::Update FAULTED");
+            }
+
+            // Ahead of the per-server suites: they now read their own identity
+            // from here instead of each fingerprinting the server itself.
+            __try {
+                ServerProfile::Update();
+            } __except (SafeFilter(GetExceptionInformation(), "hkPresent:ServerProfile")) {
+                HLog("hkPresent: ServerProfile::Update FAULTED");
             }
 
             profileStart = RuntimeProfiler::Begin();
@@ -1695,6 +1717,16 @@ namespace hooks
                         profileStart);
                 }
 
+                // Right behind the aim pass, which is where its target comes
+                // from: any later and the target it reads is a frame stale.
+                __try {
+                    PRESENT_STAGE("Damager");
+                    Damager::Update();
+                } __except (SafeFilter(GetExceptionInformation(), "hkPresent:Damager")) {
+                    HLog("hkPresent: Damager::Update FAULTED");
+                    Damager::Access().enabled = false;
+                }
+
                 // ESP — game-memory reads, SEH-guarded
                 if (Features::g_EspEnabled) {
                     profileStart = RuntimeProfiler::Begin();
@@ -1723,7 +1755,15 @@ namespace hooks
             }
 
             // Render menu (handles open/close fade animation).
+            //
+            // The stack depth is taken first so a swallowed fault can be
+            // unwound back to it. A fault inside a page used to leave the menu
+            // window open and style values pushed for the rest of the frame,
+            // which quietly moved everything drawn after it — the on-screen
+            // panels included — inside the menu.
             profileStart = RuntimeProfiler::Begin();
+            const Menu::UiStackDepth menuStack =
+                Menu::CaptureUiStackDepth();
             __try {
                 if (logFrame) HLog("hkPresent: Menu::Render BEGIN");
                 PRESENT_STAGE("Menu");
@@ -1731,6 +1771,7 @@ namespace hooks
                 if (logFrame) HLog("hkPresent: Menu::Render DONE");
             } __except (SafeFilter(GetExceptionInformation(), "hkPresent:Menu")) {
                 HLog("hkPresent: Menu FAULTED");
+                Menu::UnwindUiStack(menuStack);
             }
             RuntimeProfiler::End(
                 RuntimeProfiler::Scope::Menu,

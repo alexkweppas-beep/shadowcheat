@@ -114,6 +114,14 @@ namespace Menu
             SearchAvailability::Always
         },
         {
+            "combat_damager", "Damager", "Дамагер", "Дамагер",
+            "Aim / Damager", "Аим / Дамагер", "Аім / Дамагер",
+            "damager damage fist punch melee kill fov",
+            SearchRouteKind::Combat, MainPage::Combat,
+            4,
+            SearchAvailability::Always
+        },
+        {
             "visuals", "Visuals", "Визуалы", "Візуали",
             "Visuals", "Визуалы", "Візуали",
             "esp overlay preview",
@@ -723,7 +731,7 @@ namespace Menu
         switch (destination.route)
         {
         case SearchRouteKind::Combat:
-            s_AimMode = ImClamp(destination.value, 0, 3);
+            s_AimMode = ImClamp(destination.value, 0, 4);
             break;
         case SearchRouteKind::VisualCategory:
             s_VisualCategoryTab = ImClamp(

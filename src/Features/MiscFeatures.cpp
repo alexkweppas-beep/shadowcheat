@@ -1,11 +1,13 @@
 #include "MiscFeatures.h"
 
 #include "NativeInvoke.hpp"
+#include "AutoLoot.h"
 #include "FiveRpAdminScan.h"
 #include "QuantTools.h"
 #include "RagePlayerNames.h"
 #include "RageV8Runtime.h"
 #include "RageWorldEntities.h"
+#include "ServerProfile.h"
 #include "VehicleMovement.h"
 #include "../Menu/Menu.h"
 #include "../SDK/Game.h"
@@ -630,6 +632,19 @@ namespace
         }
     }
 
+    void WriteLocalArmor(float value) noexcept
+    {
+        CPed* ped = Game::GetLocalPed();
+        if (!ped)
+            return;
+        __try {
+            *reinterpret_cast<float*>(
+                reinterpret_cast<uint8_t*>(ped) + Offsets::Ped::Armor) =
+                value;
+        } __except (EXCEPTION_EXECUTE_HANDLER) {
+        }
+    }
+
     void ApplyFixedStats() noexcept
     {
         CPed* ped = Game::GetLocalPed();
@@ -641,8 +656,12 @@ namespace
             if (g_Settings.fixedHp && !holdHealth) {
                 float* hp = reinterpret_cast<float*>(
                     base + Offsets::Ped::Health);
-                // GTA stores health as 100 + value (dead at 100).
-                *hp = 100.f + g_Settings.fixedHpValue;
+                // A roleplay server maps its own bar onto the game's 100..200,
+                // so the floor it counts from is a hundred; elsewhere the value
+                // is the health itself.
+                *hp = static_cast<float>(
+                        ServerProfile::DownThreshold()) +
+                    g_Settings.fixedHpValue;
             }
             if (g_Settings.fixedAp) {
                 float* ap = reinterpret_cast<float*>(
@@ -1295,13 +1314,18 @@ pointing at a script camera that no longer exists. None of it can be undone from
 the dead context, and the fresh state object here starts with _on false, so the
 teardown branch below never fires and never cleans it up.
 The camera one is what made this look like the game refusing to reconnect: the
-frame keeps being rendered from a camera that is gone. */
-if(!g.__bfMv){
+frame keeps being rendered from a camera that is gone.
+Run unconditionally, not only for a fresh context. It used to be skipped when a
+previous state object was found, which is exactly the re-injection case it
+describes: the surviving object carried freecam or noclip still on, the old
+handler kept asserting them, and the new payload never turned them off because
+its own flags start clear and nothing asks it to. */
 try{mp.game.cam.renderScriptCams(false,false,0,true,false,0);}catch(e){}
 try{var lp0=mp.players&&mp.players.local;
 if(lp0){
 try{lp0.freezePosition(false);}catch(e){}
 try{lp0.setCollision(true,true);}catch(e){}
+try{lp0.setVelocity(0,0,0);}catch(e){}
 try{var v0=lp0.vehicle;
 if(v0){v0.freezePosition(false);v0.setCollision(true,true);}}catch(e){}
 }}catch(e){}
@@ -1310,8 +1334,21 @@ if(mp.game.controls&&typeof mp.game.controls.enableAllControlActions==='function
 mp.game.controls.enableAllControlActions(0);
 else mp.game.invoke('0xA5FFE9B05F199DE7',0);
 }catch(e){}
-}
+/* The camera object the old session created is destroyed with it, so the state
+it hangs off is cleared here as well. */
+try{if(g.__bfMv&&g.__bfMv._cam){
+try{g.__bfMv._cam.setActive(false);}catch(e){}
+try{g.__bfMv._cam.destroy(true);}catch(e){try{g.__bfMv._cam.destroy();}catch(e2){}}
+}}catch(e){}
 g.__bfMv=g.__bfMv||{freecam:false,noclip:false,paused:false,fcSpeed:1.5,ncSpeed:1.5};
+/* Modes are never inherited: the payload that turned them on is gone, and this
+one is asked to start with everything off. */
+g.__bfMv.freecam=false;
+g.__bfMv.noclip=false;
+g.__bfMv._on=false;
+g.__bfMv._cam=null;
+g.__bfMv._rsc=false;
+g.__bfMv._nv=0;
 /* Re-registering used to be blocked by a one-shot guard flag. The V8 context
 outlives a payload unload, so the handler from the previous injection stayed
 registered and a rebuilt hook could never replace it. Keeping the function
@@ -1440,10 +1477,12 @@ if(g.__bfKd(0x44,35))np=new mp.Vector3(np.x+nrx*nspd,np.y+nry*nspd,np.z);
 if(g.__bfKd(0x20,22))np=new mp.Vector3(np.x,np.y,np.z+nspd);
 if(g.__bfKd(0x11,36))np=new mp.Vector3(np.x,np.y,np.z-nspd);
 /* Noclip moves the player every frame, so the window is renewed on a timer
-instead of per move: the call is the server's own "a jump is coming" API and
-spamming it every frame would itself stand out. */
+instead of per move: the announcement is the server's own "a jump is coming"
+API and spamming it every frame would itself stand out. Which call that is
+depends on the server, so it lives in a helper published from C++ and this hook
+holds no server's event name. */
 try{var nw=Date.now();if(!s._acAt||nw-s._acAt>2000){s._acAt=nw;
-mp.events.call('c:ac:check',3000);}}catch(e){}
+if(typeof g.__bfAcPoke==='function')g.__bfAcPoke(3000);}}catch(e){}
 try{ne.setCoordsNoOffset(np.x,np.y,np.z,false,false,false);}catch(e){}
 };
 mp.events.add('render',g.__bfMvFn);
@@ -1682,6 +1721,14 @@ g.__bfCw=g.__bfCw||{on:false,paused:false,key:2};
 so a one-shot guard flag left the previous injection's handler in place and no
 rebuilt hook could ever replace it. */
 if(g.__bfCwFn){try{mp.events.remove('render',g.__bfCwFn);}catch(e){}}
+/* A walk in progress belongs to the session that started it. This object
+outlives the payload, and the stepped warp reads its target on the first tick
+it runs, so a leftover destination teleported the player the moment the hook
+came back up. */
+g.__bfCw._tx=undefined;
+g.__bfCw._ty=undefined;
+g.__bfCw._tz=undefined;
+g.__bfCw._tAt=0;
 function fin(v){
 return !!v&&isFinite(v.x)&&isFinite(v.y)&&isFinite(v.z)&&
 (v.x!==0||v.y!==0||v.z!==0);
@@ -1770,7 +1817,7 @@ seat was taken". */
 function put(h,i){
 var p=mp.players&&mp.players.local;
 if(!p){g.__bfCw.dbgPut='no local';return null;}
-try{mp.events.call('c:ac:check',3000);}catch(e){}
+try{if(typeof g.__bfAcPoke==='function')g.__bfAcPoke(3000);}catch(e){}
 var why='';
 try{
 if(typeof p.putIntoVehicle==='function'){p.putIntoVehicle(h,i);return 'put';}
@@ -1811,19 +1858,66 @@ if(how2){g.__bfCw.dbgGo='seat? '+unknown[u]+' via '+how2;return true;}
 g.__bfCw.dbgGo='no seat';
 return false;
 }
-function warp(x,y,z){
-var p=mp.players&&mp.players.local;if(!p)return;
-var ent=p;
+function moved(ent){
+/* Announced through the helper C++ publishes, so this hook carries no single
+server's event name: the spawn scripts of every server we know announce a jump
+before they make one, and their checks expect it inside that window. */
+try{if(typeof g.__bfAcPoke==='function')g.__bfAcPoke(3000);}catch(e){}
+return ent;
+}
+function jump(ent,x,y,z){
+try{moved(ent).setCoordsNoOffset(x,y,z,false,false,false);}catch(e){}
+}
+function warpEnt(){
+var p=mp.players&&mp.players.local;if(!p)return null;
 try{
 if(p.vehicle&&p.vehicle.handle){
-if(mp.game.vehicle.getPedInVehicleSeat(p.vehicle.handle,-1)===p.handle)ent=p.vehicle;
+if(mp.game.vehicle.getPedInVehicleSeat(p.vehicle.handle,-1)===p.handle)
+return p.vehicle;
 }
 }catch(e){}
-/* The server's own spawn and yacht scripts announce a coming position jump
-with this call before they move the player, and its checks expect the jump
-inside that window. A warp that skips it looks exactly like what they hunt. */
-try{mp.events.call('c:ac:check',3000);}catch(e){}
-try{ent.setCoordsNoOffset(x,y,z,false,false,false);}catch(e){}
+return p;
+}
+function warp(x,y,z){
+var ent=warpEnt();if(!ent)return;
+var s=g.__bfCw;
+var step=Number(g.__bfAcStep)||0;
+var here=null;try{here=ent.position;}catch(e){here=null;}
+/* Walked in steps when the server puts a ceiling on one jump: the check on the
+other side trips on a long hop made too soon after the last legitimate one, so
+a distant click travels as several short ones instead of a single teleport. The
+remaining leg is parked on the state and advanced by the render pass. */
+if(step>0&&here){
+var dx=x-here.x,dy=y-here.y;
+if(Math.sqrt(dx*dx+dy*dy)>step){
+s._tx=x;s._ty=y;s._tz=z;s._tAt=0;
+return;
+}
+}
+s._tx=undefined;
+jump(ent,x,y,z);
+}
+/* One leg per pass, paced so each announcement covers the hop it precedes. */
+function warpStep(t){
+var s=g.__bfCw;
+if(s._tx===undefined)return;
+if(s._tAt&&t-s._tAt<250)return;
+var ent=warpEnt();
+if(!ent){s._tx=undefined;return;}
+var here=null;try{here=ent.position;}catch(e){here=null;}
+if(!here){s._tx=undefined;return;}
+var step=Number(g.__bfAcStep)||0;
+var dx=s._tx-here.x,dy=s._ty-here.y,dz=s._tz-here.z;
+var flat=Math.sqrt(dx*dx+dy*dy);
+s._tAt=t;
+if(step<=0||flat<=step){
+var tz=s._tz;var tx=s._tx;var ty=s._ty;
+s._tx=undefined;
+jump(ent,tx,ty,tz);
+return;
+}
+var k=step/flat;
+jump(ent,here.x+dx*k,here.y+dy*k,here.z+dz*k);
 }
 /* Called by C++ on the click, with the ray of the frame the click happened on.
 The probe is redone here and now rather than reusing the last one: that one is a
@@ -1874,6 +1968,9 @@ s.dbgGo='no hit';
 g.__bfCwFn=function(){
 var s=g.__bfCw;if(!s||!s.on){s&&(s._was=false);return;}
 var t=Date.now();
+/* Ahead of the probe: a walk in progress has to keep moving even on the frames
+where the ray finds nothing. */
+try{warpStep(t);}catch(e){}
 var cam=ray(s);
 var hit=null;
 if(cam){
@@ -1925,6 +2022,84 @@ mp.events.add('render',g.__bfCwFn);
 
     // Defined further down, past the script plumbing this needs.
     bool EnqueuePlayerScript(const char* script) noexcept;
+
+    // Everything the previous payload left running in the game's script
+    // context, taken down once before this one installs anything.
+    //
+    // The context outlives a DLL unload: our render handlers stay registered
+    // and keep asserting whatever they were last told, while the new payload
+    // starts with every flag clear and therefore never asks for any of it to
+    // stop. The visible result was a character that teleported or froze a
+    // second after injection, from a request the previous session had made.
+    //
+    // Runs before the hooks rather than inside them, because the movement and
+    // click-warp hooks are only installed when a feature is switched on, and
+    // the leftovers have to go even if the user never touches those.
+    void EnsureSessionReset() noexcept
+    {
+        static std::uint64_t s_ResetGeneration = 0;
+        static bool s_ResetDone = false;
+
+        const auto status = RageV8Runtime::GetStatus();
+        if (status.state != RageV8Runtime::State::Ready ||
+            !status.rootCaptured)
+            return;
+        if (status.generation != s_ResetGeneration)
+        {
+            s_ResetGeneration = status.generation;
+            s_ResetDone = false;
+        }
+        if (s_ResetDone)
+            return;
+
+        static constexpr char kReset[] = R"JS((function(){try{
+var g=typeof globalThis!=='undefined'?globalThis:this;
+/* Handlers first, so nothing can act on the state while it is being cleared. */
+try{if(g.__bfMvFn){mp.events.remove('render',g.__bfMvFn);g.__bfMvFn=null;}}catch(e){}
+try{if(g.__bfCwFn){mp.events.remove('render',g.__bfCwFn);g.__bfCwFn=null;}}catch(e){}
+try{if(g.__bfPlFn){mp.events.remove('render',g.__bfPlFn);g.__bfPlFn=null;}}catch(e){}
+try{if(g.__bfWtFn){mp.events.remove('render',g.__bfWtFn);g.__bfWtFn=null;}}catch(e){}
+/* The respawn wrappers shadow the server's own coordinate writers, so they are
+released before anything else touches the player. */
+try{if(g.__bfRsFreeze)g.__bfRsFreeze(false);}catch(e){}
+g.__bfRs=null;
+/* A camera created by the old session is gone with it, and the frame is still
+being rendered from it until the switch goes back to the gameplay camera. */
+try{mp.game.cam.renderScriptCams(false,false,0,true,false,0);}catch(e){}
+try{if(g.__bfMv&&g.__bfMv._cam){
+try{g.__bfMv._cam.setActive(false);}catch(e){}
+try{g.__bfMv._cam.destroy(true);}catch(e){try{g.__bfMv._cam.destroy();}catch(e2){}}
+}}catch(e){}
+try{
+var lp=mp.players&&mp.players.local;
+if(lp){
+try{lp.freezePosition(false);}catch(e){}
+try{lp.setCollision(true,true);}catch(e){}
+try{lp.setVelocity(0,0,0);}catch(e){}
+var v=null;try{v=lp.vehicle;}catch(e){}
+if(v){
+try{v.freezePosition(false);}catch(e){}
+try{v.setCollision(true,true);}catch(e){}
+}
+}
+}catch(e){}
+try{
+if(mp.game.controls&&typeof mp.game.controls.enableAllControlActions==='function')
+mp.game.controls.enableAllControlActions(0);
+else mp.game.invoke('0xA5FFE9B05F199DE7',0);
+}catch(e){}
+/* State objects are emptied rather than deleted: the hooks below adopt them by
+name, and an object that exists but says nothing is what they expect. */
+g.__bfMv={freecam:false,noclip:false,paused:false,fcSpeed:1.5,ncSpeed:1.5};
+g.__bfCw={on:false,paused:false,key:2};
+if(g.__bfPl){g.__bfPl._tp=null;g.__bfPl.tpSeq=0;}
+g.__bfTp=null;
+g.__bfVeh=null;
+}catch(e){}})();)JS";
+
+        if (EnqueuePlayerScript(kReset))
+            s_ResetDone = true;
+    }
 
     // Ray against a vehicle's own box: the snapshot carries heading and half
     // extents, so the test is done in the vehicle's frame where the box is
@@ -1998,6 +2173,11 @@ mp.events.add('render',g.__bfCwFn);
     // render event, which a keypress is not.
     void OpenAimedTrunkInventory() noexcept
     {
+        // The inventory itself is this server's own window, opened over its own
+        // RPC bridge. There is nothing generic to fall back on, so elsewhere the
+        // request is dropped instead of shouting an unknown event at the server.
+        if (!ServerProfile::HasTrunkInventory())
+            return;
         Vector3 origin{};
         Vector3 look{};
         if (!ReadViewportLook(origin, look))
@@ -2100,6 +2280,22 @@ if(g.__bfPlFn){try{mp.events.remove('render',g.__bfPlFn);}catch(e){}}
 wrappers would then be left on the player with nothing to take them off. */
 if(g.__bfRsFreeze){try{g.__bfRsFreeze(false);}catch(e){}}
 g.__bfRs=null;
+/* The waypoint teleport goes with it. This object outlives the payload, and
+the counter it is compared against restarts at zero on every injection, so a
+carried-over sequence read as a fresh request and the handler teleported the
+player on its own a few frames after loading. A half-finished teleport is worse
+still: it would keep the entity frozen in the sky and, on timeout, drop it at a
+position remembered by the previous session. */
+if(g.__bfPl&&g.__bfPl._tp){
+try{
+var oldTp=g.__bfPl._tp;
+var lp=mp.players&&mp.players.local;
+var oe=(lp&&lp.vehicle&&lp.vehicle.handle)?lp.vehicle:lp;
+if(oldTp.up&&oe&&typeof oe.freezePosition==='function')
+oe.freezePosition(false);
+}catch(e){}
+}
+g.__bfPl._tp=null;
 /* Left null until the first render tick, so C++ can tell "the hook is up and
 you are on foot" from "the hook never ran" and keep its own fallback. */
 g.__bfVeh=null;
@@ -2135,6 +2331,22 @@ try{if(typeof g.antiAFK_sendAction==='function'){g.antiAFK_sendAction();return t
 try{
 var api=g.__butterflyFiveRpApi||g.api;
 if(api&&typeof api.antiAFK_sendAction==='function'){api.antiAFK_sendAction();return true;}
+}catch(e){}
+/* No such function to call on a server whose client we do not know, so the
+activity is produced in the game instead: a fraction of a degree of heading is
+a real state change that syncs, which is what an idle check watches, and it is
+small enough not to be felt. */
+try{
+var lp=mp.players&&mp.players.local;
+if(lp){
+var hd=null;
+try{hd=lp.getHeading();}catch(e){}
+if(typeof hd!=='number')try{hd=lp.heading;}catch(e){}
+if(typeof hd==='number'){
+try{lp.setHeading(hd+((g.__bfAfkFlip=!g.__bfAfkFlip)?0.4:-0.4));return true;}
+catch(e){}
+}
+}
 }catch(e){}
 return false;
 };
@@ -2246,13 +2458,17 @@ var dd=false;
 try{dd=!!g.isPlayerDeath;}catch(e){}
 if(!dd){try{
 var rhp=mp.game.entity.getEntityHealth(h);
-if(typeof rhp==='number'&&rhp>0&&rhp<=100)dd=true;
+var floorHp=Number(s.down);if(!isFinite(floorHp))floorHp=100;
+if(typeof rhp==='number'&&rhp>0&&rhp<=floorHp)dd=true;
 }catch(e){}}
 if(dd&&!rs.seen)rs.seen=nowRs;
 /* Only once the death has registered, which is what the death screen showing
 up means. Repeated rather than timed: the server refuses while its bleed-out
 counter runs and it does not tell us how long that is. */
-if(rs.seen&&!rs.up&&nowRs-rs.sent>1500){rs.sent=nowRs;
+/* Finishing the death off is this server's own call, so it is only sent where
+that call exists. Elsewhere the wait ends when the server's own flow does, and
+holding the spot is all we do. */
+if(s.rpcDeath&&rs.seen&&!rs.up&&nowRs-rs.sent>1500){rs.sent=nowRs;
 try{
 if(mp.events&&typeof mp.events.callRemote==='function'){
 var rid='bf'+Math.random().toString(36).slice(2,10);
@@ -2402,7 +2618,10 @@ try{if(typeof g.antiAFK_sendAFK==='function')g.antiAFK_sendAFK=function(){};}cat
 /* ---- waypoint teleport: multi-frame, on the script thread ---- */
 var tp=s._tp;
 if(!tp)tp=s._tp={seq:0,phase:0,x:0,y:0,at:0};
-if((s.tpSeq|0)!==tp.seq){
+/* Zero means nobody asked. C++ restarts its counter at zero on every
+injection, so a bare inequality test read "0 is not the sequence I remember"
+as a fresh request and teleported the player unprompted. */
+if((s.tpSeq|0)>0&&(s.tpSeq|0)!==tp.seq){
 tp.seq=s.tpSeq|0;tp.phase=0;
 var wx=0,wy=0,got=false;
 /* Sprite 8 is the stock map waypoint and is tried first, but a server that
@@ -2443,8 +2662,9 @@ try{var op=ent.position;
 if(op&&isFinite(op.x)){tp.ox=op.x;tp.oy=op.y;tp.oz=op.z;tp.hasOrigin=true;}
 }catch(e){}
 /* The server's own scripts announce a coming position jump before they move
-the player; a warp that skips this looks like what they hunt. */
-try{mp.events.call('c:ac:check',9000);}catch(e){}
+the player; a warp that skips this looks like what they hunt. Which call that
+is depends on the server, so it comes from the published helper. */
+try{if(typeof g.__bfAcPoke==='function')g.__bfAcPoke(9000);}catch(e){}
 try{ent.setCoordsNoOffset(tp.x,tp.y,700,false,false,false);}catch(e){}
 try{if(typeof ent.freezePosition==='function')ent.freezePosition(true);}catch(e){}
 try{ent.setVelocity(0,0,0);}catch(e){}
@@ -2474,7 +2694,7 @@ if(typeof r==='number'&&isFinite(r)&&r>-200&&r<1000)gz=r;}catch(e){}
 }
 if(gz!==null&&gz>-200&&gz<1000){
 try{if(typeof ent.freezePosition==='function')ent.freezePosition(false);}catch(e){}
-try{mp.events.call('c:ac:check',3000);}catch(e){}
+try{if(typeof g.__bfAcPoke==='function')g.__bfAcPoke(3000);}catch(e){}
 try{ent.setCoordsNoOffset(tp.x,tp.y,gz+1,false,false,false);}catch(e){}
 try{ent.setVelocity(0,0,0);}catch(e){}
 tp.phase=0;tp.up=false;
@@ -2755,7 +2975,7 @@ mp.events.add('render',g.__bfPlFn);
             "g.__bfPl=g.__bfPl||{};var s=g.__bfPl;"
             "s.speed=%s;s.speedMul=%.2f;s.jump=%s;s.stamina=%s;"
             "s.infAmmo=%s;s.infClip=%s;s.noReload=%s;"
-            "s.afk=%s;s.afkMs=%llu;s.tpSeq=%d;"
+            "s.afk=%s;s.afkMs=%llu;s.tpSeq=%d;s.down=%d;s.rpcDeath=%s;"
             "s.ncPed=%s;s.ncVeh=%s;s.ncObj=%s;"
             "s.vSeatbelt=%s;s.vSkipAnim=%s;s.vSpeed=%s;s.vSpeedMul=%.2f;"
             "s.vGrav=%s;s.vGravMul=%.2f;"
@@ -2770,6 +2990,8 @@ mp.events.add('render',g.__bfPlFn);
             g_Settings.antiAfk ? "true" : "false",
             g_AntiAfkNextPokeAt,
             g_TpSeq,
+            ServerProfile::DownThreshold(),
+            ServerProfile::IsFiveRp() ? "true" : "false",
             g_Settings.disablePlayerCollision ? "true" : "false",
             g_Settings.disableCarCollision ? "true" : "false",
             g_Settings.disableObjectCollision ? "true" : "false",
@@ -3280,6 +3502,123 @@ mp.events.add('render',g.__bfPlFn);
             draw->AddCircleFilled(point, 2.f, kNode, 8);
     }
 
+    // The auto loot reach, as a ring on the ground around the player.
+    //
+    // Projected point by point rather than drawn as a screen circle, so it sits
+    // on the street and keeps its size in metres: a radius in a slider says
+    // nothing until it is seen next to the road it covers. The ring is dashed
+    // beyond the distance the server will actually honour, which is the part of
+    // the setting a number alone cannot show.
+    void RenderAutoLootRadius() noexcept
+    {
+        const AutoLoot::Settings& loot = AutoLoot::Access();
+        if (!loot.enabled || !loot.showRadius)
+            return;
+
+        CPed* ped = Game::GetLocalPed();
+        if (!ped)
+            return;
+        Vector3 centre{};
+        __try {
+            centre = ped->GetPosition();
+        } __except (EXCEPTION_EXECUTE_HANDLER) {
+            return;
+        }
+        if (!std::isfinite(centre.x) ||
+            !std::isfinite(centre.y) ||
+            !std::isfinite(centre.z))
+            return;
+
+        ImDrawList* draw = Overlay::GetDrawList();
+        if (!draw)
+            return;
+
+        float radius = loot.radius;
+        if (radius < AutoLoot::kMinRadius)
+            radius = AutoLoot::kMinRadius;
+        if (radius > AutoLoot::kMaxRadius)
+            radius = AutoLoot::kMaxRadius;
+        // A hair below the feet: exactly at them the ring disappears into the
+        // road on a slope.
+        const float ringZ = centre.z - 0.85f;
+
+        constexpr int kSegments = 72;
+        ImVec2 points[kSegments]{};
+        bool valid[kSegments]{};
+        for (int index = 0; index < kSegments; ++index)
+        {
+            const float angle =
+                6.28318530718f *
+                (static_cast<float>(index) /
+                 static_cast<float>(kSegments));
+            const Vector3 world{
+                centre.x + std::cos(angle) * radius,
+                centre.y + std::sin(angle) * radius,
+                ringZ};
+            const auto screen = Game::WorldToScreen(world);
+            if (!screen)
+                continue;
+            points[index] = ImVec2(screen->x, screen->y);
+            valid[index] = true;
+        }
+
+        const bool pastServer = radius > AutoLoot::kServerLimit;
+        const ImU32 inRange = IM_COL32(120, 225, 160, 200);
+        const ImU32 outOfRange = IM_COL32(235, 175, 90, 190);
+        for (int index = 0; index < kSegments; ++index)
+        {
+            const int next = (index + 1) % kSegments;
+            if (!valid[index] || !valid[next])
+                continue;
+            // Dashed once past what the server honours, so the two halves of
+            // the setting are told apart at a glance.
+            if (pastServer && (index & 1))
+                continue;
+            draw->AddLine(
+                points[index],
+                points[next],
+                pastServer ? outOfRange : inRange,
+                1.6f);
+        }
+
+        // The honoured part drawn inside it, so the gap between what is asked
+        // for and what is granted is the picture rather than a warning line.
+        if (pastServer)
+        {
+            ImVec2 limit[kSegments]{};
+            bool limitValid[kSegments]{};
+            for (int index = 0; index < kSegments; ++index)
+            {
+                const float angle =
+                    6.28318530718f *
+                    (static_cast<float>(index) /
+                     static_cast<float>(kSegments));
+                const Vector3 world{
+                    centre.x +
+                        std::cos(angle) * AutoLoot::kServerLimit,
+                    centre.y +
+                        std::sin(angle) * AutoLoot::kServerLimit,
+                    ringZ};
+                const auto screen = Game::WorldToScreen(world);
+                if (!screen)
+                    continue;
+                limit[index] = ImVec2(screen->x, screen->y);
+                limitValid[index] = true;
+            }
+            for (int index = 0; index < kSegments; ++index)
+            {
+                const int next = (index + 1) % kSegments;
+                if (!limitValid[index] || !limitValid[next])
+                    continue;
+                draw->AddLine(
+                    limit[index],
+                    limit[next],
+                    inRange,
+                    1.6f);
+            }
+        }
+    }
+
     // Drawn by the overlay rather than by a world marker native. Reprojecting
     // one world position every frame is what makes it steady: the script-side
     // marker was redrawn from a fresh probe each frame and blinked whenever one
@@ -3510,7 +3849,9 @@ mp.events.add('render',g.__bfPlFn);
             }
         }
 
-        if (g_Settings.greenzoneBypass)
+        // Their own zone list and data store: nothing to bypass on a server
+        // that has neither, and the reads would just throw every two seconds.
+        if (g_Settings.greenzoneBypass && ServerProfile::HasGreenzone())
         {
             const ULONGLONG now = GetTickCount64();
             if (g_LastGreenzoneTick == 0 ||
@@ -4481,13 +4822,39 @@ try{mp.game.invoke('0x0AE73D8DF3A762B2',false);}catch(e){}
             WriteLocalHealth(0.f);
         }
         // Reset animations is V8 clearTasksImmediately in ApplyPlayerNatives.
+        //
+        // Queue() only reaches Quant, so on every other server both buttons
+        // used to do nothing at all. The script path is tried first and the
+        // memory write behind it is what makes the outcome certain.
         if (g_PendingHeal) {
             g_PendingHeal = false;
-            Queue("misc_heal");
+            static constexpr char kHealJs[] =
+                "try{"
+                "var p=mp.players&&mp.players.local;"
+                "if(p){"
+                "try{p.setHealth(200);}catch(e){"
+                "try{mp.game.entity.setEntityHealth(p.handle,200);}catch(e2){}"
+                "}"
+                "}"
+                "}catch(e){}";
+            if (!EnqueuePlayerScript(kHealJs))
+                Queue("misc_heal");
+            WriteLocalHealth(200.f);
         }
         if (g_PendingArmor) {
             g_PendingArmor = false;
-            Queue("misc_armor");
+            static constexpr char kArmorJs[] =
+                "try{"
+                "var p=mp.players&&mp.players.local;"
+                "if(p){"
+                "try{p.setArmour(100);}catch(e){"
+                "try{mp.game.ped.setPedArmour(p.handle,100);}catch(e2){}"
+                "}"
+                "}"
+                "}catch(e){}";
+            if (!EnqueuePlayerScript(kArmorJs))
+                Queue("misc_armor");
+            WriteLocalArmor(100.f);
         }
         if (g_PendingRespawn) {
             g_PendingRespawn = false;
@@ -4512,7 +4879,7 @@ try{mp.game.invoke('0x0AE73D8DF3A762B2',false);}catch(e){}
                 // sequence starts at the finishing step.
                 "var dn=false;try{dn=!!g.isPlayerDeath;}catch(e){}"
                 "if(!dn){try{var hp0=mp.game.entity.getEntityHealth(p.handle);"
-                "if(typeof hp0==='number'&&hp0>0&&hp0<=100)dn=true;}catch(e){}}"
+                "if(typeof hp0==='number'&&hp0>0&&hp0<=%d)dn=true;}catch(e){}}"
                 // Generous, because the wait is the server's bleed-out timer
                 // and that is minutes, not seconds. A short window shut before
                 // the respawn even happened, leaving nothing holding the spot
@@ -4528,6 +4895,7 @@ try{mp.game.invoke('0x0AE73D8DF3A762B2',false);}catch(e){}
                 "}}"
                 "}}"
                 "}catch(e){}",
+                ServerProfile::DownThreshold(),
                 g_Settings.respawnInPlace ? "true" : "false");
             if (!EnqueuePlayerScript(respawn))
                 Queue("misc_respawn");
@@ -4735,6 +5103,9 @@ void Shutdown() noexcept
 
 void Update() noexcept
 {
+    // Ahead of every hook: the previous payload's handlers are still live in
+    // the script context until this takes them down.
+    EnsureSessionReset();
     HandleKeyToggles();
     ApplyNoclip();
     ApplyFreecam();
@@ -4840,6 +5211,7 @@ bool RequestAttackBurst(int milliseconds) noexcept
 void RenderPlayersOverlay() noexcept
 {
     RenderClickWarpMarker();
+    RenderAutoLootRadius();
     if (!g_Settings.showPlayers && !g_Settings.showAdmins &&
         !g_Settings.showAdminList)
         return;

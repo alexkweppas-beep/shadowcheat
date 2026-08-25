@@ -1,4 +1,5 @@
 #include "Aimbot.h"
+#include "Damager.h"
 #include "Friends.h"
 #include "MiscFeatures.h"
 #include "NativeInvoke.hpp"
@@ -75,6 +76,9 @@ struct TargetCandidate final
     Vector2 screen{};
     float crosshairDistanceSq{1e18f};
     std::uint32_t rageHandle{};
+    // Carried alongside the entity handle because the damage path talks to the
+    // script runtime, where a player is addressed by remote id.
+    int remoteId{-1};
     int hitbox{-1};
     bool visible{};
     bool valid{};
@@ -525,6 +529,7 @@ bool EvaluateHitboxCandidate(
     output.screen = entry.projectedBones[anchor];
     output.crosshairDistanceSq = bestRatio * bestRatio;
     output.rageHandle = entry.visual.rageHandle;
+    output.remoteId = static_cast<int>(entry.visual.remoteId);
     output.hitbox = bestHitbox;
     output.visible = HitboxVisible(entry, anchor);
     output.valid = true;
@@ -577,6 +582,8 @@ bool EvaluateCandidate(
     output.crosshairDistanceSq = distanceSq;
     output.rageHandle =
         entry.visual.rageHandle;
+    output.remoteId =
+        static_cast<int>(entry.visual.remoteId);
     output.hitbox = static_cast<int>(hitbox);
     output.visible = HitboxVisible(entry, bone);
     output.valid = true;
@@ -1302,9 +1309,15 @@ void RunAimbot()
 
     if (!g_AimbotEnabled)
         return;
+    // The damager reads the same frame the aim modes do, so it has to keep the
+    // pass alive on its own even when none of them is on.
+    const bool damagerArmed = Damager::Armed();
+    if (!damagerArmed)
+        Damager::PublishTarget({});
     if (!profile.silentEnabled &&
         !profile.vecEnabled &&
-        !profile.triggerEnabled)
+        !profile.triggerEnabled &&
+        !damagerArmed)
         return;
 
     const Game::FramePedContext& frame =
@@ -1649,6 +1662,90 @@ void RunAimbot()
         s_TriggerHitbox = -1;
         s_TriggerAcquiredAt = 0;
         s_TriggerLastTickAt = 0;
+    }
+
+    if (damagerArmed)
+    {
+        const Damager::Settings& damager = Damager::Access();
+        ModeSettings damagerSettings{};
+        damagerSettings.enabled = true;
+        // Nearest to the crosshair, never sticky: the damage is dealt to
+        // whoever is under the reticle right now, and holding a ped that has
+        // walked out of the cone would keep killing it off screen.
+        damagerSettings.nearest = true;
+        damagerSettings.visibleCheck = damager.visibleCheck;
+        damagerSettings.ignoreDead = profile.ignoreDead;
+        damagerSettings.ignoreNpc = profile.ignoreNpc;
+        damagerSettings.ignoreAdmins = profile.ignoreAdmins;
+        damagerSettings.ignoreFriends =
+            profile.ignoreFriends || Menu::s_Aim_IgnoreFriends;
+        damagerSettings.adminThreshold = Menu::s_AdminLevelThreshold;
+        damagerSettings.lockOnLast = false;
+        damagerSettings.fovPixels = damager.fov;
+        for (int index = 0;
+             index < Menu::kAimHitboxCount &&
+                 index < Damager::kBoneCount;
+             ++index)
+            damagerSettings.bones[index] = damager.bones[index];
+
+        TargetCandidate damagerTarget{};
+        SelectTarget(
+            damagerSettings,
+            frame,
+            center,
+            nullptr,
+            damagerTarget);
+
+        Damager::Target published{};
+        if (damagerTarget.valid && frame.localPositionValid)
+        {
+            const float dx =
+                damagerTarget.world.x - frame.localPosition.x;
+            const float dy =
+                damagerTarget.world.y - frame.localPosition.y;
+            const float dz =
+                damagerTarget.world.z - frame.localPosition.z;
+            const float distance =
+                std::sqrt(dx * dx + dy * dy + dz * dz);
+            if (distance <= damager.maxDistance)
+            {
+                // The bullet starts half a metre in front of the bone, on our
+                // side of it, so the only thing the segment can cross is the
+                // victim: from further away a wall, a car door or their own
+                // vehicle would take the hit instead.
+                constexpr float kOriginLead = 0.5f;
+                float ox = damagerTarget.world.x;
+                float oy = damagerTarget.world.y;
+                float oz = damagerTarget.world.z + kOriginLead;
+                if (distance > 0.01f)
+                {
+                    ox -= dx / distance * kOriginLead;
+                    oy -= dy / distance * kOriginLead;
+                    oz = damagerTarget.world.z -
+                        dz / distance * kOriginLead;
+                }
+                // A remote id only means anything for a real player; on an NPC
+                // it would address somebody else entirely, so the health probe
+                // is left out rather than pointed at a stranger. The hits
+                // themselves are aimed by coordinate and do not need it.
+                const Game::FramePedEntry* entry =
+                    Game::FindFramePed(damagerTarget.ped);
+                const bool isPlayer =
+                    entry && entry->visual.isPlayer;
+                published.valid = true;
+                published.handle = damagerTarget.rageHandle;
+                published.remoteId =
+                    isPlayer ? damagerTarget.remoteId : -1;
+                published.aimX = damagerTarget.world.x;
+                published.aimY = damagerTarget.world.y;
+                published.aimZ = damagerTarget.world.z;
+                published.originX = ox;
+                published.originY = oy;
+                published.originZ = oz;
+                published.distance = distance;
+            }
+        }
+        Damager::PublishTarget(published);
     }
 
     if (profile.silentMark && g_SilentTarget.valid)

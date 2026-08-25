@@ -2,6 +2,7 @@
 
 #include "UkraineToolsScript.h"
 #include "RageV8Runtime.h"
+#include "ServerProfile.h"
 #include "../Menu/Menu.h"
 #include "../Menu/IconsFontAwesome6.h"
 #include "../Menu/Leyawin/custom_widgets.hpp"
@@ -29,7 +30,6 @@ namespace
         Load,
         Command,
         Status,
-        Detect,
         CefDump
     };
 
@@ -56,8 +56,6 @@ namespace
     bool g_Loaded = false;
     bool g_LoadRequested = false;
     ServerKind g_ServerKind = ServerKind::Unknown;
-    bool g_DetectRequested = false;
-    ULONGLONG g_LastDetectAttempt = 0;
     ULONGLONG g_LastLoadAttempt = 0;
     ULONGLONG g_LastStatusRequest = 0;
     std::uint64_t g_RuntimeGeneration = 0;
@@ -255,8 +253,6 @@ namespace
         g_Loaded = false;
         g_LoadRequested = false;
         g_ServerKind = ServerKind::Unknown;
-        g_DetectRequested = false;
-        g_LastDetectAttempt = 0;
         g_LastLoadAttempt = 0;
         g_LastStatusRequest = 0;
         lstrcpynA(g_StatusLine, "Idle", sizeof(g_StatusLine));
@@ -640,44 +636,36 @@ namespace
         }
     }
 
-    // Fingerprint Ukraine GTA: bizStealing global + domain in browsers.
-    constexpr const char* kDetectScript =
-        "return (function(){"
-        "try{"
-        "try{if(mp.bizStealing!=null)return 'UKRAINE';}catch(e){}"
-        "try{"
-        "if(typeof mp.browsers!=='undefined'&&mp.browsers.forEach){"
-        "var hit=false;"
-        "mp.browsers.forEach(function(b){"
-        "try{var u=String(b.url||'').toLowerCase();"
-        "if(u.indexOf('ukraine-gta5')!==-1||u.indexOf('ukrainegta')!==-1)hit=true;}"
-        "catch(e){}"
-        "});"
-        "if(hit)return 'UKRAINE';"
-        "}"
-        "}catch(e){}"
-        "try{"
-        "var h='';"
-        "try{h=String(mp.game.gxt.get('PM_PAUSE_HDR')||'');}catch(e){}"
-        "var s=h.toLowerCase();"
-        "if(s.indexOf('ukraine')!==-1)return 'UKRAINE';"
-        "}catch(e){}"
-        "return 'OTHER';"
-        "}catch(e){return 'OTHER';}"
-        "})();";
-
-    void QueueDetectServer() noexcept
+    // Server identity comes from ServerProfile, which fingerprints once for
+    // every module; this mirrors its answer into the flag used below.
+    void SyncServerKind() noexcept
     {
-        if (g_DetectRequested)
+        const ServerProfile::Kind kind = ServerProfile::Current();
+        const ServerKind next =
+            kind == ServerProfile::Kind::Ukraine
+                ? ServerKind::Ukraine
+                : (kind == ServerProfile::Kind::Unknown
+                       ? ServerKind::Unknown
+                       : ServerKind::Other);
+        if (g_ServerKind == next)
             return;
-        g_LastDetectAttempt = GetTickCount64();
-        if (!QueueScript(
-                kDetectScript,
-                RequestKind::Detect,
-                "Detect Ukraine GTA",
-                true))
-            return;
-        g_DetectRequested = true;
+        if (next == ServerKind::Ukraine)
+        {
+            hooks::HLog("[UkraineTools] server: Ukraine GTA");
+            // Their nametags and admin icons ride the shared data "redNick".
+            lstrcpynA(
+                Menu::s_AdminVariableKey,
+                "redNick",
+                sizeof(Menu::s_AdminVariableKey));
+        }
+        else if (next == ServerKind::Other)
+            hooks::HLog("[UkraineTools] server: other");
+        g_ServerKind = next;
+        if (next != ServerKind::Ukraine)
+        {
+            g_Loaded = false;
+            g_LoadRequested = false;
+        }
     }
 
     void QueueLoad() noexcept
@@ -2290,7 +2278,6 @@ namespace UkraineTools
         {
             g_Loaded = false;
             g_LoadRequested = false;
-            g_DetectRequested = false;
             g_PendingCount = 0;
             g_WasRuntimeReady = false;
             return;
@@ -2301,8 +2288,6 @@ namespace UkraineTools
             g_WasRuntimeReady = true;
             g_LastLoadAttempt = 0;
             g_LoadRequested = false;
-            g_LastDetectAttempt = 0;
-            g_DetectRequested = false;
             g_ServerKind = ServerKind::Unknown;
         }
 
@@ -2314,8 +2299,6 @@ namespace UkraineTools
         {
             if (now - g_Pending[index].timestamp >= 3500)
             {
-                if (g_Pending[index].kind == RequestKind::Detect)
-                    g_DetectRequested = false;
                 if (g_Pending[index].kind == RequestKind::Status ||
                     g_Pending[index].kind == RequestKind::Load)
                 {
@@ -2339,39 +2322,6 @@ namespace UkraineTools
             }
 
             const PendingRequest request = g_Pending[index];
-            if (request.kind == RequestKind::Detect)
-            {
-                g_DetectRequested = false;
-                const bool isUa =
-                    result.success &&
-                    result.text[0] &&
-                    strncmp(result.text, "UKRAINE", 7) == 0;
-                const ServerKind next =
-                    isUa ? ServerKind::Ukraine : ServerKind::Other;
-                if (g_ServerKind != next)
-                {
-                    hooks::HLog(
-                        isUa
-                            ? "[UkraineTools] server detected: Ukraine GTA"
-                            : "[UkraineTools] server detected: other");
-                }
-                g_ServerKind = next;
-                if (isUa)
-                {
-                    // Ukraine nametags / admin icons use shared data "redNick"
-                    lstrcpynA(
-                        Menu::s_AdminVariableKey,
-                        "redNick",
-                        sizeof(Menu::s_AdminVariableKey));
-                }
-                if (!isUa)
-                {
-                    g_Loaded = false;
-                    g_LoadRequested = false;
-                }
-                continue;
-            }
-
             if (request.kind == RequestKind::Load)
             {
                 g_LoadRequested = false;
@@ -2443,19 +2393,7 @@ namespace UkraineTools
         }
         g_PendingCount = write;
 
-        {
-            ULONGLONG detectInterval = 1000;
-            if (g_ServerKind == ServerKind::Ukraine)
-                detectInterval = 15000;
-            else if (g_ServerKind == ServerKind::Other)
-                detectInterval = 4000;
-            if (!g_DetectRequested &&
-                (g_LastDetectAttempt == 0 ||
-                 now - g_LastDetectAttempt >= detectInterval))
-            {
-                QueueDetectServer();
-            }
-        }
+        SyncServerKind();
 
         if (g_ServerKind == ServerKind::Ukraine &&
             !g_Loaded &&

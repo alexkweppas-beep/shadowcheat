@@ -37,6 +37,7 @@
 #include "../Features/Aimbot.h"
 #include "../Features/FiveRpMetadataResolver.h"
 #include "../Features/FiveRpAdminScan.h"
+#include "../Features/ServerProfile.h"
 #include "../Features/RageV8Runtime.h"
 #include "../Features/RuntimeProfiler.h"
 #include "../Features/ScriptBridge.h"
@@ -58,6 +59,10 @@
 
 namespace Menu
 {
+    // The server is identified on its own and nothing about it is asked of the
+    // user, so there is no card for it here. The pin is still readable from a
+    // config for a session that has to be forced onto another server's paths,
+    // it just has no controls of its own.
     void RenderAroundPage()
     {
         auto& s = MiscFeatures::GetSettings();

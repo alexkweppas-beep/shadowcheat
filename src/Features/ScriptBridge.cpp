@@ -974,7 +974,11 @@ namespace
             ImGuiWindowFlags_NoTitleBar |
             ImGuiWindowFlags_NoResize |
             ImGuiWindowFlags_NoMove |
-            ImGuiWindowFlags_NoSavedSettings;
+            ImGuiWindowFlags_NoSavedSettings |
+            // The editor already shrinks to fit, so a scrollbar can only ever
+            // be an artifact along the right edge.
+            ImGuiWindowFlags_NoScrollbar |
+            ImGuiWindowFlags_NoScrollWithMouse;
         if (!targetOpen)
             flags |= ImGuiWindowFlags_NoInputs;
 
@@ -1009,17 +1013,14 @@ namespace
                 gui->get_clr(clr->child_top_bar, 0.68f),
                 12.f * scale,
                 ImDrawFlags_RoundCornersTop);
+            // Icon and title share one baseline instead of two hand-picked
+            // offsets: each is centred on the middle of the header band and the
+            // title starts a fixed gap after the glyph, so the pair reads as
+            // one line whatever the font metrics happen to be.
             ImFont* iconFont =
                 set->icon ? set->icon : ImGui::GetFont();
-            draw->AddText(
-                iconFont,
-                14.f * scale,
-                windowPos + ImVec2(18.f, 20.f) * scale,
-                gui->get_clr(clr->accent_color),
-                ICON_FA_FILE_CODE);
-            draw->AddText(
-                windowPos + ImVec2(48.f, 18.f) * scale,
-                gui->get_clr(clr->text_active),
+            ImFont* titleFont = ImGui::GetFont();
+            const char* headerTitle =
                 isNew
                     ? Menu::Translate(
                         "New script",
@@ -1028,7 +1029,33 @@ namespace
                     : Menu::Translate(
                         "Edit script",
                         "Редактирование",
-                        "Редагування"));
+                        "Редагування");
+            const float iconSize = 15.f * scale;
+            const float titleSize = titleFont->FontSize;
+            const ImVec2 iconExtent = iconFont->CalcTextSizeA(
+                iconSize,
+                FLT_MAX,
+                0.f,
+                ICON_FA_FILE_CODE);
+            const float headerMid =
+                windowPos.y + headerH * 0.5f;
+            const float iconX = windowPos.x + 18.f * scale;
+            draw->AddText(
+                iconFont,
+                iconSize,
+                ImVec2(
+                    IM_ROUND(iconX),
+                    IM_ROUND(headerMid - iconExtent.y * 0.5f)),
+                gui->get_clr(clr->accent_color),
+                ICON_FA_FILE_CODE);
+            draw->AddText(
+                titleFont,
+                titleSize,
+                ImVec2(
+                    IM_ROUND(iconX + iconExtent.x + 10.f * scale),
+                    IM_ROUND(headerMid - titleSize * 0.5f)),
+                gui->get_clr(clr->text_active),
+                headerTitle);
             ImGui::SetCursorScreenPos(
                 windowPos +
                 ImVec2(16.f, headerH / scale + 12.f) * scale);
@@ -1049,22 +1076,40 @@ namespace
                 name,
                 static_cast<std::size_t>(nameCapacity));
             ImGui::Dummy(ImVec2(0.f, 5.f * scale));
-            const float importWidth = 92.f * scale;
-            const float pathWidth = 208.f * scale;
             ImGui::TextDisabled(
                 "JavaScript · %d B",
                 lstrlenA(source.data));
+            ImGui::PushStyleColor(
+                ImGuiCol_FrameBg,
+                clr->element_background);
+            ImGui::PushStyleColor(
+                ImGuiCol_Border,
+                clr->child_stroke_bar);
+            ImGui::InputTextMultiline(
+                "##script_modal_source",
+                source.data,
+                static_cast<std::size_t>(source.capacity),
+                // Reserves the import row and the button row below it, so the
+                // editor gives up height instead of pushing them out of view.
+                ImVec2(-1.f, -92.f * scale),
+                ImGuiInputTextFlags_AllowTabInput |
+                    ImGuiInputTextFlags_CallbackResize,
+                SourceResizeCallback,
+                &source);
+            ImGui::PopStyleColor(2);
+            const float gap = 8.f * scale;
             // Pasting a megabyte through the clipboard is painful, so a path
             // plus Import reads the file straight into the draft.
-            ImGui::SameLine();
-            ImGui::SetCursorPosX(
-                ImGui::GetCursorPosX() +
+            //
+            // It sits on the button row rather than beside the header, where a
+            // raw input field floating at the right edge read as a stray frame
+            // in the corner of the window.
+            const float importWidth = 104.f * scale;
+            ImGui::SetNextItemWidth(
                 ImMax(
-                    0.f,
+                    80.f * scale,
                     ImGui::GetContentRegionAvail().x -
-                        pathWidth - importWidth -
-                        6.f * scale));
-            ImGui::SetNextItemWidth(pathWidth);
+                        importWidth - gap));
             ImGui::InputTextWithHint(
                 "##script_modal_path",
                 Menu::Translate(
@@ -1073,14 +1118,14 @@ namespace
                     "C:\\шлях\\script.js"),
                 g_ImportPath,
                 sizeof(g_ImportPath));
-            ImGui::SameLine(0.f, 6.f * scale);
+            ImGui::SameLine(0.f, gap);
             if (MenuUi::ActionButton(
                     "script_modal_import",
                     Menu::Translate(
                         "Import",
                         "Импорт",
                         "Імпорт"),
-                    ImVec2(importWidth, 24.f * scale),
+                    ImVec2(importWidth, 26.f * scale),
                     false,
                     ICON_FA_FILE_IMPORT))
             {
@@ -1097,23 +1142,7 @@ namespace
                     imported,
                     imported ? 2500 : 6000);
             }
-            ImGui::PushStyleColor(
-                ImGuiCol_FrameBg,
-                clr->element_background);
-            ImGui::PushStyleColor(
-                ImGuiCol_Border,
-                clr->child_stroke_bar);
-            ImGui::InputTextMultiline(
-                "##script_modal_source",
-                source.data,
-                static_cast<std::size_t>(source.capacity),
-                ImVec2(-1.f, -48.f * scale),
-                ImGuiInputTextFlags_AllowTabInput |
-                    ImGuiInputTextFlags_CallbackResize,
-                SourceResizeCallback,
-                &source);
-            ImGui::PopStyleColor(2);
-            const float gap = 8.f * scale;
+            ImGui::Dummy(ImVec2(0.f, 4.f * scale));
             const float buttonW =
                 (ImGui::GetContentRegionAvail().x - gap) * 0.5f;
             if (MenuUi::ActionButton(

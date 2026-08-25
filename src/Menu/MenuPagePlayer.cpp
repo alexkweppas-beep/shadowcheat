@@ -14,6 +14,7 @@
 #include "../Features/AntiCheatShield.h"
 #include "../Features/AutoLoot.h"
 #include "../Features/MiscFeatures.h"
+#include "../Features/ServerProfile.h"
 
 #include <cfloat>
 #include <cstdio>
@@ -76,11 +77,14 @@ namespace Menu
             ICON_FA_PERSON_RUNNING,
             T("Unlimited stamina", "Бесконечная выносливость", "Нескінченна витривалість"),
             &s.unlimitedStamina);
-        MiscRow(
-            "player_greenzone",
-            ICON_FA_LEAF,
-            T("Greenzone bypass", "Обход зелёнки", "Обхід зеленки"),
-            &s.greenzoneBypass);
+        // The zone list it edits is GTA5RP's own; elsewhere there is nothing
+        // for the toggle to act on, so it is not offered.
+        if (ServerProfile::HasGreenzone())
+            MiscRow(
+                "player_greenzone",
+                ICON_FA_LEAF,
+                T("Greenzone bypass", "Обход зелёнки", "Обхід зеленки"),
+                &s.greenzoneBypass);
         MiscRow(
             "player_ac_shield",
             ICON_FA_SHIELD_HALVED,
@@ -565,6 +569,14 @@ namespace Menu
             AutoLoot::kMinRadius,
             AutoLoot::kMaxRadius,
             "%.1f m");
+        // The ring is drawn on the ground, and past the server's own limit it
+        // goes dashed with the honoured part inside it, so the two distances
+        // are one picture instead of a number and a warning.
+        MiscRow(
+            "loot_show_radius",
+            ICON_FA_CIRCLE_NOTCH,
+            T("Show radius", "Показывать радиус", "Показувати радіус"),
+            &s.showRadius);
         // Past the measured limit the slider still moves, but it is worth
         // saying whose rule it is, since a refusal there is not a bug here.
         if (s.radius > AutoLoot::kServerLimit)

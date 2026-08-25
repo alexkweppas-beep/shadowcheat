@@ -2,6 +2,7 @@
 
 #include "QuantToolsScript.h"
 #include "RageV8Runtime.h"
+#include "ServerProfile.h"
 #include "../SDK/RageBuildFlavor.h"
 #include "../Menu/Menu.h"
 #include "../Menu/IconsFontAwesome6.h"
@@ -29,8 +30,7 @@ namespace
         Command,
         Status,
         AirDump,
-        CefDump,
-        Detect
+        CefDump
     };
 
     enum class ServerKind : std::uint8_t
@@ -217,8 +217,6 @@ namespace
     bool g_Loaded = false;
     bool g_LoadRequested = false;
     ServerKind g_ServerKind = ServerKind::Unknown;
-    bool g_DetectRequested = false;
-    ULONGLONG g_LastDetectAttempt = 0;
     ULONGLONG g_LastStatusRequest = 0;
     ULONGLONG g_LastLoadAttempt = 0;
     ULONGLONG g_LastStatusLog = 0;
@@ -253,8 +251,6 @@ namespace
         g_Loaded = false;
         g_LoadRequested = false;
         g_ServerKind = ServerKind::Unknown;
-        g_DetectRequested = false;
-        g_LastDetectAttempt = 0;
         g_LastStatusRequest = 0;
         // Allow immediate QueueLoad on next Ready edge (not 2s later).
         g_LastLoadAttempt = 0;
@@ -1203,40 +1199,30 @@ namespace
         return true;
     }
 
-    // Fingerprint Quant RP via pause header / browser URL (set by their client).
-    constexpr const char* kDetectScript =
-        "return (function(){"
-        "try{"
-        "var h='';"
-        "try{h=String(mp.game.gxt.get('PM_PAUSE_HDR')||'');}catch(e){}"
-        "var s=h.toLowerCase();"
-        "if(s.indexOf('quant')!==-1||s.indexOf('quant5')!==-1)return 'QUANT';"
-        "try{"
-        "if(typeof mp.browsers!=='undefined'&&mp.browsers.forEach){"
-        "var hit=false;"
-        "mp.browsers.forEach(function(b){"
-        "try{var u=String(b.url||'').toLowerCase();"
-        "if(u.indexOf('quant5')!==-1)hit=true;}catch(e){}"
-        "});"
-        "if(hit)return 'QUANT';"
-        "}"
-        "}catch(e){}"
-        "return 'OTHER';"
-        "}catch(e){return 'OTHER';}"
-        "})();";
-
-    void QueueDetectServer() noexcept
+    // Server identity is no longer fingerprinted here: ServerProfile runs one
+    // probe for every module, and this mirrors its answer into the flag the
+    // rest of this file already reads.
+    void SyncServerKind() noexcept
     {
-        if (g_DetectRequested)
+        const ServerProfile::Kind kind = ServerProfile::Current();
+        const ServerKind next =
+            kind == ServerProfile::Kind::Quant
+                ? ServerKind::Quant
+                : (kind == ServerProfile::Kind::Unknown
+                       ? ServerKind::Unknown
+                       : ServerKind::Other);
+        if (g_ServerKind == next)
             return;
-        g_LastDetectAttempt = GetTickCount64();
-        if (!QueueScript(
-                kDetectScript,
-                RequestKind::Detect,
-                "Detect Quant RP",
-                true))
-            return;
-        g_DetectRequested = true;
+        if (next == ServerKind::Quant)
+            hooks::HLog("[QuantTools] server: Quant RP");
+        else if (next == ServerKind::Other)
+            hooks::HLog("[QuantTools] server: other");
+        g_ServerKind = next;
+        if (next != ServerKind::Quant)
+        {
+            g_Loaded = false;
+            g_LoadRequested = false;
+        }
     }
 
     void QueueLoad() noexcept
@@ -2255,7 +2241,6 @@ namespace QuantTools
         {
             g_Loaded = false;
             g_LoadRequested = false;
-            g_DetectRequested = false;
             // Keep last g_ServerKind so the Quant tab does not flicker
             // during short V8 blips; full reset is on generation change.
             g_PendingCount = 0;
@@ -2269,8 +2254,6 @@ namespace QuantTools
             g_WasRuntimeReady = true;
             g_LastLoadAttempt = 0;
             g_LoadRequested = false;
-            g_LastDetectAttempt = 0;
-            g_DetectRequested = false;
             g_ServerKind = ServerKind::Unknown;
         }
 
@@ -2292,11 +2275,6 @@ namespace QuantTools
                     hooks::HLog(
                         "[QuantTools] CEF dump pull timeout, retry");
                     ScheduleCefDumpRetry(700);
-                    continue;
-                }
-                if (g_Pending[index].kind == RequestKind::Detect)
-                {
-                    g_DetectRequested = false;
                     continue;
                 }
                 if (g_Pending[index].kind == RequestKind::Status ||
@@ -2331,31 +2309,6 @@ namespace QuantTools
                     ParseStatus(result.text);
                 }
                 else
-                {
-                    g_Loaded = false;
-                    g_LoadRequested = false;
-                }
-                continue;
-            }
-
-            if (request.kind == RequestKind::Detect)
-            {
-                g_DetectRequested = false;
-                const bool isQuant =
-                    result.success &&
-                    result.text[0] &&
-                    (strncmp(result.text, "QUANT", 5) == 0);
-                const ServerKind next =
-                    isQuant ? ServerKind::Quant : ServerKind::Other;
-                if (g_ServerKind != next)
-                {
-                    hooks::HLog(
-                        isQuant
-                            ? "[QuantTools] server detected: Quant RP"
-                            : "[QuantTools] server detected: other");
-                }
-                g_ServerKind = next;
-                if (!isQuant)
                 {
                     g_Loaded = false;
                     g_LoadRequested = false;
@@ -2489,20 +2442,7 @@ namespace QuantTools
 #endif
         }
 
-        // Probe server identity before injecting Quant Tools.
-        {
-            ULONGLONG detectInterval = 1000;
-            if (g_ServerKind == ServerKind::Quant)
-                detectInterval = 15000;
-            else if (g_ServerKind == ServerKind::Other)
-                detectInterval = 4000;
-            if (!g_DetectRequested &&
-                (g_LastDetectAttempt == 0 ||
-                 now - g_LastDetectAttempt >= detectInterval))
-            {
-                QueueDetectServer();
-            }
-        }
+        SyncServerKind();
 
         // First attempt immediately after Quant detect; retries every 2s on failure.
         if (g_ServerKind == ServerKind::Quant &&

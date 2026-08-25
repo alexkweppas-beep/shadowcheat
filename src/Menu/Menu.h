@@ -425,6 +425,24 @@ namespace Menu
     // handler can name the code that raised the fault.
     void SetRenderPhase(const char* phase) noexcept;
     const char* RenderPhase() noexcept;
+
+    // How deep ImGui's own stacks are, so a swallowed fault can be unwound
+    // back to it. Without this a fault inside a page left our window open and
+    // style values pushed, and everything drawn afterwards in that frame —
+    // including the separate on-screen panels — ended up nested inside the
+    // menu instead of on the screen.
+    struct UiStackDepth final
+    {
+        int windows{};
+        int styleVars{};
+        int colors{};
+        int fonts{};
+        int ids{};
+        bool valid{};
+    };
+
+    UiStackDepth CaptureUiStackDepth() noexcept;
+    void UnwindUiStack(const UiStackDepth& depth) noexcept;
     bool IsVisible();
     bool NeedsPlayerCache() noexcept;
     const char* Translate(

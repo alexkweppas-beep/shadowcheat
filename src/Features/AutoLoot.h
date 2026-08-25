@@ -37,6 +37,9 @@ namespace AutoLoot
         // filter list.
         bool takeAll{true};
         bool notify{true};
+        // Draws the reach as a ring on the ground. The number in the slider
+        // means nothing until it is seen next to the street it covers.
+        bool showRadius{true};
         float radius{8.f};
         // Gap between attempts. One pickup is one round trip to the server, so
         // this is deliberately not per-frame.

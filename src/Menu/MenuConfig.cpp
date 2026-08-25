@@ -26,7 +26,9 @@
 #include "../Features/Friends.h"
 #include "../Features/MeshSilhouette.h"
 #include "../Features/AutoLoot.h"
+#include "../Features/Damager.h"
 #include "../Features/MiscFeatures.h"
+#include "../Features/ServerProfile.h"
 #include "../Features/ObsBypass.h"
 #include "../SDK/WeaponCatalog.h"
 #include "../SDK/WeaponGroups.h"
@@ -957,6 +959,10 @@ namespace Menu
             return false;
         if (!AutoLoot::Export(output, capacity, used))
             return false;
+        if (!Damager::Export(output, capacity, used))
+            return false;
+        if (!ServerProfile::Export(output, capacity, used))
+            return false;
         if (!Friends::Export(output, capacity, used))
             return false;
         return FeatureBinds::Export(
@@ -1795,6 +1801,8 @@ namespace Menu
 #undef CFG_READ_BOOL
         MiscFeatures::Import(content);
         AutoLoot::Import(content);
+        Damager::Import(content);
+        ServerProfile::Import(content);
         Friends::Import(content);
         FeatureBinds::Import(content);
     }
@@ -1805,12 +1813,12 @@ namespace Menu
         if (s_Bootstrapped)
             return;
         s_Bootstrapped = true;
+        // The store is read so the Configs page has its slots, but nothing is
+        // applied from it. An injection now starts from the built-in defaults
+        // with every feature off, and a config is only ever loaded by asking
+        // for it: a payload that quietly restored a session's worth of toggles
+        // gave no way to tell what it had turned on.
         EnsureLocalConfigsLoaded();
-        const char* payload = LocalConfigSlot(g_DefaultConfigSlot);
-        if (payload && payload[0])
-            ImportCurrentConfig(payload);
-        // After the import, never before: seeding first would be wiped by
-        // a saved empty list, and the flag would then say it had been done.
         SeedDefaultObjectFilters();
     }
 }

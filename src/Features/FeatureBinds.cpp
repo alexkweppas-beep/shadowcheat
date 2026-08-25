@@ -171,7 +171,7 @@ namespace FeatureBinds
         return &binding;
     }
 
-    void Tick(bool suppressActivation) noexcept
+    void Tick(bool suppressActivation, bool previewOnly) noexcept
     {
         const bool suppressed =
             suppressActivation ||
@@ -179,6 +179,8 @@ namespace FeatureBinds
         for (int index = 0; index < g_Count; ++index)
         {
             Binding& binding = g_Bindings[index];
+            if (!previewOnly)
+                binding.previewActive = false;
             if ((!binding.value && !binding.action) ||
                 binding.key <= 0 ||
                 binding.key >= 256)
@@ -187,7 +189,33 @@ namespace FeatureBinds
                 (GetAsyncKeyState(binding.key) & 0x8000) != 0;
             if (!suppressed)
             {
-                if (binding.action)
+                if (previewOnly)
+                {
+                    // Nothing is written here. The switch is drawn from this
+                    // preview instead of from the setting, so the key can be
+                    // checked against the row it belongs to while the feature
+                    // itself never learns the key was pressed. A one-shot has
+                    // no state to show and cannot be undone, so a button's bind
+                    // is simply not taken while the menu is up.
+                    if (binding.value && down && !binding.previousDown)
+                    {
+                        binding.previewShown = binding.previewActive
+                            ? !binding.previewShown
+                            : !*binding.value;
+                        binding.previewActive = true;
+                    }
+                    else if (binding.value &&
+                             binding.mode == Hold &&
+                             down != *binding.value)
+                    {
+                        // Only while the key actually disagrees with the
+                        // setting, so a released hold key stops speaking for the
+                        // row and it goes back to showing what it is set to.
+                        binding.previewShown = down;
+                        binding.previewActive = true;
+                    }
+                }
+                else if (binding.action)
                 {
                     if (down && !binding.previousDown)
                         binding.action();
@@ -202,6 +230,32 @@ namespace FeatureBinds
                 }
             }
             binding.previousDown = down;
+        }
+    }
+
+    bool PreviewState(const bool* value, bool& shown) noexcept
+    {
+        if (!value)
+            return false;
+        for (int index = 0; index < g_Count; ++index)
+        {
+            const Binding& binding = g_Bindings[index];
+            if (binding.value != value || !binding.previewActive)
+                continue;
+            shown = binding.previewShown;
+            return true;
+        }
+        return false;
+    }
+
+    void ClearPreview(const bool* value) noexcept
+    {
+        if (!value)
+            return;
+        for (int index = 0; index < g_Count; ++index)
+        {
+            if (g_Bindings[index].value == value)
+                g_Bindings[index].previewActive = false;
         }
     }
 

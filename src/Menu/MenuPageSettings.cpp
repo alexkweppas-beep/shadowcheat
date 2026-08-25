@@ -673,16 +673,6 @@ namespace Menu
             max,
             gui->get_clr(clr->child_stroke_bar, 0.38f),
             14.f * scale);
-        ImFont* iconFont =
-            set->icon ? set->icon : ImGui::GetFont();
-        draw->AddText(
-            iconFont,
-            11.f * scale,
-            min + ImVec2(12.f, 14.f) * scale,
-            gui->get_clr(clr->accent_color),
-            isDefault
-                ? ICON_FA_STAR
-                : ICON_FA_FILE_LINES);
         // Double-clicking the name turns it into a text field; only local slots
         // hand over a buffer, cloud entries stay read-only.
         static ImGuiID s_RenamingTile = 0;
@@ -692,10 +682,61 @@ namespace Menu
             editableTitle != nullptr && editableCapacity > 1;
         const bool renaming = canRename && s_RenamingTile == tileId;
         ConfigTileAction action = ConfigTileAction::None;
-        const ImVec2 titleMin = min + ImVec2(35.f, 10.f) * scale;
+        // Icon and name share one line: the icon is centred on the middle of
+        // the name's own box and the name starts a fixed gap after the glyph.
+        // They used to be placed by two hand-picked offsets, so the icon sat a
+        // few pixels above the text and the name looked shifted against it, by
+        // a different amount for the star and the file glyph.
+        ImFont* iconFont =
+            set->icon ? set->icon : ImGui::GetFont();
+        const char* tileIcon = isDefault
+            ? ICON_FA_STAR
+            : ICON_FA_FILE_LINES;
+        const float tileIconSize = 12.f * scale;
+        const ImVec2 tileIconExtent = iconFont->CalcTextSizeA(
+            tileIconSize,
+            FLT_MAX,
+            0.f,
+            tileIcon);
+        const float tileIconX = min.x + 12.f * scale;
+        const float titleTop = min.y + 10.f * scale;
+        const float titleBottom = min.y + 36.f * scale;
+        const float titleMid = (titleTop + titleBottom) * 0.5f;
+        draw->AddText(
+            iconFont,
+            tileIconSize,
+            ImVec2(
+                IM_ROUND(tileIconX),
+                IM_ROUND(titleMid - tileIconExtent.y * 0.5f)),
+            gui->get_clr(clr->accent_color),
+            tileIcon);
+        // Both buttons are as wide as their own label needs.
+        //
+        // They used to be a fixed seventy pixels, which fits "Save" and "Load"
+        // and nothing else: in Russian the word ran past the pill and the icon
+        // sat on top of the text. The row is laid out from the right edge, and
+        // the line above it is clipped to whatever is left.
+        const char* saveLabel = T("Save", "Сохранить", "Зберегти");
+        const char* loadLabel = T("Load", "Загрузить", "Завантажити");
+        const float actionsGap = 6.f * scale;
+        const float buttonPad = 44.f * scale;
+        const float saveW = ImMax(
+            70.f * scale,
+            ImGui::CalcTextSize(saveLabel).x + buttonPad);
+        const float loadW = ImMax(
+            70.f * scale,
+            ImGui::CalcTextSize(loadLabel).x + buttonPad);
+        const float actionsW = saveW + actionsGap + loadW;
+        const float actionsX =
+            max.x - 12.f * scale - actionsW;
+
+        const ImVec2 titleMin(
+            IM_ROUND(tileIconX + tileIconExtent.x + 9.f * scale),
+            titleTop);
+        // The title row only has to clear the overflow dots.
         const ImVec2 titleMax(
-            max.x - 168.f * scale,
-            min.y + 36.f * scale);
+            max.x - 44.f * scale,
+            titleBottom);
         if (!renaming)
         {
             gui->render_text_clipped(
@@ -747,7 +788,7 @@ namespace Menu
         gui->render_text_clipped(
             set->poppins_widget,
             min + ImVec2(12.f, 40.f) * scale,
-            ImVec2(max.x - 168.f * scale, max.y - 10.f * scale),
+            ImVec2(actionsX - actionsGap, max.y - 10.f * scale),
             gui->get_clr(clr->text, 0.72f),
             meta ? meta : "Config",
             {0.f, 0.5f});
@@ -819,24 +860,22 @@ namespace Menu
             gui->end_popup_w();
         }
 
-        const ImVec2 saveMin(
-            max.x - 154.f * scale,
-            min.y + 46.f * scale);
-        ImGui::SetCursorScreenPos(saveMin);
+        ImGui::SetCursorScreenPos(
+            ImVec2(actionsX, min.y + 46.f * scale));
         if (MenuUi::ActionButton(
                 "config_save",
-                T("Save", "Сохранить", "Зберегти"),
-                ImVec2(70.f, 28.f) * scale,
+                saveLabel,
+                ImVec2(saveW, 28.f * scale),
                 true,
                 ICON_FA_FLOPPY_DISK))
         {
             action = ConfigTileAction::Save;
         }
-        ImGui::SameLine(0.f, 6.f * scale);
+        ImGui::SameLine(0.f, actionsGap);
         if (MenuUi::ActionButton(
                 "config_load",
-                T("Load", "Загрузить", "Завантажити"),
-                ImVec2(70.f, 28.f) * scale,
+                loadLabel,
+                ImVec2(loadW, 28.f * scale),
                 false,
                 ICON_FA_DOWNLOAD))
         {

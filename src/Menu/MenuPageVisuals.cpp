@@ -33,6 +33,7 @@
 #include "../Features/QuantTools.h"
 #include "../Features/UkraineTools.h"
 #include "../Features/FiveRpFarmBot.h"
+#include "../Features/ServerProfile.h"
 #include "../Features/RagePlayerNames.h"
 #include "../Features/VehicleMovement.h"
 #include "../Features/SilentAim.h"
@@ -666,12 +667,13 @@ namespace Menu
                 ImGui::GetCursorPosX() +
                 ImMax(0.f,
                       ImGui::GetContentRegionAvail().x - closeSize));
-            if (MenuUi::ActionButton(
+            // A bare glyph: a filled button behind a cross reads as another
+            // control competing with the list, and the plate was the only thing
+            // in the header with a surface of its own.
+            if (MenuUi::GhostIconButton(
                     "object_filter_x",
-                    "",
-                    ImVec2(closeSize, closeSize),
-                    false,
-                    ICON_FA_XMARK))
+                    ICON_FA_XMARK,
+                    ImVec2(closeSize, closeSize)))
             {
                 ImGui::CloseCurrentPopup();
                 ImGui::EndPopup();
@@ -1563,6 +1565,42 @@ namespace Menu
             static_cast<int>(VisualCategory::Peds);
         if (!pedCategory)
             PedPreview::SetActive(false);
+
+        // The faction and family scopes stay reachable everywhere, because the
+        // drawing settings behind them are ours. What they colour by, though,
+        // comes from the server, and on one that publishes neither the tags
+        // simply never arrive: said here rather than left to look broken.
+        if (pedCategory)
+        {
+            const bool factionScope =
+                s_VisualPedProfile ==
+                static_cast<int>(EspProfileId::FactionPlayers);
+            const bool familyScope =
+                s_VisualPedProfile ==
+                static_cast<int>(EspProfileId::FamilyPlayers);
+            const bool haveFactions =
+                ServerProfile::IdentitySource() !=
+                ServerProfile::Identity::None;
+            if ((factionScope && !haveFactions) ||
+                (familyScope && !ServerProfile::HasFamilies()))
+            {
+                MenuUi::StatusChip(
+                    "visual_scope_unsupported",
+                    T("Not published by this server",
+                      "Этот сервер их не отдаёт",
+                      "Цей сервер їх не віддає"),
+                    false);
+                ImGui::TextDisabled(
+                    "%s",
+                    familyScope
+                        ? T("Families exist on GTA5RP only",
+                            "Семьи есть только на GTA5RP",
+                            "Сім'ї є лише на GTA5RP")
+                        : T("Factions are read on GTA5RP, Quant and Ukraine",
+                            "Фракции читаются на GTA5RP, Quant и Ukraine",
+                            "Фракції читаються на GTA5RP, Quant і Ukraine"));
+            }
+        }
 
         const int profileIndex = ImClamp(
             s_VisualPedProfile,

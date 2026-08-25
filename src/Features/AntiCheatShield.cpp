@@ -1,6 +1,7 @@
 #include "AntiCheatShield.h"
 
 #include "RageV8Runtime.h"
+#include "ServerProfile.h"
 
 #include <Windows.h>
 #include <cstdio>
@@ -249,18 +250,22 @@ Status GetStatus() noexcept
 
 void DeclarePositionJump(int milliseconds) noexcept
 {
+    // Nothing to announce to a server that has no such channel, and a made-up
+    // event name is one more thing for it to notice.
+    if (ServerProfile::AnnounceChannel() ==
+        ServerProfile::Announce::None)
+        return;
     if (milliseconds < 500)
         milliseconds = 500;
     if (milliseconds > 15000)
         milliseconds = 15000;
-    // The exact call the server's own spawn and yacht scripts make before they
-    // move the player, so the jump lands inside a window the checks expect.
-    char script[192]{};
+    // Routed through the helper ServerProfile publishes, which holds whichever
+    // call this server's own spawn scripts make before they move the player.
+    char script[224]{};
     sprintf_s(
         script,
-        "try{const r=(typeof globalThis!=='undefined'&&globalThis)||null;"
-        "const m=(r&&r.__ctx__&&r.__ctx__.mp)||(r&&r.mp)||mp;"
-        "m.events.call('c:ac:check',%d);}catch(_){}",
+        "try{const g=(typeof globalThis!=='undefined'&&globalThis)||this;"
+        "if(typeof g.__bfAcPoke==='function')g.__bfAcPoke(%d);}catch(_){}",
         milliseconds);
     RageV8Runtime::EnqueueFireAndForget(script);
 }
