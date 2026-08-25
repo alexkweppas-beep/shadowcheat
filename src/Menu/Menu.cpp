@@ -1143,7 +1143,7 @@ namespace Menu
     static const DestChild kAimChildren[] = {
         {
             "main", ICON_FA_CROSSHAIRS,
-            "Main", "Основное", "Основне",
+            "Aim", "Аим", "Аім",
             "Silent and vector",
             "Сайлент и вектор",
             "Сайлент і вектор",
@@ -2497,58 +2497,106 @@ namespace Menu
             const float headerH = 54.f * scale;
             const float avatarSize = 28.f * scale;
 
-            ImFont* brandFont = MenuType::Title();
-            const float brandSize = MenuType::TitleSize();
-            const ImVec2 wordSz = brandFont->CalcTextSizeA(
-                brandSize, FLT_MAX, 0.f, kBrandName);
-            const ImVec2 wordPos(
-                pos.x + padX + 14.f * scale,
-                pos.y + (headerH - wordSz.y) * 0.5f);
-            // A highlight sweeps the wordmark once per open: the base text sits
-            // dimmed while a band of overlapping clip rects stacks up to full
-            // white as it passes, which fakes a gradient without a shader.
-            const bool shining = s_BrandShine < 1.f;
-            draw->AddText(
-                brandFont,
-                brandSize,
-                wordPos,
-                gui->get_clr(tokens.textPrimary, shining ? 0.46f : 1.f),
-                kBrandName);
-            if (shining)
+            // ---- Brand logo — exact cubic bezier curves from Vector(3).svg --
+            // viewBox 0 0 210 135. Uses PathBezierCubicCurveTo (ImGui 1.88+)
+            // for smooth curves matching the SVG exactly.
+            // Color = tokens.accent.brand → follows user accent automatically.
+            const float logoH         = 30.f * scale; // Increased by ~15% (was 26.f)
+            const float logoRenderedW = logoH * (210.f / 135.f);
+            const float logoX0        = pos.x + padX;
+            const float logoY0        = pos.y + (headerH - logoH) * 0.5f;
             {
-                const float travel = wordSz.x + 60.f * scale;
-                const float head =
-                    wordPos.x - 30.f * scale +
-                    travel * MenuMotion::EaseStandard(s_BrandShine);
-                constexpr int kBands = 5;
-                const float bandHalf = 26.f * scale;
-                for (int band = kBands; band >= 1; --band)
-                {
-                    const float half =
-                        bandHalf * static_cast<float>(band) /
-                        static_cast<float>(kBands);
-                    draw->PushClipRect(
-                        ImVec2(head - half, wordPos.y - 4.f * scale),
-                        ImVec2(
-                            head + half,
-                            wordPos.y + wordSz.y + 4.f * scale),
-                        true);
-                    draw->AddText(
-                        brandFont,
-                        brandSize,
-                        wordPos,
-                        gui->get_clr(tokens.textPrimary, 0.24f),
-                        kBrandName);
-                    draw->AddText(
-                        brandFont,
-                        brandSize,
-                        wordPos,
-                        gui->get_clr(tokens.accent.tint, 0.10f),
-                        kBrandName);
-                    draw->PopClipRect();
-                }
+                const float sx = logoRenderedW / 210.f;
+                const float sy = logoH         / 135.f;
+                // Map SVG coordinate to screen space
+                auto S = [&](float x, float y) -> ImVec2 {
+                    return { logoX0 + x * sx, logoY0 + y * sy };
+                };
+                // gui->get_clr applies the menu's current fade alpha to the accent color
+                const ImU32 col = gui->get_clr(tokens.accent.brand, 1.f);
+
+                // ── Path 0: left wing ─────────────────────────────────────
+                draw->PathClear();
+                draw->PathLineTo(S(2.115f, 18.673f));
+                draw->PathBezierCubicCurveTo(S(2.338f,18.237f),   S(2.830f,17.957f),   S(3.364f,17.993f),   0);
+                draw->PathBezierCubicCurveTo(S(5.222f,18.116f),   S(5.597f,19.055f),   S(6.360f,20.931f),   0);
+                draw->PathBezierCubicCurveTo(S(10.039f,29.970f),  S(15.299f,38.545f),  S(21.454f,46.420f),  0);
+                draw->PathBezierCubicCurveTo(S(26.058f,52.210f),  S(30.268f,57.918f),  S(35.611f,63.208f),  0);
+                draw->PathBezierCubicCurveTo(S(51.535f,78.995f),  S(74.221f,88.402f),  S(97.509f,91.586f),  0);
+                draw->PathBezierCubicCurveTo(S(99.349f,91.838f),  S(106.134f,91.625f), S(106.294f,94.135f), 0);
+                draw->PathBezierCubicCurveTo(S(106.377f,95.418f), S(103.985f,98.367f), S(103.117f,99.541f), 0);
+                draw->PathBezierCubicCurveTo(S(98.044f,106.406f), S(92.317f,112.626f), S(85.818f,118.438f), 0);
+                draw->PathBezierCubicCurveTo(S(79.894f,123.713f), S(73.234f,127.444f), S(66.083f,131.239f), 0);
+                draw->PathBezierCubicCurveTo(S(63.890f,132.402f), S(61.549f,133.877f), S(59.082f,134.515f), 0);
+                draw->PathBezierCubicCurveTo(S(55.459f,135.451f), S(31.938f,134.861f), S(27.767f,134.180f), 0);
+                draw->PathBezierCubicCurveTo(S(23.840f,133.539f), S(19.821f,132.326f), S(16.313f,130.613f), 0);
+                draw->PathBezierCubicCurveTo(S(9.382f,127.229f),  S(3.481f,121.323f),  S(1.275f,114.481f),  0);
+                draw->PathBezierCubicCurveTo(S(-0.601f,108.660f), S(0.143f,96.765f),   S(0.157f,90.197f),   0);
+                draw->PathLineTo(S(0.208f, 62.908f));
+                draw->PathLineTo(S(0.197f, 39.192f));
+                draw->PathBezierCubicCurveTo(S(0.191f,33.563f),  S(-0.561f,23.896f),  S(2.115f,18.673f),   0);
+                draw->PathFillConcave(col);
+
+                // ── Path 1: right wing ────────────────────────────────────
+                draw->PathClear();
+                draw->PathLineTo(S(192.850f, 65.282f));
+                draw->PathBezierCubicCurveTo(S(196.136f,65.621f),  S(207.819f,81.820f),  S(209.239f,85.326f),  0);
+                draw->PathBezierCubicCurveTo(S(210.454f,88.325f),  S(209.672f,97.732f),  S(209.899f,101.445f), 0);
+                draw->PathBezierCubicCurveTo(S(210.447f,110.399f), S(208.942f,119.192f), S(201.247f,125.570f), 0);
+                draw->PathBezierCubicCurveTo(S(196.464f,129.665f), S(190.668f,132.555f), S(184.049f,133.828f), 0);
+                draw->PathBezierCubicCurveTo(S(174.689f,135.438f), S(164.041f,134.916f), S(154.478f,134.916f), 0);
+                draw->PathLineTo(S(114.656f, 134.907f));
+                draw->PathBezierCubicCurveTo(S(110.422f,134.906f), S(106.131f,134.970f), S(101.910f,134.879f), 0);
+                draw->PathBezierCubicCurveTo(S(95.500f,134.741f),  S(96.618f,132.171f),  S(100.254f,129.145f), 0);
+                draw->PathBezierCubicCurveTo(S(109.839f,121.170f), S(117.651f,111.367f), S(124.532f,101.464f), 0);
+                draw->PathBezierCubicCurveTo(S(126.673f,98.382f),  S(128.397f,94.997f),  S(130.598f,91.972f),  0);
+                draw->PathBezierCubicCurveTo(S(134.298f,91.135f),  S(138.701f,90.651f),  S(142.625f,89.797f),  0);
+                draw->PathBezierCubicCurveTo(S(156.098f,86.935f),  S(168.830f,81.784f),  S(180.130f,74.624f),  0);
+                draw->PathBezierCubicCurveTo(S(184.476f,71.881f),  S(189.236f,68.178f),  S(192.592f,65.434f),  0);
+                draw->PathLineTo(S(192.850f, 65.282f));
+                draw->PathFillConcave(col);
+
+                // ── Path 2: top arch ──────────────────────────────────────
+                draw->PathClear();
+                draw->PathLineTo(S(41.831f, 0.091f));
+                draw->PathBezierCubicCurveTo(S(51.778f,-0.059f),   S(62.177f,0.066f),   S(72.163f,0.067f),   0);
+                draw->PathLineTo(S(160.756f, 0.057f));
+                draw->PathBezierCubicCurveTo(S(172.566f,0.054f),   S(184.104f,-0.861f), S(194.502f,4.771f),  0);
+                draw->PathBezierCubicCurveTo(S(204.225f,9.891f),   S(210.070f,18.244f), S(209.849f,28.424f), 0);
+                draw->PathBezierCubicCurveTo(S(209.699f,35.349f),  S(210.024f,42.586f), S(209.844f,49.541f), 0);
+                draw->PathBezierCubicCurveTo(S(209.786f,51.739f),  S(208.134f,53.502f), S(205.883f,51.834f), 0);
+                draw->PathBezierCubicCurveTo(S(203.081f,49.755f),  S(200.581f,47.177f), S(197.995f,44.883f), 0);
+                draw->PathBezierCubicCurveTo(S(193.854f,41.177f),  S(189.369f,37.790f), S(184.590f,34.760f), 0);
+                draw->PathBezierCubicCurveTo(S(175.644f,29.041f),  S(165.794f,24.546f), S(155.366f,21.425f), 0);
+                draw->PathBezierCubicCurveTo(S(118.144f,10.063f),  S(74.212f,15.167f),  S(42.721f,36.423f),  0);
+                draw->PathBezierCubicCurveTo(S(41.721f,37.099f),   S(40.409f,37.678f),  S(39.284f,38.173f),  0);
+                draw->PathBezierCubicCurveTo(S(37.770f,37.891f),   S(35.794f,34.833f),  S(34.972f,33.600f),  0);
+                draw->PathBezierCubicCurveTo(S(28.445f,23.799f),   S(22.658f,13.618f),  S(22.334f,1.990f),   0);
+                draw->PathBezierCubicCurveTo(S(29.797f,0.008f),    S(34.170f,0.151f),   S(41.831f,0.091f),   0);
+                draw->PathFillConcave(col);
+
+                // ── Path 3: centre eye ring ───────────────────────────────
+                draw->PathClear();
+                draw->PathLineTo(S(137.103f, 37.291f));
+                draw->PathBezierCubicCurveTo(S(136.689f,36.097f),  S(136.642f,34.727f),  S(137.505f,33.743f),  0);
+                draw->PathBezierCubicCurveTo(S(137.904f,33.288f),  S(138.392f,32.940f),  S(138.991f,32.913f),  0);
+                draw->PathBezierCubicCurveTo(S(140.929f,32.826f),  S(143.045f,33.566f),  S(144.881f,34.061f),  0);
+                draw->PathBezierCubicCurveTo(S(154.237f,36.583f),  S(162.800f,40.224f),  S(170.976f,44.984f),  0);
+                draw->PathBezierCubicCurveTo(S(168.542f,51.888f),  S(164.905f,57.343f),  S(159.415f,62.605f),  0);
+                draw->PathBezierCubicCurveTo(S(153.845f,67.916f),  S(145.494f,72.364f),  S(137.819f,74.660f),  0);
+                draw->PathBezierCubicCurveTo(S(107.125f,83.839f),  S(70.159f,73.991f),   S(59.036f,44.811f),   0);
+                draw->PathBezierCubicCurveTo(S(61.494f,43.621f),   S(63.894f,42.191f),   S(66.352f,41.030f),   0);
+                draw->PathBezierCubicCurveTo(S(73.720f,37.548f),   S(82.323f,34.315f),   S(90.510f,32.896f),   0);
+                draw->PathBezierCubicCurveTo(S(95.296f,32.724f),   S(91.866f,39.965f),   S(91.610f,42.221f),   0);
+                draw->PathBezierCubicCurveTo(S(90.775f,49.552f),   S(95.516f,55.907f),   S(102.853f,59.292f),  0);
+                draw->PathBezierCubicCurveTo(S(109.225f,62.170f),  S(116.612f,62.679f),  S(123.402f,60.709f),  0);
+                draw->PathBezierCubicCurveTo(S(128.800f,59.124f),  S(134.041f,55.690f),  S(136.576f,51.084f),  0);
+                draw->PathBezierCubicCurveTo(S(139.442f,45.876f),  S(138.781f,42.127f),  S(137.103f,37.291f),  0);
+                draw->PathFillConcave(col);
             }
-            const float brandRight = wordPos.x + wordSz.x;
+
+            // The brand name text is removed; categories start after the logo.
+            const float brandRight = pos.x + padX + logoRenderedW;
 
             constexpr int kRootCount = static_cast<int>(DestRoot::Count);
             const DestRoot currentRoot = RootForPage(s_MainPage);
@@ -2561,7 +2609,8 @@ namespace Menu
 
             const float catH = 34.f * scale;
             const float catInset = 4.f * scale;
-            const float catLeft = brandRight + 22.f * scale;
+            // Place categories after the logo with a 20.f gap
+            const float catLeft = brandRight + 20.f * scale;
             // Reserve the right cluster: the settings gear.
             const float catRight =
                 pos.x + size.x - padX - avatarSize - 18.f * scale;
@@ -2571,8 +2620,8 @@ namespace Menu
                 (catAvail - catInset * 2.f) /
                     static_cast<float>(kRootCount));
             const float catTotal = segW * static_cast<float>(kRootCount);
-            const float catX0 =
-                catLeft + (catAvail - catTotal) * 0.5f;
+            // Don't center the tabs, start them right at catLeft
+            const float catX0 = catLeft;
             const float catY0 = pos.y + (headerH - catH) * 0.5f;
 
             draw->AddRectFilled(
@@ -2674,11 +2723,13 @@ namespace Menu
             {
                 const float ease =
                     MenuMotion::EaseStandard(subRow.slide) * subOpen;
+                // Double 10.f padding inside content window and column child
+                const float innerPadX = 20.f * scale;
                 const ImVec2 stripMin(
-                    pos.x + padX,
+                    pos.x + innerPadX,
                     pos.y + headerH + subGap * subOpen);
                 const ImVec2 stripMax(
-                    pos.x + size.x - padX,
+                    pos.x + size.x - innerPadX,
                     stripMin.y + subStripH);
                 // Clipped to the animated height so the row reads as sliding
                 // out from under the category it belongs to.
@@ -3017,13 +3068,13 @@ namespace Menu
                     pillMin,
                     iconMax,
                     gui->get_clr(
-                        tokens.error, 0.14f + 0.14f * s_UnloadHot),
+                        tokens.accent.fill, 0.14f + 0.14f * s_UnloadHot),
                     metrics.radiusControl * scale);
                 draw->AddRect(
                     pillMin,
                     iconMax,
                     gui->get_clr(
-                        tokens.error, 0.45f + 0.55f * s_UnloadHot),
+                        tokens.accent.active, 0.45f + 0.55f * s_UnloadHot),
                     metrics.radiusControl * scale,
                     0,
                     metrics.stroke);
@@ -3036,14 +3087,14 @@ namespace Menu
                         ImVec2(
                             pillMin.x + 11.f * scale,
                             barCenterY - unloadLabelSz.y * 0.5f),
-                        gui->get_clr(tokens.error, s_UnloadHot),
+                        gui->get_clr(tokens.accent.brand, s_UnloadHot),
                         unloadLabel);
                     draw->PopClipRect();
                 }
                 drawBarIcon(
                     ImVec2(iconMin.x + unloadS * 0.5f, barCenterY),
                     ICON_FA_POWER_OFF,
-                    gui->get_clr(tokens.error, 1.f),
+                    gui->get_clr(tokens.accent.brand, 1.f),
                     13.f * scale);
             }
 

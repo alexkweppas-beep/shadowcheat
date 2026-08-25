@@ -27,7 +27,7 @@ namespace MenuTheme
         bool g_Light = false;
         // House accent #8685EF — ON, active, primary, slider fill.
         constexpr ImVec4 kIris{
-            134.f / 255.f, 133.f / 255.f, 239.f / 255.f, 1.f};
+            72.f / 255.f, 167.f / 255.f, 84.f / 255.f, 1.f};
         ImVec4 g_AccentBase = kIris;
         // Reference canvas #0A0A0A.
         constexpr ImVec4 kCanvas{
