@@ -1187,13 +1187,25 @@ bool RenderAddWeaponWindow(std::uint32_t* addedHash) noexcept
     ImGui::PushStyleColor(
         ImGuiCol_WindowBg,
         ImVec4(0.f, 0.f, 0.f, 0.f));
+    ImGuiWindowFlags backdropFlags =
+        ImGuiWindowFlags_NoDecoration |
+        ImGuiWindowFlags_NoMove |
+        ImGuiWindowFlags_NoSavedSettings |
+        ImGuiWindowFlags_NoNav;
+    // It now sits over the menu rather than under it, so while the sheet
+    // fades out it must stop swallowing the clicks meant for the page.
+    if (!g_AddOpen)
+        backdropFlags |= ImGuiWindowFlags_NoInputs;
     ImGui::Begin(
         "##aim_add_backdrop",
         nullptr,
-        ImGuiWindowFlags_NoDecoration |
-            ImGuiWindowFlags_NoMove |
-            ImGuiWindowFlags_NoSavedSettings |
-            ImGuiWindowFlags_NoNav);
+        backdropFlags);
+    // The dim used to be painted around the window as four strips on the
+    // foreground list, which left a square hole: the rounded corners sat in
+    // undimmed wedges and the floored window position left an undimmed
+    // hairline along every edge, so the card read as a lit square frame.
+    // Sitting the whole sheet behind the window instead needs no hole at all.
+    ImGui::BringWindowToDisplayFront(ImGui::GetCurrentWindow());
     ImGui::InvisibleButton(
         "##dismiss",
         viewport->WorkSize);
@@ -1208,6 +1220,10 @@ bool RenderAddWeaponWindow(std::uint32_t* addedHash) noexcept
         modalCenter - windowSize * 0.5f - ImVec2(10.f, 10.f) * scale;
     const ImVec2 shadowMax =
         modalCenter + windowSize * 0.5f + ImVec2(10.f, 10.f) * scale;
+    backdropDraw->AddRectFilled(
+        viewport->WorkPos,
+        viewport->WorkPos + viewport->WorkSize,
+        IM_COL32(0, 0, 0, static_cast<int>(158.f * reveal)));
     backdropDraw->AddRectFilled(
         shadowMin,
         shadowMax,
@@ -1257,6 +1273,8 @@ bool RenderAddWeaponWindow(std::uint32_t* addedHash) noexcept
             nullptr,
             modalFlags))
     {
+        // Ahead of the backdrop, which was just put in front of the menu.
+        ImGui::BringWindowToDisplayFront(ImGui::GetCurrentWindow());
         ImDrawList* modalDraw =
             ImGui::GetWindowDrawList();
         const ImVec2 modalPos =
@@ -1686,37 +1704,6 @@ bool RenderAddWeaponWindow(std::uint32_t* addedHash) noexcept
             ImGui::EndDisabled();
     }
     ImGui::End();
-
-    ImDrawList* foreground =
-        ImGui::GetForegroundDrawList();
-    const ImVec2 workMin = viewport->WorkPos;
-    const ImVec2 workMax =
-        viewport->WorkPos + viewport->WorkSize;
-    const ImVec2 modalMin =
-        modalCenter - windowSize * 0.5f;
-    const ImVec2 modalMaxRect =
-        modalCenter + windowSize * 0.5f;
-    const ImU32 dimColor = IM_COL32(
-        0,
-        0,
-        0,
-        static_cast<int>(158.f * reveal));
-    foreground->AddRectFilled(
-        workMin,
-        ImVec2(modalMin.x, workMax.y),
-        dimColor);
-    foreground->AddRectFilled(
-        ImVec2(modalMaxRect.x, workMin.y),
-        workMax,
-        dimColor);
-    foreground->AddRectFilled(
-        ImVec2(modalMin.x, workMin.y),
-        ImVec2(modalMaxRect.x, modalMin.y),
-        dimColor);
-    foreground->AddRectFilled(
-        ImVec2(modalMin.x, modalMaxRect.y),
-        ImVec2(modalMaxRect.x, workMax.y),
-        dimColor);
 
     ImGui::PopStyleColor(2);
     ImGui::PopStyleVar(4);

@@ -1809,7 +1809,28 @@ ScriptCardResult ScriptCard(
     const ImVec2 min = ImGui::GetCursorScreenPos();
     const ImVec2 max = min + ImVec2(width, height);
 
-    const float runW = 78.f * scale;
+    ImFont* labelFont = set->poppins_widget
+        ? set->poppins_widget
+        : ImGui::GetFont();
+    ImFont* iconFont = set->icon ? set->icon : ImGui::GetFont();
+
+    // The pill is as wide as the glyph and the label need. At a fixed
+    // seventy-eight the English "Load" sat in it comfortably and the Russian
+    // one filled it edge to edge, with the play glyph on top of the border.
+    const char* runLabel = desc.runLabel && desc.runLabel[0]
+        ? desc.runLabel
+        : "Load";
+    const float runIconSize = 11.f * scale;
+    const float runIconGap = 6.f * scale;
+    const ImVec2 runIconExtent = iconFont->CalcTextSizeA(
+        runIconSize, FLT_MAX, 0.f, ICON_FA_PLAY);
+    const ImVec2 runTextExtent = labelFont->CalcTextSizeA(
+        MenuType::BodySize(), FLT_MAX, 0.f, runLabel);
+    const float runContentW =
+        runIconExtent.x + runIconGap + runTextExtent.x;
+    const float runW = ImMax(
+        78.f * scale,
+        runContentW + 24.f * scale);
     const float runH = 30.f * scale;
     const float moreS = 26.f * scale;
     const float heartS = 24.f * scale;
@@ -1911,10 +1932,6 @@ ScriptCardResult ScriptCard(
         0,
         metrics.stroke);
 
-    ImFont* labelFont = set->poppins_widget
-        ? set->poppins_widget
-        : ImGui::GetFont();
-    ImFont* iconFont = set->icon ? set->icon : ImGui::GetFont();
     const float titleSize = MenuType::BodySize();
     const float microSize = MenuType::MicroSize();
     const char* title = desc.title && desc.title[0]
@@ -2041,9 +2058,6 @@ ScriptCardResult ScriptCard(
             1.f),
         ICON_FA_ELLIPSIS);
 
-    const char* runLabel = desc.runLabel && desc.runLabel[0]
-        ? desc.runLabel
-        : "Load";
     draw->AddRectFilled(
         runRect.Min,
         runRect.Max,
@@ -2058,17 +2072,11 @@ ScriptCardResult ScriptCard(
         metrics.radiusControl * scale,
         0,
         metrics.stroke);
-    const ImVec2 runIconExtent = iconFont->CalcTextSizeA(
-        11.f * scale, FLT_MAX, 0.f, ICON_FA_PLAY);
-    const ImVec2 runTextExtent = labelFont->CalcTextSizeA(
-        MenuType::BodySize(), FLT_MAX, 0.f, runLabel);
-    const float runContentW =
-        runIconExtent.x + 6.f * scale + runTextExtent.x;
     const float runX =
         runRect.GetCenter().x - runContentW * 0.5f;
     draw->AddText(
         iconFont,
-        11.f * scale,
+        runIconSize,
         ImVec2(runX, runRect.GetCenter().y - runIconExtent.y * 0.5f),
         gui->get_clr(
             desc.canRun ? tokens.textPrimary : tokens.textFaint,
@@ -2078,7 +2086,7 @@ ScriptCardResult ScriptCard(
         labelFont,
         MenuType::BodySize(),
         ImVec2(
-            runX + runIconExtent.x + 6.f * scale,
+            runX + runIconExtent.x + runIconGap,
             runRect.GetCenter().y - runTextExtent.y * 0.5f),
         gui->get_clr(
             desc.canRun ? tokens.textPrimary : tokens.textFaint,

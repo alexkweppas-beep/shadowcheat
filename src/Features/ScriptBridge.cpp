@@ -929,18 +929,35 @@ namespace
         ImGui::PushStyleColor(
             ImGuiCol_WindowBg,
             ImVec4(0.f, 0.f, 0.f, 0.f));
+        ImGuiWindowFlags backdropFlags =
+            ImGuiWindowFlags_NoDecoration |
+            ImGuiWindowFlags_NoMove |
+            ImGuiWindowFlags_NoSavedSettings |
+            ImGuiWindowFlags_NoNav;
+        // It now sits over the menu rather than under it, so while the sheet
+        // fades out it must stop swallowing the clicks meant for the page.
+        if (!targetOpen)
+            backdropFlags |= ImGuiWindowFlags_NoInputs;
         ImGui::Begin(
             "##script_editor_backdrop",
             nullptr,
-            ImGuiWindowFlags_NoDecoration |
-                ImGuiWindowFlags_NoMove |
-                ImGuiWindowFlags_NoSavedSettings |
-                ImGuiWindowFlags_NoNav);
+            backdropFlags);
+        // Behind the editor rather than around it: the dim was four strips
+        // leaving a square hole, so the rounded corners sat in undimmed
+        // wedges and the whole sheet read as a lit frame around the window.
+        ImGui::BringWindowToDisplayFront(ImGui::GetCurrentWindow());
         ImGui::InvisibleButton(
             "##dismiss",
             viewport->WorkSize);
         if (targetOpen && ImGui::IsItemClicked())
             targetOpen = false;
+        if (ImDrawList* backdropDraw = ImGui::GetWindowDrawList())
+        {
+            backdropDraw->AddRectFilled(
+                viewport->WorkPos,
+                viewport->WorkPos + viewport->WorkSize,
+                IM_COL32(0, 0, 0, static_cast<int>(158.f * eased)));
+        }
         ImGui::End();
         ImGui::PopStyleColor();
         ImGui::PopStyleVar(3);
@@ -988,6 +1005,8 @@ namespace
                 nullptr,
                 flags))
         {
+            // Ahead of the backdrop, which was just put in front of the menu.
+            ImGui::BringWindowToDisplayFront(ImGui::GetCurrentWindow());
             ImDrawList* draw =
                 ImGui::GetWindowDrawList();
             const ImVec2 windowPos =
@@ -1172,36 +1191,6 @@ namespace
         }
         ImGui::End();
 
-        ImDrawList* foreground =
-            ImGui::GetForegroundDrawList();
-        const ImVec2 workMin = viewport->WorkPos;
-        const ImVec2 workMax =
-            viewport->WorkPos + viewport->WorkSize;
-        const ImVec2 modalMin =
-            center - modalSize * 0.5f;
-        const ImVec2 modalMax =
-            center + modalSize * 0.5f;
-        const ImU32 dim = IM_COL32(
-            0,
-            0,
-            0,
-            static_cast<int>(158.f * eased));
-        foreground->AddRectFilled(
-            workMin,
-            ImVec2(modalMin.x, workMax.y),
-            dim);
-        foreground->AddRectFilled(
-            ImVec2(modalMax.x, workMin.y),
-            workMax,
-            dim);
-        foreground->AddRectFilled(
-            ImVec2(modalMin.x, workMin.y),
-            ImVec2(modalMax.x, modalMin.y),
-            dim);
-        foreground->AddRectFilled(
-            ImVec2(modalMin.x, modalMax.y),
-            ImVec2(modalMax.x, workMax.y),
-            dim);
         ImGui::PopStyleColor(2);
         ImGui::PopStyleVar(4);
         return result;
