@@ -320,7 +320,10 @@ __ffListen('c:farm:milk:end', __ffOnDeliver);
 
 function __ffTick() {
     const now = Date.now();
-    if (__ff.invis && now - __ff.lastInvis > 2000)
+    // Invis is a farm-session tool. Applying it while the bot is idle is
+    // what made the local ped vanish on inject: the script auto-loaded
+    // and this timer hid the player every two seconds.
+    if (__ff.active && __ff.invis && now - __ff.lastInvis > 2000)
         __ffApplyInvis(true);
     if (!__ff.active || now < __ff.waitUntil) return;
     __ff.farm = __ffFindFarm();

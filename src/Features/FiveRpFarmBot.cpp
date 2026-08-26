@@ -70,6 +70,7 @@ namespace
     bool g_LoadRequested{};
     bool g_Loaded{};
     bool g_WasRuntimeReady{};
+    std::uint64_t g_UnhookedGeneration{~0ull};
 
     void CopyText(
         char* output,
@@ -328,6 +329,7 @@ namespace FiveRpFarmBot
         g_ServerKind = ServerKind::Unknown;
         g_RuntimeGeneration = 0;
         g_WasRuntimeReady = false;
+        g_UnhookedGeneration = ~0ull;
     }
 
     bool IsFiveRpServer() noexcept
@@ -355,7 +357,7 @@ namespace FiveRpFarmBot
             ResetSession();
             g_ServerKind = keep;
             hooks::HLog(
-                "[5RP Farm] V8 generation changed; reloading");
+                "[5RP Farm] V8 generation changed; session reset");
         }
 
         const bool runtimeReady =
@@ -426,6 +428,13 @@ namespace FiveRpFarmBot
                     g_Loaded
                         ? "[5RP Farm] bot loaded"
                         : "[5RP Farm] bot load failed");
+                if (!g_Loaded)
+                {
+                    Menu::PushNotification(
+                        "5RP Farm",
+                        "Farm script failed to load.",
+                        false);
+                }
                 continue;
             }
             if (request.kind == RequestKind::Command &&
@@ -438,11 +447,17 @@ namespace FiveRpFarmBot
         g_PendingCount = write;
 
         SyncServerKind();
-        if (g_ServerKind == ServerKind::FiveRp &&
-            !g_Loaded &&
-            !g_LoadRequested &&
-            now - g_LastLoadAttempt > 2000)
-            QueueLoad();
+
+        // A previous inject may have left the farm timer in this isolate.
+        // Unhook restores visibility and does not load the bot.
+        if (runtime.generation != g_UnhookedGeneration)
+        {
+            g_UnhookedGeneration = runtime.generation;
+            RageV8Runtime::EnqueueFireAndForget(
+                "try{if(global.__fiveFarmUnhook)"
+                "global.__fiveFarmUnhook();}catch(e){}");
+        }
+
         if (g_Loaded)
             QueueStatus();
     }
@@ -470,7 +485,9 @@ namespace FiveRpFarmBot
             else if (g_LoadRequested)
                 stateText = "Loading...";
             else if (g_ServerKind == ServerKind::FiveRp)
-                stateText = "GTA5RP · waiting V8";
+                stateText = runtimeReady
+                    ? "GTA5RP · idle"
+                    : "GTA5RP · waiting V8";
             ImGui::TextColored(color, "%s", stateText);
         }
 
@@ -482,10 +499,26 @@ namespace FiveRpFarmBot
 
         if (!g_Loaded)
         {
-            ImGui::TextDisabled(
-                runtimeReady
-                    ? "Waiting for the farm script to inject."
-                    : "Waiting for the RAGE V8 runtime.");
+            if (!runtimeReady)
+            {
+                ImGui::TextDisabled("Waiting for the RAGE V8 runtime.");
+                return;
+            }
+            if (g_ServerKind != ServerKind::FiveRp)
+            {
+                ImGui::TextDisabled(
+                    "Farm script is not injected until you load it.");
+                return;
+            }
+            if (g_LoadRequested)
+            {
+                ImGui::TextDisabled("Injecting farm script...");
+                return;
+            }
+            if (gui->button(
+                    "Load farm script",
+                    ImVec2(180.f, 32.f)))
+                QueueLoad();
             return;
         }
 
