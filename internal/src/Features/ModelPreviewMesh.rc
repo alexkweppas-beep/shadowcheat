@@ -1,0 +1,3 @@
+#include "ModelPreviewMeshResources.h"
+
+IDR_MODEL_PREVIEW_MESH RCDATA "../assets/esp_preview/mesh_baked.bin"

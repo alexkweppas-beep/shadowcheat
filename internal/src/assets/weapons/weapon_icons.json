@@ -1,0 +1,766 @@
+{
+  "generatedAt": "2026-08-05T09:43:50.047Z",
+  "count": 95,
+  "weapons": [
+    {
+      "spawn": "dagger",
+      "name": "Antique Cavalry Dagger",
+      "hash": 2460120199,
+      "category": "Melee",
+      "iconUrl": "https://gtahash.ru/Image/164px-Antique-cavalry-dagger-icon.ae39ea004a8ab93ab8129dc481feff28.png",
+      "icon": "dagger.png"
+    },
+    {
+      "spawn": "bat",
+      "name": "Baseball Bat",
+      "hash": 2508868239,
+      "category": "Melee",
+      "iconUrl": "https://gtahash.ru/Image/164px-Baseball-bat-icon.33ced8c945ef758153f350c37c43acd6.png",
+      "icon": "bat.png"
+    },
+    {
+      "spawn": "bottle",
+      "name": "Broken Bottle",
+      "hash": 4192643659,
+      "category": "Melee",
+      "iconUrl": "https://gtahash.ru/Image/Broken-bottle-icon.72b980989ba07242aaa08157480a9ce0.png",
+      "icon": "bottle.png"
+    },
+    {
+      "spawn": "crowbar",
+      "name": "Crowbar",
+      "hash": 2067956739,
+      "category": "Melee",
+      "iconUrl": "https://gtahash.ru/Image/164px-Crowbar-icon.6b158901f22b4447a6eeec13af4b285f.png",
+      "icon": "crowbar.png"
+    },
+    {
+      "spawn": "unarmed",
+      "name": "Fist",
+      "hash": 1313061774,
+      "category": "Melee",
+      "iconUrl": "https://gtahash.ru/Image/Fist-icon.b82f0d52caf21ad19d97f6fb77056a77.png",
+      "icon": "unarmed.png"
+    },
+    {
+      "spawn": "flashlight",
+      "name": "Flashlight",
+      "hash": 2343591895,
+      "category": "Melee",
+      "iconUrl": "https://gtahash.ru/Image/164px-Flashlight-icon.23c960c782ce282baa5b70fec55a0c92.png",
+      "icon": "flashlight.png"
+    },
+    {
+      "spawn": "golfclub",
+      "name": "Golf Club",
+      "hash": 1141786504,
+      "category": "Melee",
+      "iconUrl": "https://gtahash.ru/Image/164px-Golf-club-icon.c245dc04df9dd141ac77237774aa7105.png",
+      "icon": "golfclub.png"
+    },
+    {
+      "spawn": "hammer",
+      "name": "Hammer",
+      "hash": 1317494643,
+      "category": "Melee",
+      "iconUrl": "https://gtahash.ru/Image/164px-Hammer-icon.5644906a20ca13d3abf8bbe0f26bd5cf.png",
+      "icon": "hammer.png"
+    },
+    {
+      "spawn": "hatchet",
+      "name": "Hatchet",
+      "hash": 4191993645,
+      "category": "Melee",
+      "iconUrl": "https://gtahash.ru/Image/164px-Hatchet-icon.93e199fd5d82ac0daab33cebd973b9a2.png",
+      "icon": "hatchet.png"
+    },
+    {
+      "spawn": "knuckle",
+      "name": "Brass Knuckles",
+      "hash": 3638508604,
+      "category": "Melee",
+      "iconUrl": "https://gtahash.ru/Image/Knuckles-icon.2d3273b02fa22e1663807c1aa82111d3.png",
+      "icon": "knuckle.png"
+    },
+    {
+      "spawn": "knife",
+      "name": "Knife",
+      "hash": 2578778090,
+      "category": "Melee",
+      "iconUrl": "https://gtahash.ru/Image/164px-Knife-icon.86aa712c00e46e1861172896c7e3b5eb.png",
+      "icon": "knife.png"
+    },
+    {
+      "spawn": "machete",
+      "name": "Machete",
+      "hash": 3713923289,
+      "category": "Melee",
+      "iconUrl": "https://gtahash.ru/Image/164px-Machete-icon.76e0f9c426b89494bd063b5cf253c4d5.png",
+      "icon": "machete.png"
+    },
+    {
+      "spawn": "switchblade",
+      "name": "Switchblade",
+      "hash": 3756226112,
+      "category": "Melee",
+      "iconUrl": "https://gtahash.ru/Image/164px-Switch-blade-icon.2ca3ccdd18893e90dbac9abf87941fcd.png",
+      "icon": "switchblade.png"
+    },
+    {
+      "spawn": "nightstick",
+      "name": "Nightstick",
+      "hash": 1737195953,
+      "category": "Melee",
+      "iconUrl": "https://gtahash.ru/Image/164px-Nightstick-icon.3e49aab0c73ad74e0bed240a4879d766.png",
+      "icon": "nightstick.png"
+    },
+    {
+      "spawn": "wrench",
+      "name": "Pipe Wrench",
+      "hash": 419712736,
+      "category": "Melee",
+      "iconUrl": "https://gtahash.ru/Image/164px-Pipe-wrench-icon.dc9d02ec06bb8c57576cb590d132454b.png",
+      "icon": "wrench.png"
+    },
+    {
+      "spawn": "battleaxe",
+      "name": "Battle Axe",
+      "hash": 3441901897,
+      "category": "Melee",
+      "iconUrl": "https://gtahash.ru/Image/164px-Battle-axe-icon.82f3f725b11ca316c1751dcf35b65c7e.png",
+      "icon": "battleaxe.png"
+    },
+    {
+      "spawn": "poolcue",
+      "name": "Pool Cue",
+      "hash": 2484171525,
+      "category": "Melee",
+      "iconUrl": "https://gtahash.ru/Image/164px-Pool-cue-icon.bd13dc9452a2839b9768e5f73d7e8a6b.png",
+      "icon": "poolcue.png"
+    },
+    {
+      "spawn": "stone_hatchet",
+      "name": "Stone Hatchet",
+      "hash": 940833800,
+      "category": "Melee",
+      "iconUrl": "https://gtahash.ru/Image/164px-Stone-hatchet-icon.101be57d2ad67409a9628cad4cce55d8.png",
+      "icon": "stone_hatchet.png"
+    },
+    {
+      "spawn": "pistol",
+      "name": "Pistol",
+      "hash": 453432689,
+      "category": "Pistol",
+      "iconUrl": "https://gtahash.ru/Image/Pistol-icon.872de50b5931e7e3221533800fd04226.png",
+      "icon": "pistol.png"
+    },
+    {
+      "spawn": "pistol_mk2",
+      "name": "Pistol Mk II",
+      "hash": 3219281620,
+      "category": "Pistol",
+      "iconUrl": "https://gtahash.ru/Image/Pistol-mk2-icon.bedfc3a2e502819e52fd61077cd27fa4.png",
+      "icon": "pistol_mk2.png"
+    },
+    {
+      "spawn": "combatpistol",
+      "name": "Combat Pistol",
+      "hash": 1593441988,
+      "category": "Pistol",
+      "iconUrl": "https://gtahash.ru/Image/Combat-pistol-icon.9baf7bb67d7aa6c8073df08975fcae54.png",
+      "icon": "combatpistol.png"
+    },
+    {
+      "spawn": "appistol",
+      "name": "AP Pistol",
+      "hash": 584646201,
+      "category": "Pistol",
+      "iconUrl": "https://gtahash.ru/Image/Appistol-icon.a583edffc7e53279cc780f4b6bb141a2.png",
+      "icon": "appistol.png"
+    },
+    {
+      "spawn": "stungun",
+      "name": "Stun Gun",
+      "hash": 911657153,
+      "category": "Pistol",
+      "iconUrl": "https://gtahash.ru/Image/Stungun-icon.4a20249df44d22dfc20c901f447f718b.png",
+      "icon": "stungun.png"
+    },
+    {
+      "spawn": "pistol50",
+      "name": "Pistol .50",
+      "hash": 2578377531,
+      "category": "Pistol",
+      "iconUrl": "https://gtahash.ru/Image/Pistol.50-icon.db8dfe302f0745886a2841bb20d2ad25.png",
+      "icon": "pistol50.png"
+    },
+    {
+      "spawn": "snspistol",
+      "name": "SNS Pistol",
+      "hash": 3218215474,
+      "category": "Pistol",
+      "iconUrl": "https://gtahash.ru/Image/Sns-pistol-icon.7e044710c6a01458b6a54153c2abb9bd.png",
+      "icon": "snspistol.png"
+    },
+    {
+      "spawn": "snspistol_mk2",
+      "name": "SNS Pistol Mk II",
+      "hash": 2285322324,
+      "category": "Pistol",
+      "iconUrl": "https://gtahash.ru/Image/Sns-pistol-mk2-icon.7abdfaef43d12ad31bcd6f5763c3fea4.png",
+      "icon": "snspistol_mk2.png"
+    },
+    {
+      "spawn": "heavypistol",
+      "name": "Heavy Pistol",
+      "hash": 3523564046,
+      "category": "Pistol",
+      "iconUrl": "https://gtahash.ru/Image/Heavy-pistol-icon.f30541f5f3a309c9cea1fcdafa689cf5.png",
+      "icon": "heavypistol.png"
+    },
+    {
+      "spawn": "vintagepistol",
+      "name": "Vintage Pistol",
+      "hash": 137902532,
+      "category": "Pistol",
+      "iconUrl": "https://gtahash.ru/Image/Vintage-pistol-icon.25645d6e6f098238c84969e0a87aa8c0.png",
+      "icon": "vintagepistol.png"
+    },
+    {
+      "spawn": "flaregun",
+      "name": "Flare Gun",
+      "hash": 1198879012,
+      "category": "Pistol",
+      "iconUrl": "https://gtahash.ru/Image/Flaregun-icon.463a334768bc2a9c71caa5cc82333aaf.png",
+      "icon": "flaregun.png"
+    },
+    {
+      "spawn": "marksmanpistol",
+      "name": "Marksman Pistol",
+      "hash": 3696079510,
+      "category": "Pistol",
+      "iconUrl": "https://gtahash.ru/Image/164px-Marksman-pistol-icon.cc6ee22b35ae40887419746e7d67feb2.png",
+      "icon": "marksmanpistol.png"
+    },
+    {
+      "spawn": "revolver",
+      "name": "Heavy Revolver",
+      "hash": 3249783761,
+      "category": "Pistol",
+      "iconUrl": "https://gtahash.ru/Image/164px-Heavy-revolver-icon.2426feee24f9d66e3ead6014d1c146ec.png",
+      "icon": "revolver.png"
+    },
+    {
+      "spawn": "revolver_mk2",
+      "name": "Heavy Revolver Mk II",
+      "hash": 3415619887,
+      "category": "Pistol",
+      "iconUrl": "https://gtahash.ru/Image/164px-Heavy-revolver-mk2-icon.b2331c15dff15c66ddca28b42d214ba1.png",
+      "icon": "revolver_mk2.png"
+    },
+    {
+      "spawn": "doubleaction",
+      "name": "Double Action Revolver",
+      "hash": 2548703416,
+      "category": "Other",
+      "iconUrl": "https://gtahash.ru/Image/164px-Double-action-revolver-icon.8414cb640b1e7ba3906aae80a59db4a2.png",
+      "icon": "doubleaction.png"
+    },
+    {
+      "spawn": "raypistol",
+      "name": "Up-n-Atomizer",
+      "hash": 2939590305,
+      "category": "Pistol",
+      "iconUrl": "https://gtahash.ru/Image/164px-Up-n-atomizer-icon.b0a90d0559cedf5b9b32991f30ce15d5.png",
+      "icon": "raypistol.png"
+    },
+    {
+      "spawn": "ceramicpistol",
+      "name": "Ceramic Pistol",
+      "hash": 727643628,
+      "category": "Pistol",
+      "iconUrl": "https://gtahash.ru/Image/Ceramic-pistol-icon.897c94c8d01c44a4bdc707f9779a372f.png",
+      "icon": "ceramicpistol.png"
+    },
+    {
+      "spawn": "navyrevolver",
+      "name": "Navy Revolver",
+      "hash": 2441047180,
+      "category": "Pistol",
+      "iconUrl": "https://gtahash.ru/Image/164px-Navy-revolver-icon.d37f0ea9333a638b2af41cb47926b08c.png",
+      "icon": "navyrevolver.png"
+    },
+    {
+      "spawn": "microsmg",
+      "name": "Micro SMG",
+      "hash": 324215364,
+      "category": "SMG",
+      "iconUrl": "https://gtahash.ru/Image/164px-Micro-smg-icon.2d092573894f83526c9289ac66929066.png",
+      "icon": "microsmg.png"
+    },
+    {
+      "spawn": "smg",
+      "name": "SMG",
+      "hash": 736523883,
+      "category": "SMG",
+      "iconUrl": "https://gtahash.ru/Image/164px-Smg-icon.6e6d564c64557e9c7de690c53fda16c8.png",
+      "icon": "smg.png"
+    },
+    {
+      "spawn": "smg_mk2",
+      "name": "SMG Mk II",
+      "hash": 2024373456,
+      "category": "SMG",
+      "iconUrl": "https://gtahash.ru/Image/164px-Smg-mk2-icon.bb50c467ae7bcd8126ef344c0b9e3fc7.png",
+      "icon": "smg_mk2.png"
+    },
+    {
+      "spawn": "assaultsmg",
+      "name": "Assault SMG",
+      "hash": 4024951519,
+      "category": "SMG",
+      "iconUrl": "https://gtahash.ru/Image/164px-Assault-smg-icon.1af12d070446979b6b49fed79838bf79.png",
+      "icon": "assaultsmg.png"
+    },
+    {
+      "spawn": "combatpdw",
+      "name": "Combat PDW",
+      "hash": 171789620,
+      "category": "SMG",
+      "iconUrl": "https://gtahash.ru/Image/164px-Combat-pdw-icon.fbf4040dba2fdbe9c533ec816c9723b0.png",
+      "icon": "combatpdw.png"
+    },
+    {
+      "spawn": "machinepistol",
+      "name": "Machine Pistol",
+      "hash": 3675956304,
+      "category": "SMG",
+      "iconUrl": "https://gtahash.ru/Image/164px-Machine-pistol-icon.91e63f21baf5461f4c027e94a2f74f95.png",
+      "icon": "machinepistol.png"
+    },
+    {
+      "spawn": "minismg",
+      "name": "Mini SMG",
+      "hash": 3173288789,
+      "category": "SMG",
+      "iconUrl": "https://gtahash.ru/Image/164px-Mini-smg-icon.088f38b013dc42c170287d1b26a65d4a.png",
+      "icon": "minismg.png"
+    },
+    {
+      "spawn": "raycarbine",
+      "name": "Unholy Hellbringer",
+      "hash": 1198256469,
+      "category": "SMG",
+      "iconUrl": "https://gtahash.ru/Image/164px-Unholy-hellbringer-icon.5140e1cdc7ab6a1ba992f52686e16a85.png",
+      "icon": "raycarbine.png"
+    },
+    {
+      "spawn": "pumpshotgun",
+      "name": "Pump Shotgun",
+      "hash": 487013001,
+      "category": "Shotgun",
+      "iconUrl": "https://gtahash.ru/Image/164px-Pump-shotgun-icon.ef467f066da720360e03799653e82fe2.png",
+      "icon": "pumpshotgun.png"
+    },
+    {
+      "spawn": "pumpshotgun_mk2",
+      "name": "Pump Shotgun Mk II",
+      "hash": 1432025498,
+      "category": "Shotgun",
+      "iconUrl": "https://gtahash.ru/Image/164px-Pump-shotgun-mk2-icon.8524aa646817410219ba76b3d986b4f6.png",
+      "icon": "pumpshotgun_mk2.png"
+    },
+    {
+      "spawn": "sawnoffshotgun",
+      "name": "Sawed-Off Shotgun",
+      "hash": 2017895192,
+      "category": "Shotgun",
+      "iconUrl": "https://gtahash.ru/Image/164px-Sawed-off-shotgun-icon.f8afdccfb2484abb66adb6839f635438.png",
+      "icon": "sawnoffshotgun.png"
+    },
+    {
+      "spawn": "assaultshotgun",
+      "name": "Assault Shotgun",
+      "hash": 3800352039,
+      "category": "Shotgun",
+      "iconUrl": "https://gtahash.ru/Image/164px-Assault-shotgun-icon.a55a7351e7e56566c005d650093431b1.png",
+      "icon": "assaultshotgun.png"
+    },
+    {
+      "spawn": "bullpupshotgun",
+      "name": "Bullpup Shotgun",
+      "hash": 2640438543,
+      "category": "Shotgun",
+      "iconUrl": "https://gtahash.ru/Image/164px-Bullpup-shotgun-icon.ae59811b6d8d713fe9b4c8c499dccc01.png",
+      "icon": "bullpupshotgun.png"
+    },
+    {
+      "spawn": "musket",
+      "name": "Musket",
+      "hash": 2828843422,
+      "category": "Shotgun",
+      "iconUrl": "https://gtahash.ru/Image/164px-Musket-icon.220494e4b0efeeafcf463f7798735bbc.png",
+      "icon": "musket.png"
+    },
+    {
+      "spawn": "heavyshotgun",
+      "name": "Heavy Shotgun",
+      "hash": 984333226,
+      "category": "Shotgun",
+      "iconUrl": "https://gtahash.ru/Image/164px-Heavy-shotgun-icon.16960689f91228373c70f0304336858e.png",
+      "icon": "heavyshotgun.png"
+    },
+    {
+      "spawn": "dbshotgun",
+      "name": "Double Barrel Shotgun",
+      "hash": 4019527611,
+      "category": "Shotgun",
+      "iconUrl": "https://gtahash.ru/Image/164px-Double-barrel-shotgun-icon.6a008adf6a1471708e55d79bb89a8172.png",
+      "icon": "dbshotgun.png"
+    },
+    {
+      "spawn": "autoshotgun",
+      "name": "Sweeper Shotgun",
+      "hash": 317205821,
+      "category": "Shotgun",
+      "iconUrl": "https://gtahash.ru/Image/164px-Sweeper-shotgun-icon.6ca6d32bf8c647bd483ac27f00786868.png",
+      "icon": "autoshotgun.png"
+    },
+    {
+      "spawn": "assaultrifle",
+      "name": "Assault Rifle",
+      "hash": 3220176749,
+      "category": "Rifle",
+      "iconUrl": "https://gtahash.ru/Image/164px-Assault-rifle-icon.936c66b2db07cabeeeaf5416ea63d8ae.png",
+      "icon": "assaultrifle.png"
+    },
+    {
+      "spawn": "assaultrifle_mk2",
+      "name": "Assault Rifle Mk II",
+      "hash": 961495388,
+      "category": "Rifle",
+      "iconUrl": "https://gtahash.ru/Image/164px-Assault-rifle-mk2-icon.b7b8bed8bf3a53a81b7aae9ded5c9f68.png",
+      "icon": "assaultrifle_mk2.png"
+    },
+    {
+      "spawn": "carbinerifle",
+      "name": "Carbine Rifle",
+      "hash": 2210333304,
+      "category": "Rifle",
+      "iconUrl": "https://gtahash.ru/Image/164px-Carbine-rifle-icon.9b9acca0f680a5f6e69820ff6f8433c2.png",
+      "icon": "carbinerifle.png"
+    },
+    {
+      "spawn": "carbinerifle_mk2",
+      "name": "Carbine Rifle Mk II",
+      "hash": 4208062921,
+      "category": "Rifle",
+      "iconUrl": "https://gtahash.ru/Image/164px-Carbine-rifle-mk2-icon.ef8778184022481ca2c309de962d5282.png",
+      "icon": "carbinerifle_mk2.png"
+    },
+    {
+      "spawn": "advancedrifle",
+      "name": "Advanced Rifle",
+      "hash": 2937143193,
+      "category": "Rifle",
+      "iconUrl": "https://gtahash.ru/Image/164px-Advanced-rifle-icon.b623cfd125db632f8ad8a3e1f7199180.png",
+      "icon": "advancedrifle.png"
+    },
+    {
+      "spawn": "specialcarbine",
+      "name": "Special Carbine",
+      "hash": 3231910285,
+      "category": "Rifle",
+      "iconUrl": "https://gtahash.ru/Image/164px-Special-carbine-icon.06b9c01990f9dd743b9c7e90afdc784e.png",
+      "icon": "specialcarbine.png"
+    },
+    {
+      "spawn": "specialcarbine_mk2",
+      "name": "Special Carbine Mk II",
+      "hash": 2526821735,
+      "category": "Rifle",
+      "iconUrl": "https://gtahash.ru/Image/164px-Special-carbine-mk2-icon.b3ea6849de0b64fce9d207624a81c07a.png",
+      "icon": "specialcarbine_mk2.png"
+    },
+    {
+      "spawn": "bullpuprifle",
+      "name": "Bullpup Rifle",
+      "hash": 2132975508,
+      "category": "Rifle",
+      "iconUrl": "https://gtahash.ru/Image/164px-Bullpup-rifle-icon.caadb5ce3b3fc02166a3fa777340553a.png",
+      "icon": "bullpuprifle.png"
+    },
+    {
+      "spawn": "bullpuprifle_mk2",
+      "name": "Bullpup Rifle Mk II",
+      "hash": 2228681469,
+      "category": "Rifle",
+      "iconUrl": "https://gtahash.ru/Image/164px-Bullpup-rifle-mk2-icon.5f1d2aa4bfbb0e6f7df2d7a3fa2305ac.png",
+      "icon": "bullpuprifle_mk2.png"
+    },
+    {
+      "spawn": "compactrifle",
+      "name": "Compact Rifle",
+      "hash": 1649403952,
+      "category": "Rifle",
+      "iconUrl": "https://gtahash.ru/Image/164px-Compact-rifle-icon.97633bdba91fa91372cd606bceacd7ae.png",
+      "icon": "compactrifle.png"
+    },
+    {
+      "spawn": "mg",
+      "name": "MG",
+      "hash": 2634544996,
+      "category": "MG",
+      "iconUrl": "https://gtahash.ru/Image/164px-Mg-icon.cc4e6cd64f1d17f238812cee46748a79.png",
+      "icon": "mg.png"
+    },
+    {
+      "spawn": "combatmg",
+      "name": "Combat MG",
+      "hash": 2144741730,
+      "category": "MG",
+      "iconUrl": "https://gtahash.ru/Image/164px-Combat-mg-icon.d2911485955c93de12abe9bf1a037ae7.png",
+      "icon": "combatmg.png"
+    },
+    {
+      "spawn": "combatmg_mk2",
+      "name": "Combat MG Mk II",
+      "hash": 3686625920,
+      "category": "MG",
+      "iconUrl": "https://gtahash.ru/Image/164px-Combat-mg-mk2-icon.26009778ebe4ba0cadff86168dc66b1c.png",
+      "icon": "combatmg_mk2.png"
+    },
+    {
+      "spawn": "gusenberg",
+      "name": "Gusenberg Sweeper",
+      "hash": 1627465347,
+      "category": "MG",
+      "iconUrl": "https://gtahash.ru/Image/164px-Gusenberg-sweeper-icon.e9f3f29d2f2666ebecedec029847c9ae.png",
+      "icon": "gusenberg.png"
+    },
+    {
+      "spawn": "sniperrifle",
+      "name": "Sniper Rifle",
+      "hash": 100416529,
+      "category": "Sniper",
+      "iconUrl": "https://gtahash.ru/Image/164px-Sniper-rifle-icon.6a7e2a836e655cf0df4da5fb85e0287b.png",
+      "icon": "sniperrifle.png"
+    },
+    {
+      "spawn": "heavysniper",
+      "name": "Heavy Sniper",
+      "hash": 205991906,
+      "category": "Sniper",
+      "iconUrl": "https://gtahash.ru/Image/164px-Heavy-sniper-icon.838329b7c5ca230003235118e1996934.png",
+      "icon": "heavysniper.png"
+    },
+    {
+      "spawn": "heavysniper_mk2",
+      "name": "Heavy Sniper Mk II",
+      "hash": 177293209,
+      "category": "Sniper",
+      "iconUrl": "https://gtahash.ru/Image/164px-Heavy-sniper-mk2-icon.8dfd665f44349a814dffebd64da7630c.png",
+      "icon": "heavysniper_mk2.png"
+    },
+    {
+      "spawn": "marksmanrifle",
+      "name": "Marksman Rifle",
+      "hash": 3342088282,
+      "category": "Sniper",
+      "iconUrl": "https://gtahash.ru/Image/164px-Marksman-rifle-icon.6d21d99fdaf59a5a33085737c3e1cab9.png",
+      "icon": "marksmanrifle.png"
+    },
+    {
+      "spawn": "marksmanrifle_mk2",
+      "name": "Marksman Rifle Mk II",
+      "hash": 1785463520,
+      "category": "Sniper",
+      "iconUrl": "https://gtahash.ru/Image/164px-Marksman-rifle-mk2-icon.3214215ee54dc0343f6c8d9c52380eb2.png",
+      "icon": "marksmanrifle_mk2.png"
+    },
+    {
+      "spawn": "rpg",
+      "name": "RPG",
+      "hash": 2982836145,
+      "category": "Heavy",
+      "iconUrl": "https://gtahash.ru/Image/164px-Rocket-launcher-icon.66dbbc87c42b12dea0c03db646999d2c.png",
+      "icon": "rpg.png"
+    },
+    {
+      "spawn": "grenadelauncher",
+      "name": "Grenade Launcher",
+      "hash": 2726580491,
+      "category": "Thrown",
+      "iconUrl": "https://gtahash.ru/Image/164px-Grenade-launcher-icon.106c84b0d0662fcd4400baa537158c8e.png",
+      "icon": "grenadelauncher.png"
+    },
+    {
+      "spawn": "grenadelauncher_smoke",
+      "name": "Grenade Launcher Smoke",
+      "hash": 1305664598,
+      "category": "Thrown",
+      "iconUrl": "https://gtahash.ru/Image/164px-Grenade-launcher-icon.106c84b0d0662fcd4400baa537158c8e.png",
+      "icon": "grenadelauncher_smoke.png"
+    },
+    {
+      "spawn": "minigun",
+      "name": "Minigun",
+      "hash": 1119849093,
+      "category": "MG",
+      "iconUrl": "https://gtahash.ru/Image/164px-Minigun-icon.bc36dec555a5178ed0d78324bb158902.png",
+      "icon": "minigun.png"
+    },
+    {
+      "spawn": "firework",
+      "name": "Firework Launcher",
+      "hash": 2138347493,
+      "category": "Heavy",
+      "iconUrl": "https://gtahash.ru/Image/164px-Firework-launcher-icon.d8ae9d17fa60c7dd8be36f19b2878b58.png",
+      "icon": "firework.png"
+    },
+    {
+      "spawn": "railgun",
+      "name": "Railgun",
+      "hash": 1834241177,
+      "category": "Heavy",
+      "iconUrl": "https://gtahash.ru/Image/164px-Railgun-icon.0a7321189152b2e55b29d44e9f4d1f81.png",
+      "icon": "railgun.png"
+    },
+    {
+      "spawn": "hominglauncher",
+      "name": "Homing Launcher",
+      "hash": 1672152130,
+      "category": "Heavy",
+      "iconUrl": "https://gtahash.ru/Image/164px-Homing-launcher-icon.f3fad5f50ec23f5b26b88fcf16e8fb8a.png",
+      "icon": "hominglauncher.png"
+    },
+    {
+      "spawn": "compactlauncher",
+      "name": "Compact Grenade Launcher",
+      "hash": 125959754,
+      "category": "Heavy",
+      "iconUrl": "https://gtahash.ru/Image/164px-Grenade-compact-launcher-icon.00814fa15aba110bb18c72c891b2ccee.png",
+      "icon": "compactlauncher.png"
+    },
+    {
+      "spawn": "rayminigun",
+      "name": "Widowmaker",
+      "hash": 3056410471,
+      "category": "MG",
+      "iconUrl": "https://gtahash.ru/Image/164px-Widowmaker-icon.b01d222a8fa1643486a84af91d4beb59.png",
+      "icon": "rayminigun.png"
+    },
+    {
+      "spawn": "grenade",
+      "name": "Grenade",
+      "hash": 2481070269,
+      "category": "Thrown",
+      "iconUrl": "https://gtahash.ru/Image/Grenade-icon.d3d27016cec1cb5b18231bb92e0c2f7f.png",
+      "icon": "grenade.png"
+    },
+    {
+      "spawn": "bzgas",
+      "name": "BZ Gas",
+      "hash": 2694266206,
+      "category": "Thrown",
+      "iconUrl": "https://gtahash.ru/Image/56px-Bz-gas-icon.469625a08f1cc32c6d633b459e107820.png",
+      "icon": "bzgas.png"
+    },
+    {
+      "spawn": "molotov",
+      "name": "Molotov Cocktail",
+      "hash": 615608432,
+      "category": "Thrown",
+      "iconUrl": "https://gtahash.ru/Image/120px-Molotov-icon.974148156685e37b8f11a9d64d3ae7a5.png",
+      "icon": "molotov.png"
+    },
+    {
+      "spawn": "proxmine",
+      "name": "Proximity Mines",
+      "hash": 2874559379,
+      "category": "Thrown",
+      "iconUrl": "https://gtahash.ru/Image/Proximity-mines-icon.f05dda5dac46e3d35c107b95c084a1bf.png",
+      "icon": "proxmine.png"
+    },
+    {
+      "spawn": "snowball",
+      "name": "Snowballs",
+      "hash": 126349499,
+      "category": "Thrown",
+      "iconUrl": "https://gtahash.ru/Image/Snowball-icon.b3cb079be4eb82822b775fcc6c5f44b9.png",
+      "icon": "snowball.png"
+    },
+    {
+      "spawn": "pipebomb",
+      "name": "Pipe Bombs",
+      "hash": 3125143736,
+      "category": "Thrown",
+      "iconUrl": "https://gtahash.ru/Image/164px-Pipe-bomb-icon.dcbad83381f08eba3c21e440b0d4906d.png",
+      "icon": "pipebomb.png"
+    },
+    {
+      "spawn": "ball",
+      "name": "Baseball",
+      "hash": 600439132,
+      "category": "Thrown",
+      "iconUrl": "https://gtahash.ru/Image/Ball-icon.23c04052136c9324ffbf517b7af177cb.png",
+      "icon": "ball.png"
+    },
+    {
+      "spawn": "smokegrenade",
+      "name": "Tear Gas",
+      "hash": 4256991824,
+      "category": "Thrown",
+      "iconUrl": "https://gtahash.ru/Image/56px-Tear-gas-icon.a2c99586c4ad4f33328f4585f0eb6140.png",
+      "icon": "smokegrenade.png"
+    },
+    {
+      "spawn": "flare",
+      "name": "Flare",
+      "hash": 1233104067,
+      "category": "Thrown",
+      "iconUrl": "https://gtahash.ru/Image/Flare-icon.99b01e470be6759c2ad4b8162e92bf61.png",
+      "icon": "flare.png"
+    },
+    {
+      "spawn": "stickybomb",
+      "name": "Sticky Bomb",
+      "hash": 741814745,
+      "category": "Thrown",
+      "iconUrl": "https://gtahash.ru/Image/Sticky-bomb-icon.c15801b41d2d53de06ca94de3a7ea522.png",
+      "icon": "stickybomb.png"
+    },
+    {
+      "spawn": "petrolcan",
+      "name": "Jerry Can",
+      "hash": 883325847,
+      "category": "Thrown",
+      "iconUrl": "https://gtahash.ru/Image/94px-Petrolcan-icon.5849815ae18e4a80395dd1d28f1d76b3.png",
+      "icon": "petrolcan.png"
+    },
+    {
+      "spawn": "parachute",
+      "name": "Parachute",
+      "hash": 4222310262,
+      "category": "Thrown",
+      "iconUrl": "https://gtahash.ru/Image/93px-Parachute-icon.a43778a6a3bf6d701c58ece00b46a773.png",
+      "icon": "parachute.png"
+    },
+    {
+      "spawn": "fireextinguisher",
+      "name": "Fire Extinguisher",
+      "hash": 101631238,
+      "category": "Thrown",
+      "iconUrl": "https://gtahash.ru/Image/97px-Fire2.65b24fa87b0a5cc5aec490e239bd88d2.png",
+      "icon": "fireextinguisher.png"
+    },
+    {
+      "spawn": "hazardcan",
+      "name": "Hazardous Jerry Can",
+      "hash": 3126027122,
+      "category": "Thrown",
+      "iconUrl": "https://gtahash.ru/Image/94px-Petrolcan-icon.5849815ae18e4a80395dd1d28f1d76b3.png",
+      "icon": "hazardcan.png"
+    }
+  ]
+}
