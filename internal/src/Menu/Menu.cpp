@@ -38,8 +38,14 @@
 #include "../Features/QuantTools.h"
 #include "../Features/UkraineTools.h"
 #include "../Features/FiveRpFarmBot.h"
+#if __has_include("../Features/ServerProfile.h")
 #include "../Features/ServerProfile.h"
-#include "../Features/RagePlayerNames.h"
+#else
+namespace ServerProfile
+{
+    inline bool HasItemBridge() noexcept { return false; }
+}
+#endif
 #include "../Features/VehicleMovement.h"
 #include "../Features/SilentAim.h"
 #include "../Features/Aimbot.h"
@@ -1055,7 +1061,7 @@ namespace Menu
             MainPage::Visuals,
             NavGroup::World,
             "visuals",
-            ICON_FA_EYE,
+            ICON_FA_USER_GROUP,
             "Visuals", "Визуалы", "Візуали",
             "Peds, world entities and radar",
             "Педы, объекты мира и радар",
@@ -1064,12 +1070,12 @@ namespace Menu
         {
             MainPage::Players,
             NavGroup::World,
-            "players",
-            ICON_FA_USER_GROUP,
-            "Players", "Игроки", "Гравці",
-            "Friends and nearby overlay",
-            "Друзья и оверлей рядом",
-            "Друзі та оверлей поруч"
+            "filters",
+            ICON_FA_FILTER,
+            "Filters", "Фильтры", "Фільтри",
+            "Friends, factions, objects and items",
+            "Друзья, фракции, объекты и предметы",
+            "Друзі, фракції, об'єкти та предмети"
         },
         {
             MainPage::Scripts,
@@ -1162,7 +1168,7 @@ namespace Menu
         Aim = 0,
         Visuals,
         Misc,
-        Friends,
+        Filters,
         Scripts,
 #if RAGEMP_EVENT_LOGGER
         Logger,
@@ -1296,6 +1302,41 @@ namespace Menu
 #endif
     };
 
+    static const DestChild kFilterChildren[] = {
+        {
+            "friends", ICON_FA_USER_GROUP,
+            "Friends", "Друзья", "Друзі",
+            "Saved friends list",
+            "Список сохранённых друзей",
+            "Список збережених друзів",
+            MainPage::Players, 0
+        },
+        {
+            "factions", ICON_FA_SHIELD_HALVED,
+            "Factions", "Фракции", "Фракції",
+            "Faction color tags",
+            "Цвета тегов фракций",
+            "Кольори тегів фракцій",
+            MainPage::Players, 1
+        },
+        {
+            "objects", ICON_FA_CUBE,
+            "Objects", "Объекты", "Об'єкти",
+            "Model filters",
+            "Добавление и фильтры объектов",
+            "Додавання та фільтри об'єктів",
+            MainPage::Players, 2
+        },
+        {
+            "items", ICON_FA_BOX_OPEN,
+            "Items", "Предметы", "Предмети",
+            "Ground items and teleport",
+            "Список предметов и метка/ТП",
+            "Список предметів і мітка/ТП",
+            MainPage::Players, 3
+        }
+    };
+
     // Configs is a leaf: account and runtime moved into the gear panel.
     static const DestChild* const kConfigChildren = nullptr;
 
@@ -1308,7 +1349,7 @@ namespace Menu
         },
         {
             // Scopes live inside the page as one chip strip.
-            "visuals", ICON_FA_EYE,
+            "visuals", ICON_FA_USER_GROUP,
             "Visuals", "Визуалы", "Візуали",
             nullptr, 0,
             MainPage::Visuals
@@ -1320,9 +1361,9 @@ namespace Menu
             MainPage::Player
         },
         {
-            "friends", ICON_FA_USER_GROUP,
-            "Friends", "Друзья", "Друзі",
-            nullptr, 0,
+            "filters", ICON_FA_FILTER,
+            "Filters", "Фильтры", "Фільтри",
+            kFilterChildren, IM_ARRAYSIZE(kFilterChildren),
             MainPage::Players
         },
         {
@@ -1357,7 +1398,7 @@ namespace Menu
         case MainPage::Visuals:
             return DestRoot::Visuals;
         case MainPage::Players:
-            return DestRoot::Friends;
+            return DestRoot::Filters;
         case MainPage::Scripts:
 #if RAGEMP_EVENT_LOGGER
             // Both categories live on the Scripts page; the bridge decides
@@ -1400,6 +1441,8 @@ namespace Menu
             return s_VisualCategoryTab == child.value;
         case MainPage::Player:
             return s_MiscSubTab == child.value;
+        case MainPage::Players:
+            return s_FilterSubTab == child.value;
         case MainPage::Settings:
             return s_ConfigSubTab == child.value;
         default:
@@ -1420,6 +1463,9 @@ namespace Menu
             break;
         case MainPage::Player:
             s_MiscSubTab = child.value;
+            break;
+        case MainPage::Players:
+            s_FilterSubTab = ImClamp(child.value, 0, 3);
             break;
         case MainPage::Settings:
             s_ConfigSubTab = child.value;
@@ -2143,6 +2189,9 @@ namespace Menu
         case MainPage::Player:
             s_MiscSubTab = tab;
             break;
+        case MainPage::Players:
+            s_FilterSubTab = ImClamp(tab, 0, 3);
+            break;
         case MainPage::Settings:
             s_ConfigSubTab = tab;
             break;
@@ -2159,7 +2208,7 @@ namespace Menu
         case MainPage::Weapons: return "page:weapons";
         case MainPage::Visuals: return "page:visuals";
         case MainPage::Scripts: return "page:scripts";
-        case MainPage::Players: return "page:friends";
+        case MainPage::Players: return "page:filters";
         case MainPage::Misc: return "page:around";
         case MainPage::Player: return "page:misc";
         case MainPage::Cars: return "page:cars";

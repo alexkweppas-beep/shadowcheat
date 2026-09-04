@@ -10,6 +10,7 @@ namespace Menu
     MainPage s_AcceptedMainPage = MainPage::Combat;
     int s_MiscSubTab = 0;
     int s_ConfigSubTab = 0;
+    int s_FilterSubTab = 0;
     int s_PreviewForcedTab = -1;
     bool s_PreviewOpenSettings = false;
 

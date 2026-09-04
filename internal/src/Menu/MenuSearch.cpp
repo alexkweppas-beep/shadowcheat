@@ -219,10 +219,38 @@ namespace Menu
         },
 #endif
         {
-            "players", "Players", "Игроки", "Гравці",
-            "Misc", "Разное", "Різне",
-            "friend list nearby overlay radius ignore aim admins",
+            "filters", "Filters", "Фильтры", "Фільтри",
+            "Filters", "Фильтры", "Фільтри",
+            "filters friend list nearby factions colors objects items teleport waypoint",
             SearchRouteKind::Main, MainPage::Players, 0,
+            SearchAvailability::Always
+        },
+        {
+            "filters_friends", "Friends", "Друзья", "Друзі",
+            "Filters", "Фильтры", "Фільтри",
+            "friends list radius nick add",
+            SearchRouteKind::Main, MainPage::Players, 0,
+            SearchAvailability::Always
+        },
+        {
+            "filters_factions", "Factions", "Фракции", "Фракції",
+            "Filters", "Фильтры", "Фільтри",
+            "faction colors tags esp",
+            SearchRouteKind::Main, MainPage::Players, 1,
+            SearchAvailability::Always
+        },
+        {
+            "filters_objects", "Objects", "Объекты", "Об'єкти",
+            "Filters", "Фильтры", "Фільтри",
+            "object model filter hash include exclude",
+            SearchRouteKind::Main, MainPage::Players, 2,
+            SearchAvailability::Always
+        },
+        {
+            "filters_items", "Items", "Предметы", "Предмети",
+            "Filters", "Фильтры", "Фільтри",
+            "ground items teleport waypoint autoloot pickup",
+            SearchRouteKind::Main, MainPage::Players, 3,
             SearchAvailability::Always
         },
         {

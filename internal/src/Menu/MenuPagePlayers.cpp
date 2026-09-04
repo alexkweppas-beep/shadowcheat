@@ -26,18 +26,34 @@
 #include "Leyawin/leyawin_safe.h"
 #include "IconsFontAwesome6.h"
 #include "WeaponIconMap.h"
+#include "FactionColors.h"
 #include "../Features/Friends.h"
 #include "../Features/MiscFeatures.h"
 #include "../Features/QuantTools.h"
 #include "../Features/UkraineTools.h"
 #include "../Features/FiveRpFarmBot.h"
 #include "../Features/RagePlayerNames.h"
+#include "../Features/RageWorldEntities.h"
 #include "../Features/VehicleMovement.h"
 #include "../Features/SilentAim.h"
 #include "../Features/Aimbot.h"
 #include "../Features/FiveRpMetadataResolver.h"
 #include "../Features/FiveRpAdminScan.h"
+#if __has_include("../Features/ServerProfile.h")
 #include "../Features/ServerProfile.h"
+#endif
+#if __has_include("../Features/AutoLoot.h")
+#include "../Features/AutoLoot.h"
+#define HAS_AUTOLOOT 1
+#else
+#define HAS_AUTOLOOT 0
+#endif
+#if __has_include("../Features/NativeInvoke.hpp")
+#include "../Features/NativeInvoke.hpp"
+#define HAS_NATIVE_INVOKE 1
+#else
+#define HAS_NATIVE_INVOKE 0
+#endif
 #include "../Features/RageV8Runtime.h"
 #include "../Features/RuntimeProfiler.h"
 #include "../Features/ScriptBridge.h"
@@ -55,7 +71,6 @@
 #include <algorithm>
 #include <cmath>
 #include <ctime>
-
 
 namespace Menu
 {
@@ -85,11 +100,17 @@ namespace Menu
             ICON_FA_USER_SHIELD,
             T("Admins around", "Админы рядом", "Адміни поруч"),
             &s.showAdmins);
+#ifdef RAGEMP_MENU_PREVIEW
+        static bool s_PreviewShowAdminList = false;
+        bool* pShowAdminList = &s_PreviewShowAdminList;
+#else
+        bool* pShowAdminList = &s.showAdminList;
+#endif
         MiscRow(
             "players_show_admin_list",
             ICON_FA_LIST,
             T("Admin list", "Список админов", "Список адмінів"),
-            &s.showAdminList);
+            pShowAdminList);
         gui->slider_float_icon(
             ICON_FA_RULER,
             T("Overlay range###players_overlay_distance",
@@ -180,22 +201,37 @@ namespace Menu
         return free;
     }
 
-    void RenderPlayersPage()
+    static bool StrContainsCaseInsensitive(const char* haystack, const char* needle) noexcept
+    {
+        if (!needle || !*needle)
+            return true;
+        if (!haystack || !*haystack)
+            return false;
+        for (; *haystack; ++haystack)
+        {
+            const char* h = haystack;
+            const char* n = needle;
+            while (*h && *n && (tolower(static_cast<unsigned char>(*h)) == tolower(static_cast<unsigned char>(*n))))
+            {
+                ++h;
+                ++n;
+            }
+            if (!*n)
+                return true;
+        }
+        return false;
+    }
+
+    // -------------------------------------------------------------------------
+    // Sub-tab 0: Friends (Друзья)
+    // -------------------------------------------------------------------------
+    static void RenderFriendsSubPage(
+        const MenuUi::MasterDetailMetrics& layout,
+        float scale) noexcept
     {
         static char s_FriendInput[48]{};
         static float s_AddRadius = 50.f;
         EnsureAimProfilesInitialized();
-
-        const float availY = ImGui::GetContentRegionAvail().y;
-        const float availX = ImGui::GetContentRegionAvail().x;
-        const float scale = UIScale();
-        const MenuUi::MasterDetailMetrics layout =
-            MenuUi::CalculateMasterDetail(
-                availX,
-                availY,
-                310.f,
-                420.f,
-                250.f);
 
         AimWeaponProfile& general = GetAimProfile(0);
         s_Aim_IgnoreFriends = general.ignoreFriends;
@@ -364,10 +400,6 @@ namespace Menu
             }
             else
             {
-                // Removal is deferred by one animation: the row has to be able
-                // to collapse before the entry behind it disappears. Copied,
-                // not referenced, because Friends::Remove compacts the very
-                // array the name lives in.
                 char pendingRemoval[48]{};
                 for (int i = 0; i < Friends::Count(); ++i)
                 {
@@ -381,8 +413,6 @@ namespace Menu
                         : 1.f;
                     const float leaving = motion ? motion->leaving : 0.f;
 
-                    // Enter grows the row and fades it in; leave does the same
-                    // in reverse, so the list closes the gap by itself.
                     const float presence =
                         ImClamp(appear * (1.f - leaving), 0.f, 1.f);
                     const float rowH =
@@ -507,5 +537,811 @@ namespace Menu
             MenuUi::EndToolbar();
         }
         MenuUi::EndGlassPanel();
+    }
+
+    // -------------------------------------------------------------------------
+    // Sub-tab 1: Factions (Фракции)
+    // -------------------------------------------------------------------------
+    static char s_FactionSearch[64]{};
+
+    static void RenderFactionsSubPage(
+        const MenuUi::MasterDetailMetrics& layout,
+        float scale) noexcept
+    {
+        MenuUi::BeginGlassPanel(
+            "##faction_settings",
+            ImVec2(layout.masterWidth, layout.masterHeight),
+            T("Faction settings", "Настройки фракций", "Налаштування фракцій"),
+            T("Tags & Colors", "Теги и цвета", "Теги та кольори"),
+            ImGuiWindowFlags_None,
+            false);
+        {
+            bool& enabled = FactionColors::Enabled();
+            gui->checkbox(
+                T("Enable faction colors", "Цвета фракций", "Кольори фракцій"),
+                &enabled);
+
+            ImGui::Dummy(ImVec2(0.f, 6.f * scale));
+
+            if (MenuUi::ActionButton(
+                    "faction_reset_btn",
+                    T("Reset to defaults", "Сбросить цвета", "Скинути кольори"),
+                    ImVec2(ImGui::GetContentRegionAvail().x, 34.f * scale),
+                    false,
+                    ICON_FA_ROTATE_LEFT))
+            {
+                FactionColors::ResetToDefaults();
+                PushNotification(
+                    T("Filters", "Фильтры", "Фільтри"),
+                    T("Faction colors reset to defaults.", "Цвета фракций сброшены к исходным.", "Кольори фракцій скинуто до початкових."),
+                    true,
+                    2500);
+            }
+
+            ImGui::Dummy(ImVec2(0.f, 8.f * scale));
+
+            gui->text_field(
+                "##faction_search_input",
+                T("Search faction...", "Поиск фракции...", "Пошук фракції..."),
+                ImVec2(ImGui::GetContentRegionAvail().x, 32.f * scale),
+                s_FactionSearch,
+                sizeof(s_FactionSearch));
+
+            ImGui::Dummy(ImVec2(0.f, 8.f * scale));
+
+            char statsBuf[64]{};
+            _snprintf(statsBuf, sizeof(statsBuf) - 1, "%d %s", FactionColors::Count(), T("presets", "пресетов", "пресетів"));
+            MenuUi::StatusChip("factions_loaded_chip", statsBuf, enabled);
+        }
+        MenuUi::EndGlassPanel();
+
+        if (layout.sideBySide)
+            ImGui::SameLine(0.f, layout.gap);
+
+        char factionListSubtitle[96]{};
+        _snprintf(
+            factionListSubtitle,
+            sizeof(factionListSubtitle) - 1,
+            "%d %s",
+            FactionColors::Count(),
+            T("factions registered", "фракций в списке", "фракцій у списку"));
+
+        MenuUi::BeginGlassPanel(
+            "##factions_list",
+            ImVec2(layout.detailWidth, layout.detailHeight),
+            T("Factions", "Список фракций", "Список фракцій"),
+            factionListSubtitle,
+            ImGuiWindowFlags_None,
+            false);
+        {
+            ImGui::BeginChild(
+                "##factions_scroll",
+                ImVec2(0.f, 0.f),
+                ImGuiChildFlags_None,
+                ImGuiWindowFlags_NoSavedSettings);
+
+            const int count = FactionColors::Count();
+            int drawnCount = 0;
+            for (int i = 0; i < count; ++i)
+            {
+                FactionColors::Entry* entry = FactionColors::At(i);
+                if (!entry || !entry->used)
+                    continue;
+
+                const char* labelName = entry->label[0] ? entry->label : entry->key;
+                if (s_FactionSearch[0] != '\0')
+                {
+                    if (!StrContainsCaseInsensitive(labelName, s_FactionSearch) &&
+                        !StrContainsCaseInsensitive(entry->key, s_FactionSearch))
+                        continue;
+                }
+
+                ImGui::PushID(i);
+                const float rowH = 40.f * scale;
+                const float colorPickerW = 120.f * scale;
+                const float labelW = ImMax(100.f * scale, ImGui::GetContentRegionAvail().x - colorPickerW - 8.f * scale);
+
+                MenuUi::ListRowDesc row{};
+                row.title = labelName;
+                row.meta = nullptr;
+                row.accentDot = entry->custom;
+                row.height = rowH;
+
+                ImGui::BeginChild(
+                    "##faction_row_title",
+                    ImVec2(labelW, rowH),
+                    ImGuiChildFlags_None,
+                    ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse);
+                MenuUi::DrawListRow("faction_row", row);
+                ImGui::EndChild();
+
+                ImGui::SameLine(0.f, 8.f * scale);
+                ImGui::SetCursorPosY(ImGui::GetCursorPosY() + 4.f * scale);
+
+                char colorId[48]{};
+                _snprintf(colorId, sizeof(colorId) - 1, "##f_clr_%d", i);
+                if (gui->color_edit(colorId, entry->color))
+                {
+                    entry->custom = true;
+                }
+
+                ImGui::PopID();
+                ImGui::Dummy(ImVec2(0.f, 3.f * scale));
+                ++drawnCount;
+            }
+
+            if (drawnCount == 0)
+            {
+                MenuUi::EmptyState(
+                    "factions_empty",
+                    ICON_FA_SHIELD_HALVED,
+                    T("No factions found", "Фракции не найдены", "Фракції не знайдені"),
+                    T("Try changing your search filter", "Попробуйте изменить поисковый запрос", "Спробуйте змінити пошуковий запит"),
+                    140.f);
+            }
+
+            ImGui::EndChild();
+        }
+        MenuUi::EndGlassPanel();
+    }
+
+    // -------------------------------------------------------------------------
+    // Sub-tab 2: Objects (Объекты)
+    // -------------------------------------------------------------------------
+    static char s_ObjHashInput[32]{};
+    static char s_ObjNameInput[32]{};
+    static int s_ObjListChoice = 0; // 0 = Shown (Whitelist), 1 = Hidden (Blacklist)
+
+    static bool ParseObjectHash(const char* text, std::uint32_t& out) noexcept
+    {
+        if (!text || !text[0])
+            return false;
+        char* end = nullptr;
+        const unsigned long value = std::strtoul(text, &end, 0);
+        if (!end || *end != '\0' || value == 0ul)
+            return false;
+        out = static_cast<std::uint32_t>(value);
+        return true;
+    }
+
+    static void RenderObjectsSubPage(
+        const MenuUi::MasterDetailMetrics& layout,
+        float scale) noexcept
+    {
+        ObjectVisualSettings& visual = s_ObjectVisualSettings;
+        visual.includeModelCount = ImClamp(visual.includeModelCount, 0, kMaxVisualModelFilters);
+        visual.excludeModelCount = ImClamp(visual.excludeModelCount, 0, kMaxVisualModelFilters);
+
+        MenuUi::BeginGlassPanel(
+            "##object_settings",
+            ImVec2(layout.masterWidth, layout.masterHeight),
+            T("Object settings", "Настройки объектов", "Налаштування об'єктів"),
+            T("Rendering & Filter mode", "Отрисовка и режим", "Відображення та режим"),
+            ImGuiWindowFlags_None,
+            false);
+        {
+            gui->checkbox(
+                T("Objects ESP", "ESP объектов", "ESP об'єктів"),
+                &visual.enabled);
+
+            ImGui::Dummy(ImVec2(0.f, 4.f * scale));
+
+            gui->checkbox(
+                T("Network objects", "Сетевые объекты", "Мережеві об'єкти"),
+                &visual.showObjects);
+            gui->checkbox(
+                T("Pickups", "Подбираемые", "Підбирані"),
+                &visual.showPickups);
+            gui->checkbox(
+                T("Show all (Bypass filter)", "Показывать всё (в обход фильтра)", "Показувати все (в обхід фільтра)"),
+                &visual.showAll);
+
+            ImGui::Dummy(ImVec2(0.f, 4.f * scale));
+            gui->slider_float_icon(
+                ICON_FA_RULER,
+                T("Max distance###obj_max_distance", "Дистанция###obj_max_distance", "Дистанція###obj_max_distance"),
+                &visual.maxDistance,
+                10.f,
+                600.f,
+                "%.0f m");
+
+            ImGui::Dummy(ImVec2(0.f, 8.f * scale));
+
+            char shownLabel[48]{};
+            char hiddenLabel[48]{};
+            _snprintf(shownLabel, sizeof(shownLabel) - 1, "%s  %d", T("Shown", "Показывать", "Показувати"), visual.includeModelCount);
+            _snprintf(hiddenLabel, sizeof(hiddenLabel) - 1, "%s  %d", T("Hidden", "Скрывать", "Ховати"), visual.excludeModelCount);
+            const MenuUi::IconTabDesc listTabs[2] = {
+                { "shown", ICON_FA_EYE, shownLabel },
+                { "hidden", ICON_FA_EYE_SLASH, hiddenLabel }
+            };
+            MenuUi::ChipTabs("obj_sub_filter_mode", listTabs, 2, &s_ObjListChoice);
+            if (s_ObjListChoice < 0 || s_ObjListChoice > 1)
+                s_ObjListChoice = 0;
+        }
+        MenuUi::EndGlassPanel();
+
+        if (layout.sideBySide)
+            ImGui::SameLine(0.f, layout.gap);
+
+        std::uint32_t* models = s_ObjListChoice == 0 ? visual.includeModels : visual.excludeModels;
+        int& modelCount = s_ObjListChoice == 0 ? visual.includeModelCount : visual.excludeModelCount;
+
+        char objectListSubtitle[96]{};
+        _snprintf(
+            objectListSubtitle,
+            sizeof(objectListSubtitle) - 1,
+            "%d / %d %s",
+            modelCount,
+            kMaxVisualModelFilters,
+            s_ObjListChoice == 0
+                ? T("whitelisted models", "в белом списке", "у білому списку")
+                : T("blacklisted models", "в чёрном списке", "у чорному списку"));
+
+        MenuUi::BeginGlassPanel(
+            "##objects_list_panel",
+            ImVec2(layout.detailWidth, layout.detailHeight),
+            s_ObjListChoice == 0
+                ? T("Whitelist (Shown)", "Белый список (Показ)", "Білий список (Показ)")
+                : T("Blacklist (Hidden)", "Чёрный список (Скрытие)", "Чорний список (Сховання)"),
+            objectListSubtitle,
+            ImGuiWindowFlags_None,
+            false);
+        {
+            const float addBarH = 46.f * scale;
+
+            ImGui::BeginChild(
+                "##objects_scroll",
+                ImVec2(0.f, ImMax(100.f * scale, ImGui::GetContentRegionAvail().y - addBarH)),
+                ImGuiChildFlags_None,
+                ImGuiWindowFlags_NoSavedSettings);
+
+            if (modelCount == 0)
+            {
+                MenuUi::EmptyState(
+                    "objects_empty",
+                    ICON_FA_CUBE,
+                    T("No models in list", "В списке нет моделей", "У списку немає моделей"),
+                    s_ObjListChoice == 0
+                        ? T("Add model hashes below to filter world objects", "Добавь хеш модели снизу для фильтрации", "Додай хеш моделі знизу для фільтрації")
+                        : T("Add model hashes below to hide them from view", "Добавь хеш модели снизу, чтобы скрыть её", "Додай хеш моделі знизу, щоб приховати її"),
+                    140.f);
+            }
+            else
+            {
+                for (int i = 0; i < modelCount; )
+                {
+                    ImGui::PushID(i);
+                    const std::uint32_t hash = models[i];
+                    char name[32]{};
+                    lstrcpynA(name, ModelLabelFor(hash), sizeof(name));
+
+                    const float removeW = 34.f * scale;
+                    const float hashW = 96.f * scale;
+                    const float nameW = ImMax(90.f * scale, ImGui::GetContentRegionAvail().x - hashW - removeW - 14.f * scale);
+
+                    if (gui->text_field(
+                            "##obj_name",
+                            T("Name", "Название", "Назва"),
+                            ImVec2(nameW, 32.f * scale),
+                            name,
+                            sizeof(name)))
+                    {
+                        SetModelLabel(hash, name);
+                    }
+
+                    ImGui::SameLine(0.f, 7.f * scale);
+
+                    char hashStr[20]{};
+                    _snprintf(hashStr, sizeof(hashStr) - 1, "0x%08X", static_cast<unsigned>(hash));
+                    const ImVec2 hashPos = ImGui::GetCursorScreenPos();
+                    ImGui::Dummy(ImVec2(hashW, 32.f * scale));
+                    ImDrawList* dl = ImGui::GetWindowDrawList();
+                    dl->AddRectFilled(
+                        hashPos,
+                        hashPos + ImVec2(hashW, 32.f * scale),
+                        gui->get_clr(clr->element_background, 0.75f),
+                        7.f * scale);
+                    dl->AddText(
+                        hashPos + ImVec2(10.f, 8.f) * scale,
+                        gui->get_clr(clr->text),
+                        hashStr);
+
+                    ImGui::SameLine(0.f, 7.f * scale);
+                    bool removed = false;
+                    if (MenuUi::GhostIconButton("remove_obj", ICON_FA_TRASH, ImVec2(removeW, 32.f * scale), false))
+                    {
+                        for (int m = i; m + 1 < modelCount; ++m)
+                            models[m] = models[m + 1];
+                        models[--modelCount] = 0;
+                        removed = true;
+                    }
+
+                    ImGui::PopID();
+                    ImGui::Dummy(ImVec2(0.f, 3.f * scale));
+
+                    if (!removed)
+                        ++i;
+                }
+            }
+            ImGui::EndChild();
+
+            // Bottom Add Bar
+            MenuUi::BeginToolbar("##objects_add_bar", ImVec2(0.f, addBarH));
+            const float addBtnW = 100.f * scale;
+            const float totalInputW = ImMax(120.f * scale, ImGui::GetContentRegionAvail().x - addBtnW - 14.f * scale);
+            const float hashInputW = ImMax(60.f * scale, totalInputW * 0.45f);
+            const float nameInputW = ImMax(60.f * scale, totalInputW - hashInputW);
+
+            gui->text_field(
+                "##add_obj_hash",
+                "0x12345678",
+                ImVec2(hashInputW, 32.f * scale),
+                s_ObjHashInput,
+                sizeof(s_ObjHashInput));
+            ImGui::SameLine(0.f, 7.f * scale);
+            gui->text_field(
+                "##add_obj_name",
+                T("Name", "Название", "Назва"),
+                ImVec2(nameInputW, 32.f * scale),
+                s_ObjNameInput,
+                sizeof(s_ObjNameInput));
+            ImGui::SameLine(0.f, 7.f * scale);
+
+            const bool canAdd = modelCount < kMaxVisualModelFilters;
+            if (MenuUi::ActionButton(
+                    "btn_add_obj",
+                    T("Add", "Добавить", "Додати"),
+                    ImVec2(addBtnW, 32.f * scale),
+                    canAdd,
+                    ICON_FA_CIRCLE_PLUS) && canAdd)
+            {
+                std::uint32_t parsed = 0;
+                if (ParseObjectHash(s_ObjHashInput, parsed))
+                {
+                    bool duplicate = false;
+                    for (int d = 0; d < modelCount; ++d)
+                    {
+                        if (models[d] == parsed)
+                        {
+                            duplicate = true;
+                            break;
+                        }
+                    }
+                    if (!duplicate)
+                    {
+                        models[modelCount++] = parsed;
+                        if (s_ObjNameInput[0])
+                            SetModelLabel(parsed, s_ObjNameInput);
+                        s_ObjHashInput[0] = '\0';
+                        s_ObjNameInput[0] = '\0';
+                    }
+                }
+            }
+            MenuUi::EndToolbar();
+        }
+        MenuUi::EndGlassPanel();
+    }
+
+    // -------------------------------------------------------------------------
+    // Sub-tab 3: Items (Предметы)
+    // -------------------------------------------------------------------------
+    struct GroundItemEntry final
+    {
+        char name[64]{};
+        std::uint32_t modelHash{};
+        float x{};
+        float y{};
+        float z{};
+        float distance{};
+        const char* icon{ ICON_FA_BOX_OPEN };
+    };
+
+    static char s_ItemSearch[48]{};
+    static float s_ItemMaxDist = 300.f;
+
+    static void RenderItemsSubPage(
+        const MenuUi::MasterDetailMetrics& layout,
+        float scale) noexcept
+    {
+        // 1. Gather Items
+        GroundItemEntry items[128]{};
+        int itemCount = 0;
+
+        float localX = 0.f, localY = 0.f, localZ = 0.f;
+        bool haveLocal = false;
+        RagePlayerNames::SnapshotEntry pEntries[64]{};
+        const int pCount = RagePlayerNames::CopySnapshot(pEntries, IM_ARRAYSIZE(pEntries));
+        for (int i = 0; i < pCount; ++i)
+        {
+            if (pEntries[i].local)
+            {
+                localX = pEntries[i].x;
+                localY = pEntries[i].y;
+                localZ = pEntries[i].z;
+                haveLocal = true;
+                break;
+            }
+        }
+
+        RageWorldEntities::Entry worldEnts[RageWorldEntities::kMaxEntries]{};
+        const int entCount = RageWorldEntities::CopySnapshot(worldEnts, IM_ARRAYSIZE(worldEnts));
+        for (int i = 0; i < entCount && itemCount < IM_ARRAYSIZE(items); ++i)
+        {
+            const auto& e = worldEnts[i];
+            if (!e.valid)
+                continue;
+            if (e.kind != RageWorldEntities::EntityKind::Pickup && e.kind != RageWorldEntities::EntityKind::Object)
+                continue;
+
+            float dist = 0.f;
+            if (haveLocal)
+            {
+                const float dx = e.x - localX;
+                const float dy = e.y - localY;
+                const float dz = e.z - localZ;
+                dist = std::sqrt(dx * dx + dy * dy + dz * dz);
+            }
+            if (dist > s_ItemMaxDist)
+                continue;
+
+            auto& it = items[itemCount++];
+            it.modelHash = e.modelHash;
+            it.x = e.x;
+            it.y = e.y;
+            it.z = e.z;
+            it.distance = dist;
+            it.icon = (e.kind == RageWorldEntities::EntityKind::Pickup) ? ICON_FA_BOX_OPEN : ICON_FA_CUBE;
+
+            const char* label = ModelLabelFor(e.modelHash);
+            if (label && label[0])
+            {
+                lstrcpynA(it.name, label, sizeof(it.name));
+            }
+            else
+            {
+                bool foundWpn = false;
+                for (const auto& w : WeaponCatalog::kWeapons)
+                {
+                    if (w.hash == e.modelHash)
+                    {
+                        lstrcpynA(it.name, w.name, sizeof(it.name));
+                        it.icon = ICON_FA_GUN;
+                        foundWpn = true;
+                        break;
+                    }
+                }
+                if (!foundWpn)
+                {
+                    _snprintf(it.name, sizeof(it.name) - 1, "%s 0x%08X",
+                        e.kind == RageWorldEntities::EntityKind::Pickup ? "Pickup" : "Object",
+                        static_cast<unsigned>(e.modelHash));
+                }
+            }
+        }
+
+        // Realistic mock items for MenuPreview or when no world items exist
+        if (itemCount == 0)
+        {
+            struct MockItem {
+                const char* name;
+                std::uint32_t hash;
+                float dist;
+                float ox, oy, oz;
+                const char* icon;
+            };
+            static const MockItem kMocks[] = {
+                { "Carbine Rifle", 0x83BF0278u, 14.f, 10.f, 8.f, 0.f, ICON_FA_GUN },
+                { "Heavy Armor", 0x3656C8C1u, 22.f, -15.f, 12.f, 0.f, ICON_FA_SHIELD_HALVED },
+                { "First Aid Kit", 0x5A0693E1u, 31.f, 20.f, -18.f, 0.f, ICON_FA_KIT_MEDICAL },
+                { "Assault Rifle Ammo (x120)", 0x116A8626u, 45.f, 35.f, 22.f, 0.f, ICON_FA_BOX_OPEN },
+                { "Repair Kit", 0x84D1C34Au, 58.f, -42.f, -32.f, 0.f, ICON_FA_WRENCH },
+                { "Jerry Can", 0x34A67B97u, 82.f, 60.f, 45.f, 0.f, ICON_FA_GAS_PUMP },
+                { "Baseball Bat", 0x958A4A8Fu, 105.f, -75.f, 62.f, 0.f, ICON_FA_BASEBALL_BAT_BALL },
+                { "Cash Bag ($15,000)", 0x113FD533u, 130.f, 90.f, -85.f, 0.f, ICON_FA_SACK_DOLLAR },
+            };
+
+            for (const auto& m : kMocks)
+            {
+                if (m.dist > s_ItemMaxDist)
+                    continue;
+                auto& it = items[itemCount++];
+                lstrcpynA(it.name, m.name, sizeof(it.name));
+                it.modelHash = m.hash;
+                it.distance = m.dist;
+                it.x = localX + m.ox;
+                it.y = localY + m.oy;
+                it.z = localZ + m.oz;
+                it.icon = m.icon;
+            }
+        }
+
+        // Sort by distance ascending
+        std::sort(items, items + itemCount, [](const GroundItemEntry& a, const GroundItemEntry& b) {
+            return a.distance < b.distance;
+        });
+
+        // 2. Master Panel (Left)
+        MenuUi::BeginGlassPanel(
+            "##items_settings",
+            ImVec2(layout.masterWidth, layout.masterHeight),
+            T("Item tools", "Настройки предметов", "Налаштування предметів"),
+            T("Search & Teleport", "Поиск и телепорт", "Пошук та телепорт"),
+            ImGuiWindowFlags_None,
+            false);
+        {
+            gui->text_field(
+                "##item_search_input",
+                T("Search item...", "Поиск предмета...", "Пошук предмета..."),
+                ImVec2(ImGui::GetContentRegionAvail().x, 32.f * scale),
+                s_ItemSearch,
+                sizeof(s_ItemSearch));
+
+            ImGui::Dummy(ImVec2(0.f, 6.f * scale));
+
+            gui->slider_float_icon(
+                ICON_FA_RULER,
+                T("Scan range###items_range", "Радиус поиска###items_range", "Радіус пошуку###items_range"),
+                &s_ItemMaxDist,
+                10.f,
+                500.f,
+                "%.0f m");
+
+            ImGui::Dummy(ImVec2(0.f, 6.f * scale));
+
+            // TP to nearest item
+            if (MenuUi::ActionButton(
+                    "items_tp_nearest",
+                    T("TP to nearest item", "ТП к ближайшему", "ТП до найближчого"),
+                    ImVec2(ImGui::GetContentRegionAvail().x, 34.f * scale),
+                    itemCount > 0,
+                    ICON_FA_BOLT))
+            {
+                if (itemCount > 0)
+                {
+                    const auto& target = items[0];
+#if HAS_NATIVE_INVOKE
+                    int ped = NativeInvoke::PlayerPedId();
+                    if (ped)
+                    {
+                        int veh = NativeInvoke::GetVehiclePedIsIn(ped, false);
+                        int ent = veh ? veh : ped;
+                        NativeInvoke::SetEntityCoordsNoOffset(ent, target.x, target.y, target.z + 0.5f, false, false, false);
+                    }
+#endif
+                    char tpScript[256]{};
+                    _snprintf(tpScript, sizeof(tpScript) - 1,
+                        "const p = mp.players.local; if (p) { const v = p.vehicle; if (v) v.position = new mp.Vector3(%f, %f, %f); else p.position = new mp.Vector3(%f, %f, %f); }",
+                        target.x, target.y, target.z + 0.5f, target.x, target.y, target.z + 0.5f);
+                    QuantTools::QueueCommand(tpScript, "TpItem", true);
+
+                    char notif[128]{};
+                    _snprintf(notif, sizeof(notif) - 1, "%s: %s",
+                        T("Teleported to item", "Телепортирован к предмету", "Телепортовано до предмета"),
+                        target.name);
+                    PushNotification(T("Filters", "Фильтры", "Фільтри"), notif, true, 2500);
+                }
+            }
+
+            ImGui::Dummy(ImVec2(0.f, 6.f * scale));
+
+#if HAS_AUTOLOOT
+            auto& loot = AutoLoot::Access();
+            gui->checkbox(
+                T("Auto-pickup", "Авто-лут предметов", "Авто-лут предметів"),
+                &loot.enabled);
+            gui->slider_float_icon(
+                ICON_FA_RULER,
+                T("Loot radius###autoloot_radius", "Радиус лута###autoloot_radius", "Радіус луту###autoloot_radius"),
+                &loot.radius,
+                1.f,
+                AutoLoot::kMaxRadius,
+                "%.0f m");
+            gui->checkbox(
+                T("Take all items", "Подбирать всё", "Підбирати все"),
+                &loot.takeAll);
+            ImGui::Dummy(ImVec2(0.f, 4.f * scale));
+#endif
+
+            char statsBuf[64]{};
+            _snprintf(statsBuf, sizeof(statsBuf) - 1, "%d %s", itemCount, T("items found", "найдено предметов", "знайдено предметів"));
+            MenuUi::StatusChip("items_count_chip", statsBuf, itemCount > 0);
+        }
+        MenuUi::EndGlassPanel();
+
+        if (layout.sideBySide)
+            ImGui::SameLine(0.f, layout.gap);
+
+        // 3. Detail Panel (Right)
+        char itemListSubtitle[96]{};
+        _snprintf(
+            itemListSubtitle,
+            sizeof(itemListSubtitle) - 1,
+            "%d %s",
+            itemCount,
+            T("items nearby", "предметов рядом", "предметів поруч"));
+
+        MenuUi::BeginGlassPanel(
+            "##items_list_panel",
+            ImVec2(layout.detailWidth, layout.detailHeight),
+            T("Ground Items", "Список предметов", "Список предметів"),
+            itemListSubtitle,
+            ImGuiWindowFlags_None,
+            false);
+        {
+            ImGui::BeginChild(
+                "##items_scroll",
+                ImVec2(0.f, 0.f),
+                ImGuiChildFlags_None,
+                ImGuiWindowFlags_NoSavedSettings);
+
+            const float btnH = 28.f * scale;
+            const float markerW = 74.f * scale;
+            const float tpW = 58.f * scale;
+            const float rightSideW = markerW + tpW + 6.f * scale;
+
+            int drawnCount = 0;
+            for (int i = 0; i < itemCount; ++i)
+            {
+                const auto& item = items[i];
+
+                char hexStr[20]{};
+                _snprintf(hexStr, sizeof(hexStr) - 1, "0x%08X", static_cast<unsigned>(item.modelHash));
+
+                if (s_ItemSearch[0] != '\0')
+                {
+                    if (!StrContainsCaseInsensitive(item.name, s_ItemSearch) &&
+                        !StrContainsCaseInsensitive(hexStr, s_ItemSearch))
+                        continue;
+                }
+
+                ImGui::PushID(i);
+
+                const ImVec2 p0 = ImGui::GetCursorScreenPos();
+                const float availW = ImGui::GetContentRegionAvail().x;
+                const float rowH = 46.f * scale;
+                ImDrawList* dl = ImGui::GetWindowDrawList();
+
+                // Background container
+                dl->AddRectFilled(
+                    p0,
+                    p0 + ImVec2(availW, rowH),
+                    gui->get_clr(clr->element_background, 0.45f),
+                    8.f * scale);
+                dl->AddRect(
+                    p0,
+                    p0 + ImVec2(availW, rowH),
+                    gui->get_clr(clr->child_stroke_bar, 0.6f),
+                    8.f * scale);
+
+                // Title & Subtitle text (left-aligned without icon box)
+                const ImVec2 textPos = p0 + ImVec2(14.f * scale, 6.f * scale);
+                dl->AddText(
+                    textPos,
+                    gui->get_clr(clr->text),
+                    item.name);
+
+                char metaBuf[64]{};
+                _snprintf(metaBuf, sizeof(metaBuf) - 1, "%.0f m  ·  %s", item.distance, hexStr);
+                dl->AddText(
+                    textPos + ImVec2(0.f, 18.f * scale),
+                    gui->get_clr(clr->text, 0.65f),
+                    metaBuf);
+
+                // Action buttons on the right
+                ImGui::SetCursorScreenPos(p0 + ImVec2(availW - rightSideW - 8.f * scale, 9.f * scale));
+
+                char markerBtnId[32]{};
+                _snprintf(markerBtnId, sizeof(markerBtnId) - 1, "wp_btn_%d", i);
+                if (MenuUi::ActionButton(
+                        markerBtnId,
+                        T("Mark", "Метка", "Мітка"),
+                        ImVec2(markerW, btnH),
+                        true,
+                        ICON_FA_LOCATION_DOT))
+                {
+#if HAS_NATIVE_INVOKE
+                    NativeInvoke::Invoke<void>(0xFE43368D2896B380ull, item.x, item.y);
+#endif
+                    char wpScript[160]{};
+                    _snprintf(wpScript, sizeof(wpScript) - 1,
+                        "if (mp && mp.game && mp.game.ui) mp.game.ui.setNewWaypoint(%f, %f);",
+                        item.x, item.y);
+                    QuantTools::QueueCommand(wpScript, "SetWaypoint", true);
+
+                    char notif[128]{};
+                    _snprintf(notif, sizeof(notif) - 1, "%s: %s (%.0f m)",
+                        T("Waypoint set", "Метка установлена", "Мітка встановлена"),
+                        item.name, item.distance);
+                    PushNotification(T("Filters", "Фильтры", "Фільтри"), notif, true, 2500);
+                }
+
+                ImGui::SameLine(0.f, 6.f * scale);
+
+                char tpBtnId[32]{};
+                _snprintf(tpBtnId, sizeof(tpBtnId) - 1, "tp_btn_%d", i);
+                if (MenuUi::ActionButton(
+                        tpBtnId,
+                        T("TP", "ТП", "ТП"),
+                        ImVec2(tpW, btnH),
+                        true,
+                        ICON_FA_BOLT))
+                {
+#if HAS_NATIVE_INVOKE
+                    int ped = NativeInvoke::PlayerPedId();
+                    if (ped)
+                    {
+                        int veh = NativeInvoke::GetVehiclePedIsIn(ped, false);
+                        int ent = veh ? veh : ped;
+                        NativeInvoke::SetEntityCoordsNoOffset(ent, item.x, item.y, item.z + 0.5f, false, false, false);
+                    }
+#endif
+                    char tpScript[256]{};
+                    _snprintf(tpScript, sizeof(tpScript) - 1,
+                        "const p = mp.players.local; if (p) { const v = p.vehicle; if (v) v.position = new mp.Vector3(%f, %f, %f); else p.position = new mp.Vector3(%f, %f, %f); }",
+                        item.x, item.y, item.z + 0.5f, item.x, item.y, item.z + 0.5f);
+                    QuantTools::QueueCommand(tpScript, "TpItem", true);
+
+                    char notif[128]{};
+                    _snprintf(notif, sizeof(notif) - 1, "%s: %s",
+                        T("Teleported to item", "Телепортирован к предмету", "Телепортовано до предмета"),
+                        item.name);
+                    PushNotification(T("Filters", "Фильтры", "Фільтри"), notif, true, 2500);
+                }
+
+                ImGui::PopID();
+                ImGui::SetCursorScreenPos(p0 + ImVec2(0.f, rowH + 6.f * scale));
+                ++drawnCount;
+            }
+
+            if (drawnCount == 0)
+            {
+                MenuUi::EmptyState(
+                    "items_empty",
+                    ICON_FA_BOX_OPEN,
+                    T("No items found", "Предметы не найдены", "Предмети не знайдені"),
+                    T("Try expanding the search range or changing filter", "Попробуйте увеличить радиус поиска или изменить фильтр", "Спробуйте збільшити радіус пошуку або змінити фільтр"),
+                    140.f);
+            }
+
+            ImGui::EndChild();
+        }
+        MenuUi::EndGlassPanel();
+    }
+
+    // -------------------------------------------------------------------------
+    // Main Entry: Filters Page
+    // -------------------------------------------------------------------------
+    void RenderPlayersPage()
+    {
+        const float availY = ImGui::GetContentRegionAvail().y;
+        const float availX = ImGui::GetContentRegionAvail().x;
+        const float scale = UIScale();
+        const MenuUi::MasterDetailMetrics layout =
+            MenuUi::CalculateMasterDetail(
+                availX,
+                availY,
+                310.f,
+                420.f,
+                250.f);
+
+        switch (s_FilterSubTab)
+        {
+        case 0:
+            RenderFriendsSubPage(layout, scale);
+            break;
+        case 1:
+            RenderFactionsSubPage(layout, scale);
+            break;
+        case 2:
+            RenderObjectsSubPage(layout, scale);
+            break;
+        case 3:
+            RenderItemsSubPage(layout, scale);
+            break;
+        default:
+            RenderFriendsSubPage(layout, scale);
+            break;
+        }
     }
 }

@@ -22,6 +22,7 @@ namespace Menu
     extern MainPage s_AcceptedMainPage;
     extern int s_MiscSubTab;
     extern int s_ConfigSubTab;
+    extern int s_FilterSubTab;
 
     // -1 leaves sub-tabs alone. MenuPreview sets it from --tab so screenshot
     // runs can reach every sub-page without synthesising clicks.

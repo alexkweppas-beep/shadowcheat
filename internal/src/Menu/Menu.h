@@ -40,6 +40,7 @@ namespace Menu
         Weapons = 1,
         Visuals = 2,
         Players = 3,
+        Filters = 3,
         Scripts = 4,
         Misc = 5,
         Server = 6,
@@ -357,6 +358,10 @@ namespace Menu
         float triggerDelayMs{1.f};
         float triggerCooldownMs{90.f};
         bool  triggerVisible{false};
+        bool  triggerNearest{true};
+        bool  triggerSticky{true};
+        float triggerFov{15.f};
+        bool  triggerBoneNearestAny{};
         bool  triggerBones[kAimHitboxCount]{
             false, false, false, false};
 
