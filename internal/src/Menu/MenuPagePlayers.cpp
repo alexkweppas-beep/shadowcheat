@@ -940,7 +940,9 @@ namespace Menu
 
     static char s_ItemSearch[48]{};
     static float s_ItemMaxDist = 1000.f;
-    static bool s_ItemFilterByObjectList = true;
+    static bool s_ItemShowNamed = true;
+    static bool s_ItemShowUnnamed = true;
+    static bool s_ItemOnlyWhitelist = false;
 
     static void RenderItemsSubPage(
         const MenuUi::MasterDetailMetrics& layout,
@@ -991,20 +993,49 @@ namespace Menu
                 continue;
 
             const bool pickup = (e.kind == RageWorldEntities::EntityKind::Pickup);
-            if (s_ItemFilterByObjectList)
+            if (pickup && !visual.showPickups)
+                continue;
+            if (!pickup && !visual.showObjects)
+                continue;
+
+            // Blacklist check from Objects tab
+            if (ModelFilterContains(visual.excludeModels, visual.excludeModelCount, e.modelHash))
+                continue;
+
+            // Check if model has a registered or catalog name
+            char resolvedName[64]{};
+            const char* icon = pickup ? ICON_FA_BOX_OPEN : ICON_FA_CUBE;
+            bool hasName = false;
+
+            const char* label = ModelLabelFor(e.modelHash);
+            if (label && label[0])
             {
-                if (pickup && !visual.showPickups)
-                    continue;
-                if (!pickup && !visual.showObjects)
-                    continue;
-                if (!PassesModelFilter(
-                        e.modelHash,
-                        visual.includeModels,
-                        visual.showAll ? 0 : visual.includeModelCount,
-                        visual.excludeModels,
-                        visual.excludeModelCount))
-                    continue;
+                lstrcpynA(resolvedName, label, sizeof(resolvedName));
+                hasName = true;
             }
+            else
+            {
+                for (const auto& w : WeaponCatalog::kWeapons)
+                {
+                    if (w.hash == e.modelHash)
+                    {
+                        lstrcpynA(resolvedName, w.name, sizeof(resolvedName));
+                        icon = ICON_FA_GUN;
+                        hasName = true;
+                        break;
+                    }
+                }
+            }
+
+            // Optional whitelist filter
+            if (s_ItemOnlyWhitelist && !ModelFilterContains(visual.includeModels, visual.includeModelCount, e.modelHash))
+                continue;
+
+            // Filter by named / unnamed items
+            if (hasName && !s_ItemShowNamed)
+                continue;
+            if (!hasName && !s_ItemShowUnnamed)
+                continue;
 
             auto& it = items[itemCount++];
             it.modelHash = e.modelHash;
@@ -1012,36 +1043,10 @@ namespace Menu
             it.y = e.y;
             it.z = e.z;
             it.distance = dist;
-            it.icon = (e.kind == RageWorldEntities::EntityKind::Pickup) ? ICON_FA_BOX_OPEN : ICON_FA_CUBE;
 
-            const char* label = ModelLabelFor(e.modelHash);
-            if (label && label[0])
+            if (hasName)
             {
-                lstrcpynA(it.name, label, sizeof(it.name));
-            }
-            else
-            {
-                bool foundWpn = false;
-                for (const auto& w : WeaponCatalog::kWeapons)
-                {
-                    if (w.hash == e.modelHash)
-                    {
-                        lstrcpynA(it.name, w.name, sizeof(it.name));
-                        it.icon = ICON_FA_GUN;
-                        foundWpn = true;
-                        break;
-                    }
-                }
-                if (!foundWpn)
-                {
-                    _snprintf(it.name, sizeof(it.name) - 1, "%s 0x%08X",
-                        e.kind == RageWorldEntities::EntityKind::Pickup ? "Pickup" : "Object",
-                        static_cast<unsigned>(e.modelHash));
-                }
-            }
-
-            if (it.name[0])
-            {
+                lstrcpynA(it.name, resolvedName, sizeof(it.name));
                 if (strstr(it.name, "Rifle") || strstr(it.name, "Carbine") || strstr(it.name, "Pistol") || strstr(it.name, "Gun") || strstr(it.name, "Shotgun") || strstr(it.name, "SMG"))
                     it.icon = ICON_FA_GUN;
                 else if (strstr(it.name, "Armor") || strstr(it.name, "Броня"))
@@ -1050,6 +1055,15 @@ namespace Menu
                     it.icon = ICON_FA_KIT_MEDICAL;
                 else if (strstr(it.name, "Spank") || strstr(it.name, "Kosyak") || strstr(it.name, "Analgetic"))
                     it.icon = ICON_FA_PILLS;
+                else
+                    it.icon = icon;
+            }
+            else
+            {
+                _snprintf(it.name, sizeof(it.name) - 1, "%s 0x%08X",
+                    pickup ? "Pickup" : "Object",
+                    static_cast<unsigned>(e.modelHash));
+                it.icon = icon;
             }
         }
 
@@ -1062,32 +1076,34 @@ namespace Menu
                 float dist;
                 float ox, oy, oz;
                 const char* icon;
+                bool hasCustomName;
             };
             static const MockItem kMocks[] = {
-                { "Carbine Rifle", 0x3D2E1AE8u, 14.f, 10.f, 8.f, 0.f, ICON_FA_GUN },
-                { "Special Carbine", 0xC0A3098Du, 22.f, -15.f, 12.f, 0.f, ICON_FA_GUN },
-                { "Spank/Kosyak/Analgetic", 0x2D9A5028u, 31.f, 20.f, -18.f, 0.f, ICON_FA_PILLS },
-                { "First Aid Kit", 0xE210FECFu, 45.f, 35.f, 22.f, 0.f, ICON_FA_KIT_MEDICAL },
-                { "Armor", 0x29CB0F3Cu, 58.f, -42.f, -32.f, 0.f, ICON_FA_SHIELD_HALVED },
-                { "Assault Rifle Ammo (x120)", 0x116A8626u, 82.f, 60.f, 45.f, 0.f, ICON_FA_BOX_OPEN },
-                { "Repair Kit", 0x84D1C34Au, 105.f, -75.f, 62.f, 0.f, ICON_FA_WRENCH },
-                { "Jerry Can", 0x34A67B97u, 130.f, 90.f, -85.f, 0.f, ICON_FA_GAS_PUMP },
-                { "Baseball Bat", 0x958A4A8Fu, 155.f, -75.f, 62.f, 0.f, ICON_FA_BASEBALL_BAT_BALL },
-                { "Cash Bag ($15,000)", 0x113FD533u, 190.f, 90.f, -85.f, 0.f, ICON_FA_SACK_DOLLAR },
+                { "Carbine Rifle", 0x3D2E1AE8u, 14.f, 10.f, 8.f, 0.f, ICON_FA_GUN, true },
+                { "Special Carbine", 0xC0A3098Du, 22.f, -15.f, 12.f, 0.f, ICON_FA_GUN, true },
+                { "Spank/Kosyak/Analgetic", 0x2D9A5028u, 31.f, 20.f, -18.f, 0.f, ICON_FA_PILLS, true },
+                { "First Aid Kit", 0xE210FECFu, 45.f, 35.f, 22.f, 0.f, ICON_FA_KIT_MEDICAL, true },
+                { "Armor", 0x29CB0F3Cu, 58.f, -42.f, -32.f, 0.f, ICON_FA_SHIELD_HALVED, true },
+                { "Pickup 0x5A0693E1", 0x5A0693E1u, 72.f, 40.f, -25.f, 0.f, ICON_FA_BOX_OPEN, false },
+                { "Object 0x116A8626", 0x116A8626u, 88.f, 60.f, 45.f, 0.f, ICON_FA_CUBE, false },
+                { "Pickup 0x84D1C34A", 0x84D1C34Au, 105.f, -75.f, 62.f, 0.f, ICON_FA_BOX_OPEN, false },
+                { "Cash Bag ($15,000)", 0x113FD533u, 130.f, 90.f, -85.f, 0.f, ICON_FA_SACK_DOLLAR, true },
+                { "Object 0x34A67B97", 0x34A67B97u, 160.f, -90.f, 85.f, 0.f, ICON_FA_CUBE, false },
             };
 
             for (const auto& m : kMocks)
             {
                 if (m.dist > s_ItemMaxDist)
                     continue;
-                if (s_ItemFilterByObjectList &&
-                    !PassesModelFilter(
-                        m.hash,
-                        visual.includeModels,
-                        visual.showAll ? 0 : visual.includeModelCount,
-                        visual.excludeModels,
-                        visual.excludeModelCount))
+                if (ModelFilterContains(visual.excludeModels, visual.excludeModelCount, m.hash))
                     continue;
+                if (m.hasCustomName && !s_ItemShowNamed)
+                    continue;
+                if (!m.hasCustomName && !s_ItemShowUnnamed)
+                    continue;
+                if (s_ItemOnlyWhitelist && !ModelFilterContains(visual.includeModels, visual.includeModelCount, m.hash))
+                    continue;
+
                 auto& it = items[itemCount++];
                 lstrcpynA(it.name, m.name, sizeof(it.name));
                 it.modelHash = m.hash;
@@ -1133,21 +1149,14 @@ namespace Menu
             ImGui::Dummy(ImVec2(0.f, 6.f * scale));
 
             gui->checkbox(
-                T("Filter by object list", "Фильтр по списку объектов", "Фільтр за списком об'єктів"),
-                &s_ItemFilterByObjectList);
-
-            if (s_ItemFilterByObjectList)
-            {
-                char filterInfo[64]{};
-                _snprintf(
-                    filterInfo,
-                    sizeof(filterInfo) - 1,
-                    "%s: %d %s",
-                    T("Whitelist", "Белый список", "Білий список"),
-                    visual.showAll ? 0 : visual.includeModelCount,
-                    T("models", "моделей", "моделей"));
-                ImGui::TextDisabled("%s", filterInfo);
-            }
+                T("Show named items", "С названиями", "З назвами"),
+                &s_ItemShowNamed);
+            gui->checkbox(
+                T("Show unnamed items", "Без названий", "Без назв"),
+                &s_ItemShowUnnamed);
+            gui->checkbox(
+                T("Only whitelist", "Только белый список", "Лише білий список"),
+                &s_ItemOnlyWhitelist);
 
             ImGui::Dummy(ImVec2(0.f, 4.f * scale));
 
