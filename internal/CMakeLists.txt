@@ -42,6 +42,7 @@ if(SHADOW_DEV)
 else()
     list(FILTER SHADOW_INTERNAL_SOURCES EXCLUDE REGEX "/src/Dev/")
 endif()
+list(FILTER SHADOW_INTERNAL_SOURCES EXCLUDE REGEX "/src/main\\.cpp$")
 
 
 # MinHook is vendored: it is three C files plus the length disassembler, and

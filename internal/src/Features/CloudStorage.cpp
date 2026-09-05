@@ -31,7 +31,7 @@
 #include <winhttp.h>
 #include <new>
 
-#include "../../xorstr.hpp"
+#include "../xorstr.hpp"
 #include "CloudStorage.h"
 
 #pragma comment(lib, "winhttp.lib")

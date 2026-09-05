@@ -509,6 +509,36 @@ namespace Menu
     // launch.
     extern bool s_ObjectFiltersSeeded;
     void SeedDefaultObjectFilters() noexcept;
+
+    inline bool ModelFilterContains(
+        const std::uint32_t* values,
+        int count,
+        std::uint32_t model) noexcept
+    {
+        if (!values || count <= 0)
+            return false;
+        if (count > kMaxVisualModelFilters)
+            count = kMaxVisualModelFilters;
+        for (int index = 0; index < count; ++index)
+        {
+            if (values[index] == model)
+                return true;
+        }
+        return false;
+    }
+
+    inline bool PassesModelFilter(
+        std::uint32_t model,
+        const std::uint32_t* include,
+        int includeCount,
+        const std::uint32_t* exclude,
+        int excludeCount) noexcept
+    {
+        if (ModelFilterContains(exclude, excludeCount, model))
+            return false;
+        return includeCount <= 0 ||
+            ModelFilterContains(include, includeCount, model);
+    }
     extern int s_VisualCategoryTab;
     // Ped profile scope inside VisualCategory::Peds (EspProfileId).
     extern int s_VisualPedProfile;

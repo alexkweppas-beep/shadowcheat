@@ -708,6 +708,7 @@ namespace Menu
         const MenuUi::MasterDetailMetrics& layout,
         float scale) noexcept
     {
+        SeedDefaultObjectFilters();
         ObjectVisualSettings& visual = s_ObjectVisualSettings;
         visual.includeModelCount = ImClamp(visual.includeModelCount, 0, kMaxVisualModelFilters);
         visual.excludeModelCount = ImClamp(visual.excludeModelCount, 0, kMaxVisualModelFilters);
@@ -938,14 +939,18 @@ namespace Menu
     };
 
     static char s_ItemSearch[48]{};
-    static float s_ItemMaxDist = 300.f;
+    static float s_ItemMaxDist = 1000.f;
+    static bool s_ItemFilterByObjectList = true;
 
     static void RenderItemsSubPage(
         const MenuUi::MasterDetailMetrics& layout,
         float scale) noexcept
     {
+        SeedDefaultObjectFilters();
+        ObjectVisualSettings& visual = s_ObjectVisualSettings;
+
         // 1. Gather Items
-        GroundItemEntry items[128]{};
+        GroundItemEntry items[512]{};
         int itemCount = 0;
 
         float localX = 0.f, localY = 0.f, localZ = 0.f;
@@ -985,6 +990,22 @@ namespace Menu
             if (dist > s_ItemMaxDist)
                 continue;
 
+            const bool pickup = (e.kind == RageWorldEntities::EntityKind::Pickup);
+            if (s_ItemFilterByObjectList)
+            {
+                if (pickup && !visual.showPickups)
+                    continue;
+                if (!pickup && !visual.showObjects)
+                    continue;
+                if (!PassesModelFilter(
+                        e.modelHash,
+                        visual.includeModels,
+                        visual.showAll ? 0 : visual.includeModelCount,
+                        visual.excludeModels,
+                        visual.excludeModelCount))
+                    continue;
+            }
+
             auto& it = items[itemCount++];
             it.modelHash = e.modelHash;
             it.x = e.x;
@@ -1018,6 +1039,18 @@ namespace Menu
                         static_cast<unsigned>(e.modelHash));
                 }
             }
+
+            if (it.name[0])
+            {
+                if (strstr(it.name, "Rifle") || strstr(it.name, "Carbine") || strstr(it.name, "Pistol") || strstr(it.name, "Gun") || strstr(it.name, "Shotgun") || strstr(it.name, "SMG"))
+                    it.icon = ICON_FA_GUN;
+                else if (strstr(it.name, "Armor") || strstr(it.name, "Броня"))
+                    it.icon = ICON_FA_SHIELD_HALVED;
+                else if (strstr(it.name, "Kit") || strstr(it.name, "Аптечка"))
+                    it.icon = ICON_FA_KIT_MEDICAL;
+                else if (strstr(it.name, "Spank") || strstr(it.name, "Kosyak") || strstr(it.name, "Analgetic"))
+                    it.icon = ICON_FA_PILLS;
+            }
         }
 
         // Realistic mock items for MenuPreview or when no world items exist
@@ -1031,19 +1064,29 @@ namespace Menu
                 const char* icon;
             };
             static const MockItem kMocks[] = {
-                { "Carbine Rifle", 0x83BF0278u, 14.f, 10.f, 8.f, 0.f, ICON_FA_GUN },
-                { "Heavy Armor", 0x3656C8C1u, 22.f, -15.f, 12.f, 0.f, ICON_FA_SHIELD_HALVED },
-                { "First Aid Kit", 0x5A0693E1u, 31.f, 20.f, -18.f, 0.f, ICON_FA_KIT_MEDICAL },
-                { "Assault Rifle Ammo (x120)", 0x116A8626u, 45.f, 35.f, 22.f, 0.f, ICON_FA_BOX_OPEN },
-                { "Repair Kit", 0x84D1C34Au, 58.f, -42.f, -32.f, 0.f, ICON_FA_WRENCH },
-                { "Jerry Can", 0x34A67B97u, 82.f, 60.f, 45.f, 0.f, ICON_FA_GAS_PUMP },
-                { "Baseball Bat", 0x958A4A8Fu, 105.f, -75.f, 62.f, 0.f, ICON_FA_BASEBALL_BAT_BALL },
-                { "Cash Bag ($15,000)", 0x113FD533u, 130.f, 90.f, -85.f, 0.f, ICON_FA_SACK_DOLLAR },
+                { "Carbine Rifle", 0x3D2E1AE8u, 14.f, 10.f, 8.f, 0.f, ICON_FA_GUN },
+                { "Special Carbine", 0xC0A3098Du, 22.f, -15.f, 12.f, 0.f, ICON_FA_GUN },
+                { "Spank/Kosyak/Analgetic", 0x2D9A5028u, 31.f, 20.f, -18.f, 0.f, ICON_FA_PILLS },
+                { "First Aid Kit", 0xE210FECFu, 45.f, 35.f, 22.f, 0.f, ICON_FA_KIT_MEDICAL },
+                { "Armor", 0x29CB0F3Cu, 58.f, -42.f, -32.f, 0.f, ICON_FA_SHIELD_HALVED },
+                { "Assault Rifle Ammo (x120)", 0x116A8626u, 82.f, 60.f, 45.f, 0.f, ICON_FA_BOX_OPEN },
+                { "Repair Kit", 0x84D1C34Au, 105.f, -75.f, 62.f, 0.f, ICON_FA_WRENCH },
+                { "Jerry Can", 0x34A67B97u, 130.f, 90.f, -85.f, 0.f, ICON_FA_GAS_PUMP },
+                { "Baseball Bat", 0x958A4A8Fu, 155.f, -75.f, 62.f, 0.f, ICON_FA_BASEBALL_BAT_BALL },
+                { "Cash Bag ($15,000)", 0x113FD533u, 190.f, 90.f, -85.f, 0.f, ICON_FA_SACK_DOLLAR },
             };
 
             for (const auto& m : kMocks)
             {
                 if (m.dist > s_ItemMaxDist)
+                    continue;
+                if (s_ItemFilterByObjectList &&
+                    !PassesModelFilter(
+                        m.hash,
+                        visual.includeModels,
+                        visual.showAll ? 0 : visual.includeModelCount,
+                        visual.excludeModels,
+                        visual.excludeModelCount))
                     continue;
                 auto& it = items[itemCount++];
                 lstrcpynA(it.name, m.name, sizeof(it.name));
@@ -1084,8 +1127,39 @@ namespace Menu
                 T("Scan range###items_range", "Радиус поиска###items_range", "Радіус пошуку###items_range"),
                 &s_ItemMaxDist,
                 10.f,
-                500.f,
+                10000.f,
                 "%.0f m");
+
+            ImGui::Dummy(ImVec2(0.f, 6.f * scale));
+
+            gui->checkbox(
+                T("Filter by object list", "Фильтр по списку объектов", "Фільтр за списком об'єктів"),
+                &s_ItemFilterByObjectList);
+
+            if (s_ItemFilterByObjectList)
+            {
+                char filterInfo[64]{};
+                _snprintf(
+                    filterInfo,
+                    sizeof(filterInfo) - 1,
+                    "%s: %d %s",
+                    T("Whitelist", "Белый список", "Білий список"),
+                    visual.showAll ? 0 : visual.includeModelCount,
+                    T("models", "моделей", "моделей"));
+                ImGui::TextDisabled("%s", filterInfo);
+            }
+
+            ImGui::Dummy(ImVec2(0.f, 4.f * scale));
+
+            if (MenuUi::ActionButton(
+                    "items_goto_object_filters",
+                    T("Edit object filters", "Настроить фильтры объектов", "Налаштувати фільтри об'єктів"),
+                    ImVec2(ImGui::GetContentRegionAvail().x, 32.f * scale),
+                    true,
+                    ICON_FA_FILTER))
+            {
+                s_FilterSubTab = 2;
+            }
 
             ImGui::Dummy(ImVec2(0.f, 6.f * scale));
 
