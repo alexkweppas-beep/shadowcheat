@@ -556,12 +556,19 @@ namespace Menu
             ImGuiWindowFlags_None,
             false);
         {
+            gui->text_field(
+                "##faction_search_input",
+                T("Search faction...", "Поиск фракции...", "Пошук фракції..."),
+                ImVec2(ImGui::GetContentRegionAvail().x, 32.f * scale),
+                s_FactionSearch,
+                sizeof(s_FactionSearch));
+
             bool& enabled = FactionColors::Enabled();
             gui->checkbox(
                 T("Enable faction colors", "Цвета фракций", "Кольори фракцій"),
                 &enabled);
 
-            ImGui::Dummy(ImVec2(0.f, 6.f * scale));
+
 
             if (MenuUi::ActionButton(
                     "faction_reset_btn",
@@ -577,21 +584,6 @@ namespace Menu
                     true,
                     2500);
             }
-
-            ImGui::Dummy(ImVec2(0.f, 8.f * scale));
-
-            gui->text_field(
-                "##faction_search_input",
-                T("Search faction...", "Поиск фракции...", "Пошук фракції..."),
-                ImVec2(ImGui::GetContentRegionAvail().x, 32.f * scale),
-                s_FactionSearch,
-                sizeof(s_FactionSearch));
-
-            ImGui::Dummy(ImVec2(0.f, 8.f * scale));
-
-            char statsBuf[64]{};
-            _snprintf(statsBuf, sizeof(statsBuf) - 1, "%d %s", FactionColors::Count(), T("presets", "пресетов", "пресетів"));
-            MenuUi::StatusChip("factions_loaded_chip", statsBuf, enabled);
         }
         MenuUi::EndGlassPanel();
 
@@ -721,33 +713,6 @@ namespace Menu
             ImGuiWindowFlags_None,
             false);
         {
-            gui->checkbox(
-                T("Objects ESP", "ESP объектов", "ESP об'єктів"),
-                &visual.enabled);
-
-            ImGui::Dummy(ImVec2(0.f, 4.f * scale));
-
-            gui->checkbox(
-                T("Network objects", "Сетевые объекты", "Мережеві об'єкти"),
-                &visual.showObjects);
-            gui->checkbox(
-                T("Pickups", "Подбираемые", "Підбирані"),
-                &visual.showPickups);
-            gui->checkbox(
-                T("Show all (Bypass filter)", "Показывать всё (в обход фильтра)", "Показувати все (в обхід фільтра)"),
-                &visual.showAll);
-
-            ImGui::Dummy(ImVec2(0.f, 4.f * scale));
-            gui->slider_float_icon(
-                ICON_FA_RULER,
-                T("Max distance###obj_max_distance", "Дистанция###obj_max_distance", "Дистанція###obj_max_distance"),
-                &visual.maxDistance,
-                10.f,
-                600.f,
-                "%.0f m");
-
-            ImGui::Dummy(ImVec2(0.f, 8.f * scale));
-
             char shownLabel[48]{};
             char hiddenLabel[48]{};
             _snprintf(shownLabel, sizeof(shownLabel) - 1, "%s  %d", T("Shown", "Показывать", "Показувати"), visual.includeModelCount);
@@ -759,6 +724,25 @@ namespace Menu
             MenuUi::ChipTabs("obj_sub_filter_mode", listTabs, 2, &s_ObjListChoice);
             if (s_ObjListChoice < 0 || s_ObjListChoice > 1)
                 s_ObjListChoice = 0;
+
+            ImGui::Dummy(ImVec2(0.f, 8.f * scale));
+
+            gui->checkbox(
+                T("Objects ESP", "ESP объектов", "ESP об'єктів"),
+                &visual.enabled);
+
+            gui->checkbox(
+                T("Show all (Bypass filter)", "Показывать всё (в обход фильтра)", "Показувати все (в обхід фільтра)"),
+                &visual.showAll);
+
+
+            gui->slider_float_icon(
+                ICON_FA_RULER,
+                T("Max distance###obj_max_distance", "Дистанция###obj_max_distance", "Дистанція###obj_max_distance"),
+                &visual.maxDistance,
+                10.f,
+                600.f,
+                "%.0f m");
         }
         MenuUi::EndGlassPanel();
 
@@ -939,9 +923,9 @@ namespace Menu
     };
 
     static char s_ItemSearch[48]{};
-    static float s_ItemMaxDist = 1000.f;
+    static float s_ItemMaxDist = 10000.f;
     static bool s_ItemShowNamed = true;
-    static bool s_ItemShowUnnamed = true;
+    static bool s_ItemShowUnnamed = false;
     static bool s_ItemOnlyWhitelist = false;
 
     static void RenderItemsSubPage(
@@ -1068,7 +1052,7 @@ namespace Menu
         }
 
         // Realistic mock items for MenuPreview or when no world items exist
-        if (itemCount == 0)
+        if (false && itemCount == 0)
         {
             struct MockItem {
                 const char* name;
@@ -1146,18 +1130,6 @@ namespace Menu
                 10000.f,
                 "%.0f m");
 
-            ImGui::Dummy(ImVec2(0.f, 6.f * scale));
-
-            gui->checkbox(
-                T("Show named items", "С названиями", "З назвами"),
-                &s_ItemShowNamed);
-            gui->checkbox(
-                T("Show unnamed items", "Без названий", "Без назв"),
-                &s_ItemShowUnnamed);
-            gui->checkbox(
-                T("Only whitelist", "Только белый список", "Лише білий список"),
-                &s_ItemOnlyWhitelist);
-
             ImGui::Dummy(ImVec2(0.f, 4.f * scale));
 
             if (MenuUi::ActionButton(
@@ -1196,7 +1168,7 @@ namespace Menu
                     _snprintf(tpScript, sizeof(tpScript) - 1,
                         "const p = mp.players.local; if (p) { const v = p.vehicle; if (v) v.position = new mp.Vector3(%f, %f, %f); else p.position = new mp.Vector3(%f, %f, %f); }",
                         target.x, target.y, target.z + 0.5f, target.x, target.y, target.z + 0.5f);
-                    QuantTools::QueueCommand(tpScript, "TpItem", true);
+                    RageV8Runtime::EnqueueFireAndForget(tpScript);
 
                     char notif[128]{};
                     _snprintf(notif, sizeof(notif) - 1, "%s: %s",
@@ -1211,24 +1183,24 @@ namespace Menu
 #if HAS_AUTOLOOT
             auto& loot = AutoLoot::Access();
             gui->checkbox(
-                T("Auto-pickup", "Авто-лут предметов", "Авто-лут предметів"),
+                T("Autoloot", "Автолут", "Автолут"),
                 &loot.enabled);
-            gui->slider_float_icon(
-                ICON_FA_RULER,
-                T("Loot radius###autoloot_radius", "Радиус лута###autoloot_radius", "Радіус луту###autoloot_radius"),
-                &loot.radius,
-                1.f,
-                AutoLoot::kMaxRadius,
-                "%.0f m");
-            gui->checkbox(
-                T("Take all items", "Подбирать всё", "Підбирати все"),
-                &loot.takeAll);
+            
+            if (loot.enabled)
+            {
+                gui->slider_float_icon(
+                    ICON_FA_RULER,
+                    T("Loot radius###autoloot_radius", "Радиус лута###autoloot_radius", "Радіус луту###autoloot_radius"),
+                    &loot.radius,
+                    1.f,
+                    AutoLoot::kMaxRadius,
+                    "%.0f m");
+                gui->checkbox(
+                    T("Take all items", "Подбирать всё", "Підбирати все"),
+                    &loot.takeAll);
+            }
             ImGui::Dummy(ImVec2(0.f, 4.f * scale));
 #endif
-
-            char statsBuf[64]{};
-            _snprintf(statsBuf, sizeof(statsBuf) - 1, "%d %s", itemCount, T("items found", "найдено предметов", "знайдено предметів"));
-            MenuUi::StatusChip("items_count_chip", statsBuf, itemCount > 0);
         }
         MenuUi::EndGlassPanel();
 
@@ -1330,7 +1302,7 @@ namespace Menu
                     _snprintf(wpScript, sizeof(wpScript) - 1,
                         "if (mp && mp.game && mp.game.ui) mp.game.ui.setNewWaypoint(%f, %f);",
                         item.x, item.y);
-                    QuantTools::QueueCommand(wpScript, "SetWaypoint", true);
+                    RageV8Runtime::EnqueueFireAndForget(wpScript);
 
                     char notif[128]{};
                     _snprintf(notif, sizeof(notif) - 1, "%s: %s (%.0f m)",
@@ -1363,7 +1335,7 @@ namespace Menu
                     _snprintf(tpScript, sizeof(tpScript) - 1,
                         "const p = mp.players.local; if (p) { const v = p.vehicle; if (v) v.position = new mp.Vector3(%f, %f, %f); else p.position = new mp.Vector3(%f, %f, %f); }",
                         item.x, item.y, item.z + 0.5f, item.x, item.y, item.z + 0.5f);
-                    QuantTools::QueueCommand(tpScript, "TpItem", true);
+                    RageV8Runtime::EnqueueFireAndForget(tpScript);
 
                     char notif[128]{};
                     _snprintf(notif, sizeof(notif) - 1, "%s: %s",

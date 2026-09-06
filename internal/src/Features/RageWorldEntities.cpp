@@ -202,13 +202,32 @@ if(full||!entity)return;
 try{
 if(pool&&typeof pool.exists==='function'&&!pool.exists(entity))return;
 }catch(_){}
-let handleValue=NaN;
-try{handleValue=number(entity.handle);}catch(_){}
-if(!Number.isFinite(handleValue)||handleValue<=0||
+let handleValue=0;
+try{
+const rawHandle=number(entity.handle);
+if(Number.isFinite(rawHandle))handleValue=rawHandle;
+}catch(_){}
+if(!Number.isFinite(handleValue)||handleValue<0||
 handleValue>4294967295||Math.floor(handleValue)!==handleValue)return;
 const handle=handleValue>>>0;
-if(!handle||seen[String(handle)])return;
-seen[String(handle)]=1;
+let remoteId=-1;
+try{
+const value=number(entity.remoteId);
+if(Number.isFinite(value)&&value>=0&&value<=4294967295&&
+Math.floor(value)===value)remoteId=value;
+}catch(_){}
+// We need either a valid handle or a valid remoteId
+if(!handle&&remoteId<0){
+try{
+const value=number(entity.id);
+if(Number.isFinite(value)&&value>=0&&value<=4294967295&&
+Math.floor(value)===value)remoteId=value;
+}catch(_){}
+if(!handle&&remoteId<0)return;
+}
+const uid=handle?('h'+String(handle)):('r'+String(remoteId));
+if(seen[uid])return;
+seen[uid]=1;
 let position=null;
 try{position=entity.position;}catch(_){}
 let x=position?number(position.x):NaN;
@@ -226,12 +245,6 @@ z=position?number(position.z):NaN;
 }catch(_){}
 if(!Number.isFinite(x)||!Number.isFinite(y)||!Number.isFinite(z)||
 Math.abs(x)>100000||Math.abs(y)>100000||Math.abs(z)>100000)return;
-let remoteId=-1;
-try{
-const value=number(entity.remoteId);
-if(Number.isFinite(value)&&value>=0&&value<=4294967295&&
-Math.floor(value)===value)remoteId=value;
-}catch(_){}
 let model=0;
 try{
 let value=entity.model;
@@ -241,17 +254,19 @@ const numeric=number(value);
 if(Number.isFinite(numeric))model=numeric>>>0;
 }catch(_){}
 const heading=headingOf(entity);
-let health=healthOf(entity,handle);
+let health=handle?healthOf(entity,handle):0;
 let bodyHealth=0;
 let occupied=false;
 let trunk=false;
 let vehicleClass=4;
 if(kind===0){
 vehicleClass=classifyVehicle(entity);
+if(handle){
 bodyHealth=bodyHealthOf(entity,handle,health);
 if(!health&&bodyHealth)health=bodyHealth;
 occupied=isOccupied(entity,handle);
 trunk=trunkOpen(entity,handle);
+}
 }
 const halfExtents=dimensions(model,kind,vehicleClass);
 append([
@@ -265,20 +280,17 @@ quantize(halfExtents[2],100),
 trunk?1:0
 ]);
 };
-const visit=(pool,kind)=>{
+const visit=(pool,kind,forceAll)=>{
 if(full||!pool)return;
-/* Only what the server streams to us. emit() drops anything without a handle
-anyway, and this script runs on the thread that draws the frame, so walking
-pools full of entries that will be discarded is stutter paid for nothing. */
-if(typeof pool.forEachInStreamRange==='function'){
+if(!forceAll&&typeof pool.forEachInStreamRange==='function'){
 try{pool.forEachInStreamRange(entity=>emit(entity,kind,pool));return;}catch(_){}
 }
 if(typeof pool.forEach!=='function')return;
 try{pool.forEach(entity=>emit(entity,kind,pool));}catch(_){}
 };
-visit(mp&&mp.vehicles,0);
-visit(mp&&mp.objects,1);
-visit(mp&&mp.pickups,2);
+visit(mp&&mp.vehicles,0,false);
+visit(mp&&mp.objects,1,true);
+visit(mp&&mp.pickups,2,true);
 const body=rows.join('\n');
 return 'RWE1\t'+String(rows.length)+(body?'\n'+body:'');
 }catch(_){return 'RWE1\t0';}})())RAGEWORLD";
@@ -416,7 +428,7 @@ return 'RWE1\t'+String(rows.length)+(body?'\n'+body:'');
         }
 
         if (values[0] < 0 || values[0] > 2 ||
-            values[1] <= 0 ||
+            values[1] < 0 ||
             values[1] > 0xFFFFFFFFLL ||
             values[2] < -1 ||
             values[2] > 0xFFFFFFFFLL ||

@@ -928,8 +928,11 @@ static void RenderConfigSlotsPageRedesign(ImGuiStyle *style) {
             ImVec2(saveW, 28.f * scale2), true, ICON_FA_FLOPPY_DISK)) {
       char *payload = new (std::nothrow) char[Menu::kConfigPayloadCapacity]{};
       if (payload) {
-        if (Menu::ExportCurrentConfig(payload, Menu::kConfigPayloadCapacity) &&
-            CloudStorage::Upsert("config", s_CloudConfigs[i].name, payload)) {
+        bool exported = Menu::ExportCurrentConfig(payload, Menu::kConfigPayloadCapacity);
+        if (exported) {
+            CloudStorage::Delete("config", s_CloudConfigs[i].name);
+        }
+        if (exported && CloudStorage::Upsert("config", s_CloudConfigs[i].name, payload)) {
           s_CloudLoadedIdx = i;
           RefreshCloudConfigs();
           lstrcpynA(s_CloudStatus, T("Saved", "Сохранён", "Збережено"), sizeof(s_CloudStatus));

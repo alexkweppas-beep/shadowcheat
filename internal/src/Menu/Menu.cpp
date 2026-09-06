@@ -144,10 +144,18 @@ namespace Menu
         };
         static constexpr Seed kSeeds[] = {
             { 0x3D2E1AE8u, "Carbine Rifle" },
-            { 0xC0A3098Du, "Special Carbine" },
+            { 0x97F39713u, "Special Carbine" },
             { 0x2D9A5028u, "Spank/Kosyak/Analgetic" },
             { 0xE210FECFu, "First Aid Kit" },
             { 0x29CB0F3Cu, "Armor" },
+            { 0x8BF1A0D6u, "7.62mm" },
+            { 0x9D2BF7C5u, "12mm" },
+            { 0xA2C5D73Cu, "11.43mm" },
+            { 0x5311D716u, "Revolver" },
+            { 0x0D42D39Du, "Pump Shotgun" },
+            { 0x1053C3FDu, "Assault Rifle" },
+            { 0xC603E5F5u, "Mini SMG" },
+            { 0x4AD4095Au, "Assault Shotgun" },
         };
 
         ObjectVisualSettings& objects = s_ObjectVisualSettings;
