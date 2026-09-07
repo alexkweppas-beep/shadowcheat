@@ -46,7 +46,6 @@
 #include "../Features/PedPreview.h"
 #include "../Features/ModelPreview.h"
 #include "../Helpers/inject_ready.h"
-#include "../xorstr.hpp"
 
 // Defined in dllmain.cpp, which owns the single-instance claim.
 void ReleaseSoleInstanceClaim() noexcept;
@@ -87,17 +86,6 @@ namespace hooks {
     IDXGISwapChain* g_BackBufferRtvSwap = nullptr;
     bool    g_InlineHookInstalled = false;
     bool    g_VtableHookInstalled = false;
-
-    // ── RTV lock ─────────────────────────────────────────────────────────────
-    // hkPresent reads g_BackBufferRtv (shared); hkResizeBuffers /
-    // hkSetFullscreenState release+null it (exclusive). Without a lock the
-    // concurrent access is a data race that corrupts the GPU command buffer and
-    // triggers RAGE's "game renderer has crashed" dialog at random intervals.
-    static SRWLOCK g_RtvLock = SRWLOCK_INIT;
-    static inline void AcquireRtvShared()    noexcept { AcquireSRWLockShared(&g_RtvLock);    }
-    static inline void ReleaseRtvShared()    noexcept { ReleaseSRWLockShared(&g_RtvLock);    }
-    static inline void AcquireRtvExclusive() noexcept { AcquireSRWLockExclusive(&g_RtvLock); }
-    static inline void ReleaseRtvExclusive() noexcept { ReleaseSRWLockExclusive(&g_RtvLock); }
 #if defined(RAGEMP_DIAGNOSTICS)
     // Which part of our frame was running last. A device that dies takes the
     // whole renderer with it and leaves no stack to read, so the breadcrumb is
@@ -230,14 +218,10 @@ namespace hooks
     // ResizeBuffers fail and the game has no answer for that.
     static void ReleaseSwapChainDependentResources() noexcept
     {
-        // Exclusive: we're about to nullify g_BackBufferRtv which hkPresent
-        // reads under shared lock. Must hold exclusive until pointers are clear.
-        AcquireRtvExclusive();
         WorldOverlay::InvalidateDeviceObjects();
-        ReleaseBackBufferRtv();   // already called inside the exclusive region
+        ReleaseBackBufferRtv();
         g_LastBackBufferWidth = 0;
         g_LastBackBufferHeight = 0;
-        ReleaseRtvExclusive();
     }
 
     static bool EnsureBackBufferRtv(IDXGISwapChain* swap) noexcept
@@ -296,13 +280,7 @@ namespace hooks
         ImDrawData* data = ImGui::GetDrawData();
         if (!data || data->CmdListsCount <= 0 || !g_Context)
             return;
-
-        // Shared lock: concurrent with other Present calls (should be single-
-        // threaded) but exclusive with ReleaseSwapChainDependentResources.
-        AcquireRtvShared();
-        bool rtvOk = EnsureBackBufferRtv(swap);
-        if (!rtvOk) {
-            ReleaseRtvShared();
+        if (!EnsureBackBufferRtv(swap)) {
             HLog("hkPresent: backbuffer RTV missing, skip overlay draw");
             RequestImGuiRecover("ImGui recover: backbuffer RTV failed");
             return;
@@ -316,8 +294,6 @@ namespace hooks
         WorldOverlay::ComposeAfterCapture(g_Device, g_Context, swap);
         ImGui_ImplDX11_RenderDrawData(data);
         g_Context->OMSetRenderTargets(1, &oldRtv, oldDsv);
-        ReleaseRtvShared();
-
         if (oldRtv)
             oldRtv->Release();
         if (oldDsv)
@@ -501,7 +477,7 @@ namespace hooks
     static int FindLiveDxgiSwapChainVTables(void*** outVTables, int maxCount,
                                              void* referencePresent = nullptr)
     {
-        HMODULE hDxgi = GetModuleHandleW(xorstr_(L"dxgi.dll"));
+        HMODULE hDxgi = GetModuleHandleW(L"dxgi.dll");
         if (!hDxgi) {
             HLog("Init: dxgi.dll not loaded");
             return 0;
@@ -813,6 +789,9 @@ namespace hooks
         HLog("InitImGui: step 3.6 - context created");
         ImGuiIO& io = ImGui::GetIO();
         io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;
+        // Menu starts closed. Without this the Win32 backend calls SetCursor
+        // every frame and fights the login CEF cursor.
+        io.ConfigFlags |= ImGuiConfigFlags_NoMouseCursorChange;
         io.IniFilename = nullptr; // DISABLE imgui.ini disk I/O (prevents deadlocks!)
         io.LogFilename = nullptr; // DISABLE imgui_log.txt disk I/O
         HLog("InitImGui: step 3.9 - IO configured");
@@ -1121,7 +1100,6 @@ namespace hooks
         if (!hooked)
             HLog("Init: Present not hooked yet");
 
-        
         return hooked;
     }
 

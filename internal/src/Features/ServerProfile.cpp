@@ -1,5 +1,6 @@
 #include "ServerProfile.h"
 
+#include "AntiCheatShield.h"
 #include "RageV8Runtime.h"
 
 #include <Windows.h>
@@ -62,7 +63,9 @@ return '@srv\t'+kind+'\t'+hdr.replace(/[\t\r\n]/g,' ').slice(0,40);
     // is pushed once per change instead of every frame.
     ServerProfile::Announce g_PushedAnnounce =
         static_cast<ServerProfile::Announce>(-1);
+    float g_PushedStep = -1.f;
     std::uint64_t g_PushedGeneration = 0;
+    ServerProfile::Kind g_ShieldArmedFor = ServerProfile::Kind::Unknown;
 
     volatile LONG g_Lock = 0;
 
@@ -102,6 +105,9 @@ return '@srv\t'+kind+'\t'+hdr.replace(/[\t\r\n]/g,' ').slice(0,40);
         {"Unknown", ServerProfile::Identity::None,
          ServerProfile::Announce::None,
          false, false, false, false, false, true, 0.f},
+        // Long hops are announced and the last-coord flags are rewritten; the
+        // 15 m sample is not walked. Other products do the same and finish a
+        // map-wide teleport in a second.
         {"GTA5RP", ServerProfile::Identity::FiveRp,
          ServerProfile::Announce::AcCheck,
          true, true, true, true, true, true, 0.f},
@@ -174,19 +180,54 @@ return '@srv\t'+kind+'\t'+hdr.replace(/[\t\r\n]/g,' ').slice(0,40);
         ServerProfile::Announce channel,
         std::uint64_t generation) noexcept
     {
-        char script[420]{};
+        // Stamp first: poke calls it, and a hop has to rewrite last-coord
+        // flags to the destination before setCoords, not to getCoords() after.
+        // The reporter samples on the next tick; if getCoords still lags, a
+        // post-hop read of the old point is a 4 km delta.
+        RageV8Runtime::EnqueueFireAndForget(
+R"JS(try{var g=typeof globalThis!=='undefined'?globalThis:this;
+g.__bfAcStamp=function(pos){try{
+var p=mp.players&&mp.players.local;if(!p)return;
+var c=(pos&&typeof pos.x==='number'&&isFinite(pos.x))?pos:null;
+if(!c&&g.__bfAcDest&&g.__bfAcUntil&&Date.now()<g.__bfAcUntil)c=g.__bfAcDest;
+if(c){g.__bfAcDest=c;g.__bfAcUntil=Date.now()+4000;}
+var sweep=function(e){
+if(!e)return;
+var d=c;if(!d){try{d=e.getCoords(true);}catch(_){}}
+if(!d){try{d=e.position;}catch(_){}}
+var sp=0;try{if(typeof e.getSpeed==='function')sp=Number(e.getSpeed())||0;}catch(_){}
+try{if(d)e.__acLastCoords=d;}catch(_){}
+try{e.__acLastSpeed=sp;}catch(_){}
+var ns=[];try{ns=Object.getOwnPropertyNames(e);}catch(_){}
+for(var i=0;i<ns.length;i++){
+var n=ns[i];
+if(!n||n.indexOf('__ac')!==0)continue;
+if(n.indexOf('Noclip')>=0){try{e[n]=true;}catch(_){}continue;}
+if(n.indexOf('LastCo')>=0){if(d)try{e[n]=d;}catch(_){}continue;}
+if(n.indexOf('LastSp')>=0||n.indexOf('Speed')>=0){try{e[n]=sp;}catch(_){}continue;}
+var v;try{v=e[n];}catch(_){continue;}
+if(typeof v==='number'&&(n.indexOf('Dist')>=0||n.lastIndexOf('st')===n.length-2))
+try{e[n]=0;}catch(_){}
+}
+};
+sweep(p);try{sweep(p.vehicle);}catch(_){}
+}catch(_){}};}catch(e){})JS");
+        char script[1536]{};
         _snprintf_s(
             script,
             sizeof(script),
             _TRUNCATE,
             "try{var g=typeof globalThis!=='undefined'?globalThis:this;"
-            "g.__bfAcPoke=function(ms){%s};"
+            "g.__bfAcPoke=function(ms){%s;"
+            "try{if(typeof g.__bfAcStamp==='function')g.__bfAcStamp();}"
+            "catch(e){}};"
             "g.__bfAcStep=%.1f;}catch(e){}",
             ServerProfile::AnnounceJs(),
             static_cast<double>(ServerProfile::MaxWarpStep()));
         if (RageV8Runtime::EnqueueFireAndForget(script))
         {
             g_PushedAnnounce = channel;
+            g_PushedStep = ServerProfile::MaxWarpStep();
             g_PushedGeneration = generation;
         }
     }
@@ -251,7 +292,23 @@ namespace ServerProfile
         switch (AnnounceChannel())
         {
         case Announce::AcCheck:
-            return "try{mp.events.call('c:ac:check',ms||3000);}catch(e){}";
+            // Several mp.events objects coexist after a reconnect. The
+            // reporter is bound to one of them; a poke that only hits the
+            // injected isolate's mp is a no-op and the jump looks like a
+            // teleport. Spawn scripts use 5000–7500 ms, so that is the
+            // default window rather than 3000.
+            return
+                "try{"
+                "var G=(typeof globalThis!=='undefined'&&globalThis)||this;"
+                "var c=G.__ctx__,L=[],a=function(e){"
+                "if(e&&typeof e.call==='function'&&L.indexOf(e)<0)L.push(e);};"
+                "try{a(mp.events)}catch(_){}"
+                "try{a(G.mp&&G.mp.events)}catch(_){}"
+                "try{a(c&&c.mp&&c.mp.events)}catch(_){}"
+                "var t=ms||5000;"
+                "for(var i=0;i<L.length;i++)"
+                "try{L[i].call('c:ac:check',t)}catch(_){}"
+                "}catch(e){}";
         case Announce::RefreshTp:
             // The bound handler first, when something has captured it: calling
             // it directly refreshes the same timestamp without the event going
@@ -270,7 +327,9 @@ namespace ServerProfile
         g_LastRequest = 0;
         g_Attempts = 0;
         g_PushedAnnounce = static_cast<Announce>(-1);
+        g_PushedStep = -1.f;
         g_PushedGeneration = 0;
+        g_ShieldArmedFor = Kind::Unknown;
         Lock();
         g_Probed = Kind::Unknown;
         g_Detail[0] = 0;
@@ -329,8 +388,22 @@ namespace ServerProfile
         // The helper the movement hooks call. Pushed on a change of channel and
         // after every reconnect, because the context that held it is gone.
         if (g_PushedAnnounce != AnnounceChannel() ||
-            g_PushedGeneration != runtime.generation)
+            g_PushedGeneration != runtime.generation ||
+            g_PushedStep != MaxWarpStep())
             PushAnnounceHelper(AnnounceChannel(), runtime.generation);
+
+        // GTA5RP's own reporter is what bans a long hop. Other internals keep
+        // that channel muted; the toggle is "Disable anti-cheat". Arm it once
+        // when this server is recognised so a map-wide teleport is not walked.
+        {
+            const Kind kind = Current();
+            if (kind == Kind::FiveRp && g_ShieldArmedFor != Kind::FiveRp)
+            {
+                AntiCheatShield::Enabled() = true;
+                AntiCheatShield::ForceInstall();
+            }
+            g_ShieldArmedFor = kind;
+        }
 
         // Once the server is known there is nothing to learn, but the check is
         // cheap and a session can change servers without changing context.

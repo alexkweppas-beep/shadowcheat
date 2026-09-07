@@ -190,7 +190,7 @@ namespace
     {
         if (!label || !body)
             return false;
-        char script[768]{};
+        char script[1536]{};
         _snprintf(
             script,
             sizeof(script) - 1,
@@ -234,20 +234,31 @@ namespace
         if (g_PendingFlip)
         {
             g_PendingFlip = false;
-            // Upright, keeping the way it faces. Roll and pitch are what a
-            // flipped car has, and heading is the part worth preserving.
+            // GTA5RP reports instant setRotation as a vehicle Z/speed snap.
+            // Its own scripts unflip with setOnGroundProperly. Announce first
+            // so the local reporter does not treat the settle as a warp.
             RunOnVehicle(
                 "flip",
-                "var hd=0;"
-                "try{hd=Number(v.getHeading());}catch(e){}"
-                "if(!isFinite(hd)){try{hd=Number(v.heading);}catch(e){hd=0;}}"
+                "try{if(typeof g.__bfAcPoke==='function')g.__bfAcPoke();}"
+                "catch(e){}"
+                "try{v.setVelocity(0,0,0);}catch(e){}"
+                "if(typeof v.setOnGroundProperly==='function'){"
+                "v.setOnGroundProperly();how='ground';}"
+                "else if(mp.game.vehicle&&typeof "
+                "mp.game.vehicle.setVehicleOnGroundProperly==='function'){"
+                "mp.game.vehicle.setVehicleOnGroundProperly(v.handle);"
+                "how='ns';}"
+                "else{"
+                "var hd=0;try{hd=Number(v.getHeading());}catch(e){}"
                 "if(!isFinite(hd))hd=0;"
-                "if(typeof v.setRotation==='function'){"
-                "v.setRotation(0,0,hd,2,true);how='wrapper';}"
-                "else if(mp.game.entity&&"
-                "typeof mp.game.entity.setEntityRotation==='function'){"
-                "mp.game.entity.setEntityRotation("
-                "v.handle,0,0,hd,2,true);how='ns';}");
+                "if(typeof v.setRotation==='function')"
+                "{v.setRotation(0,0,hd,2,true);how='rot';}"
+                "try{v.setVelocity(0,0,0);}catch(e){}"
+                "}"
+                "try{var g2=typeof globalThis!=='undefined'?globalThis:this;"
+                "var at=null;try{at=v.getCoords(true);}catch(e2){}"
+                "if(typeof g2.__bfAcStamp==='function')g2.__bfAcStamp(at);}"
+                "catch(e){}");
         }
         if (g_PendingCrash)
         {

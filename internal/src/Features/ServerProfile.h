@@ -104,8 +104,10 @@ namespace ServerProfile
     // Health at or below this means the player is down.
     int DownThreshold() noexcept;
     // How far a single position jump may travel. Quant's check trips on 650 m
-    // within two and a half seconds of the last legitimate teleport, so a long
-    // warp is walked in steps instead of one hop.
+    // within two and a half seconds of the last legitimate teleport. GTA5RP
+    // is 0: its reporter is muted for the hop (c:ac:check, rewritten
+    // __acLast* flags, noclip skip bits, blocked s_ac_*), so a map-wide
+    // teleport is one jump, not a walk.
     float MaxWarpStep() noexcept;
 
     // The body of the g.__bfAcPoke(ms) helper the movement hooks call. Kept

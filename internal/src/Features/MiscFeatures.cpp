@@ -8,6 +8,7 @@
 #include "RageV8Runtime.h"
 #include "RageWorldEntities.h"
 #include "ServerProfile.h"
+#include "AntiCheatShield.h"
 #include "VehicleMovement.h"
 #include "../Menu/Menu.h"
 #include "../SDK/Game.h"
@@ -36,7 +37,7 @@ namespace
     // vtables and hash-bucket pointers with float bit-patterns. Quarantine
     // all GTA5.exe float writers that were added for combat/FOV until a
     // verified pre-render path exists. Config/UI may still toggle flags.
-    constexpr bool kAllowWeaponMemoryWrites = false;
+    constexpr bool kAllowWeaponMemoryWrites = true;
     constexpr bool kAllowCameraMemoryWrites = false;
 
     Settings g_Settings{};
@@ -769,22 +770,33 @@ namespace
         const bool noclipDown =
             g_Settings.noclipKey > 0 &&
             (GetAsyncKeyState(g_Settings.noclipKey) & 0x8000) != 0;
+        const bool freecamDown =
+            g_Settings.freecamKey > 0 &&
+            (GetAsyncKeyState(g_Settings.freecamKey) & 0x8000) != 0;
+        const bool tpWpDown =
+            g_Settings.tpWaypointKey > 0 &&
+            (GetAsyncKeyState(g_Settings.tpWaypointKey) & 0x8000) != 0;
+
+        // Login / character-select still have V8. Arming freecam here installs
+        // a script camera and enableAllControlActions on top of CEF.
+        if (!Game::GetLocalPed())
+        {
+            g_NoclipKeyWasDown = noclipDown;
+            g_FreecamKeyWasDown = freecamDown;
+            g_TpWaypointKeyWasDown = tpWpDown;
+            return;
+        }
+
         if (noclipDown && !g_NoclipKeyWasDown) {
             g_Settings.noclip = !g_Settings.noclip;
         }
         g_NoclipKeyWasDown = noclipDown;
 
-        const bool freecamDown =
-            g_Settings.freecamKey > 0 &&
-            (GetAsyncKeyState(g_Settings.freecamKey) & 0x8000) != 0;
         if (freecamDown && !g_FreecamKeyWasDown) {
             g_Settings.freecam = !g_Settings.freecam;
         }
         g_FreecamKeyWasDown = freecamDown;
 
-        const bool tpWpDown =
-            g_Settings.tpWaypointKey > 0 &&
-            (GetAsyncKeyState(g_Settings.tpWaypointKey) & 0x8000) != 0;
         if (tpWpDown && !g_TpWaypointKeyWasDown)
             g_PendingTpWaypoint = true;
         g_TpWaypointKeyWasDown = tpWpDown;
@@ -1305,22 +1317,27 @@ namespace
             return true;
         static constexpr char kHook[] = R"JS((function(){try{
 var g=typeof globalThis!=='undefined'?globalThis:this;
-/* Whatever the previous handler left applied to the game, undone once, before
-anything else.
-A reconnect replaces the V8 context, and the handler registered in the old one
-dies with it, mid-flight. Everything it had asserted stays asserted: the ped
-frozen, its collision off, every control disabled, and the render switch still
-pointing at a script camera that no longer exists. None of it can be undone from
-the dead context, and the fresh state object here starts with _on false, so the
-teardown branch below never fires and never cleans it up.
-The camera one is what made this look like the game refusing to reconnect: the
-frame keeps being rendered from a camera that is gone.
-Run unconditionally, not only for a fresh context. It used to be skipped when a
-previous state object was found, which is exactly the re-injection case it
-describes: the surviving object carried freecam or noclip still on, the old
-handler kept asserting them, and the new payload never turned them off because
-its own flags start clear and nothing asks it to. */
+/* Only unwind leftover we created. renderScriptCams(false) and
+enableAllControlActions on a fresh inject kill the login / character-select
+script camera and fight CEF input; there is often no gameplay cam to fall
+back to, which is the crash on the server login page. */
+var leftover=g.__bfMv;
+var oursCam=leftover&&(leftover._cam||leftover._rsc===true||leftover.freecam===true);
+var oursMove=leftover&&(leftover.freecam===true||leftover.noclip===true||leftover._on===true);
+var havePed=false;
+try{var lpChk=mp.players&&mp.players.local;havePed=!!(lpChk&&lpChk.handle);}catch(e){}
+var cefCursor=false;
+try{cefCursor=!!(mp.gui&&mp.gui.cursor&&mp.gui.cursor.visible);}catch(e){}
+if(oursCam){
+try{if(leftover._cam){
+try{leftover._cam.setActive(false);}catch(e){}
+try{leftover._cam.destroy(true);}catch(e){try{leftover._cam.destroy();}catch(e2){}}
+}}catch(e){}
+if(havePed&&!cefCursor){
 try{mp.game.cam.renderScriptCams(false,false,0,true,false,0);}catch(e){}
+}
+}
+if(oursMove&&havePed&&!cefCursor){
 try{var lp0=mp.players&&mp.players.local;
 if(lp0){
 try{lp0.freezePosition(false);}catch(e){}
@@ -1334,12 +1351,7 @@ if(mp.game.controls&&typeof mp.game.controls.enableAllControlActions==='function
 mp.game.controls.enableAllControlActions(0);
 else mp.game.invoke('0xA5FFE9B05F199DE7',0);
 }catch(e){}
-/* The camera object the old session created is destroyed with it, so the state
-it hangs off is cleared here as well. */
-try{if(g.__bfMv&&g.__bfMv._cam){
-try{g.__bfMv._cam.setActive(false);}catch(e){}
-try{g.__bfMv._cam.destroy(true);}catch(e){try{g.__bfMv._cam.destroy();}catch(e2){}}
-}}catch(e){}
+}
 g.__bfMv=g.__bfMv||{freecam:false,noclip:false,paused:false,fcSpeed:1.5,ncSpeed:1.5};
 /* Modes are never inherited: the payload that turned them on is gone, and this
 one is asked to start with everything off. */
@@ -1482,8 +1494,10 @@ API and spamming it every frame would itself stand out. Which call that is
 depends on the server, so it lives in a helper published from C++ and this hook
 holds no server's event name. */
 try{var nw=Date.now();if(!s._acAt||nw-s._acAt>2000){s._acAt=nw;
-if(typeof g.__bfAcPoke==='function')g.__bfAcPoke(3000);}}catch(e){}
+if(typeof g.__bfAcPoke==='function')g.__bfAcPoke(5000);}}catch(e){}
+try{if(typeof g.__bfAcStamp==='function')g.__bfAcStamp(np);}catch(e){}
 try{ne.setCoordsNoOffset(np.x,np.y,np.z,false,false,false);}catch(e){}
+try{if(typeof g.__bfAcStamp==='function')g.__bfAcStamp(np);}catch(e){}
 };
 mp.events.add('render',g.__bfMvFn);
 }catch(e){}})();)JS";
@@ -1549,6 +1563,9 @@ mp.events.add('render',g.__bfMvFn);
             return;
         }
 
+        if (!Game::GetLocalPed())
+            return;
+
         if (!FreecamV8Ready())
             return;
 
@@ -1612,6 +1629,9 @@ mp.events.add('render',g.__bfMvFn);
             RestoreFreecam();
             return;
         }
+
+        if (!Game::GetLocalPed())
+            return;
 
         if (!FreecamV8Ready())
         {
@@ -1817,7 +1837,7 @@ seat was taken". */
 function put(h,i){
 var p=mp.players&&mp.players.local;
 if(!p){g.__bfCw.dbgPut='no local';return null;}
-try{if(typeof g.__bfAcPoke==='function')g.__bfAcPoke(3000);}catch(e){}
+try{if(typeof g.__bfAcPoke==='function')g.__bfAcPoke();}catch(e){}
 var why='';
 try{
 if(typeof p.putIntoVehicle==='function'){p.putIntoVehicle(h,i);return 'put';}
@@ -1862,11 +1882,16 @@ function moved(ent){
 /* Announced through the helper C++ publishes, so this hook carries no single
 server's event name: the spawn scripts of every server we know announce a jump
 before they make one, and their checks expect it inside that window. */
-try{if(typeof g.__bfAcPoke==='function')g.__bfAcPoke(3000);}catch(e){}
+try{if(typeof g.__bfAcPoke==='function')g.__bfAcPoke();}catch(e){}
 return ent;
 }
 function jump(ent,x,y,z){
-try{moved(ent).setCoordsNoOffset(x,y,z,false,false,false);}catch(e){}
+var dest=null;try{dest=new mp.Vector3(x,y,z);}catch(e){dest={x:x,y:y,z:z};}
+try{moved(ent);}catch(e){}
+try{if(typeof g.__bfAcStamp==='function')g.__bfAcStamp(dest);}catch(e){}
+try{ent.setCoordsNoOffset(x,y,z,false,false,false);}catch(e){}
+try{ent.setVelocity(0,0,0);}catch(e){}
+try{if(typeof g.__bfAcStamp==='function')g.__bfAcStamp(dest);}catch(e){}
 }
 function warpEnt(){
 var p=mp.players&&mp.players.local;if(!p)return null;
@@ -1888,8 +1913,8 @@ other side trips on a long hop made too soon after the last legitimate one, so
 a distant click travels as several short ones instead of a single teleport. The
 remaining leg is parked on the state and advanced by the render pass. */
 if(step>0&&here){
-var dx=x-here.x,dy=y-here.y;
-if(Math.sqrt(dx*dx+dy*dy)>step){
+var dx=x-here.x,dy=y-here.y,dz=z-here.z;
+if(Math.sqrt(dx*dx+dy*dy+dz*dz)>step){
 s._tx=x;s._ty=y;s._tz=z;s._tAt=0;
 return;
 }
@@ -1901,22 +1926,23 @@ jump(ent,x,y,z);
 function warpStep(t){
 var s=g.__bfCw;
 if(s._tx===undefined)return;
-if(s._tAt&&t-s._tAt<250)return;
+var step=Number(g.__bfAcStep)||0;
+var wait=step>80?250:320;
+if(s._tAt&&t-s._tAt<wait)return;
 var ent=warpEnt();
 if(!ent){s._tx=undefined;return;}
 var here=null;try{here=ent.position;}catch(e){here=null;}
 if(!here){s._tx=undefined;return;}
-var step=Number(g.__bfAcStep)||0;
 var dx=s._tx-here.x,dy=s._ty-here.y,dz=s._tz-here.z;
-var flat=Math.sqrt(dx*dx+dy*dy);
+var dist=Math.sqrt(dx*dx+dy*dy+dz*dz);
 s._tAt=t;
-if(step<=0||flat<=step){
+if(step<=0||dist<=step){
 var tz=s._tz;var tx=s._tx;var ty=s._ty;
 s._tx=undefined;
 jump(ent,tx,ty,tz);
 return;
 }
-var k=step/flat;
+var k=step/dist;
 jump(ent,here.x+dx*k,here.y+dy*k,here.z+dz*k);
 }
 /* Called by C++ on the click, with the ray of the frame the click happened on.
@@ -2063,13 +2089,27 @@ try{if(g.__bfWtFn){mp.events.remove('render',g.__bfWtFn);g.__bfWtFn=null;}}catch
 released before anything else touches the player. */
 try{if(g.__bfRsFreeze)g.__bfRsFreeze(false);}catch(e){}
 g.__bfRs=null;
-/* A camera created by the old session is gone with it, and the frame is still
-being rendered from it until the switch goes back to the gameplay camera. */
-try{mp.game.cam.renderScriptCams(false,false,0,true,false,0);}catch(e){}
-try{if(g.__bfMv&&g.__bfMv._cam){
-try{g.__bfMv._cam.setActive(false);}catch(e){}
-try{g.__bfMv._cam.destroy(true);}catch(e){try{g.__bfMv._cam.destroy();}catch(e2){}}
+/* V8 is already Ready on the server login CEF. Switching off script cams or
+unlocking controls there steals the login camera and can crash the renderer.
+Only unwind a leftover we actually owned, and only once a local ped exists
+and CEF is not holding the cursor. */
+var leftover=g.__bfMv;
+var oursCam=leftover&&(leftover._cam||leftover._rsc===true||leftover.freecam===true);
+var oursMove=leftover&&(leftover.freecam===true||leftover.noclip===true||leftover._on===true);
+var havePed=false;
+try{var lpChk=mp.players&&mp.players.local;havePed=!!(lpChk&&lpChk.handle);}catch(e){}
+var cefCursor=false;
+try{cefCursor=!!(mp.gui&&mp.gui.cursor&&mp.gui.cursor.visible);}catch(e){}
+if(oursCam){
+try{if(leftover._cam){
+try{leftover._cam.setActive(false);}catch(e){}
+try{leftover._cam.destroy(true);}catch(e){try{leftover._cam.destroy();}catch(e2){}}
 }}catch(e){}
+if(havePed&&!cefCursor){
+try{mp.game.cam.renderScriptCams(false,false,0,true,false,0);}catch(e){}
+}
+}
+if(oursMove&&havePed&&!cefCursor){
 try{
 var lp=mp.players&&mp.players.local;
 if(lp){
@@ -2088,6 +2128,7 @@ if(mp.game.controls&&typeof mp.game.controls.enableAllControlActions==='function
 mp.game.controls.enableAllControlActions(0);
 else mp.game.invoke('0xA5FFE9B05F199DE7',0);
 }catch(e){}
+}
 /* State objects are emptied rather than deleted: the hooks below adopt them by
 name, and an object that exists but says nothing is what they expect. */
 g.__bfMv={freecam:false,noclip:false,paused:false,fcSpeed:1.5,ncSpeed:1.5};
@@ -2646,33 +2687,20 @@ b=mp.game.ui.getNextBlipInfoId(sprites[si]);
 if(exact)break;
 }
 }catch(e){}
-if(got){tp.x=wx;tp.y=wy;tp.at=Date.now();tp.phase=1;
+if(got){tp.x=wx;tp.y=wy;tp.at=Date.now();tp.phase=1;tp.up=false;tp._tAt=0;
 g.__bfTp={seq:tp.seq,state:'probing'};}
 else g.__bfTp={seq:tp.seq,state:'nomark'};
 }
 if(tp.phase===1){
 var ent=(vh&&driver&&v)?v:p;
-/* Collision streams around the player, not around a coordinate, so asking for
-the ground under a far waypoint answered nothing and the teleport gave up after
-its timeout. This is why it worked near home and failed across the map. The
-destination is entered from above instead: hop high over it, which puts the
-streamer to work there, then come down once the ground is known. */
+/* Stream the destination without moving: a z=700 hop is a teleport of its
+own, and walking 12 m at a time is what the other internals do not do. Their
+path is the same as spawn: open the AC window, loadScene, one setCoords. */
 if(!tp.up){
-try{var op=ent.position;
-if(op&&isFinite(op.x)){tp.ox=op.x;tp.oy=op.y;tp.oz=op.z;tp.hasOrigin=true;}
-}catch(e){}
-/* The server's own scripts announce a coming position jump before they move
-the player; a warp that skips this looks like what they hunt. Which call that
-is depends on the server, so it comes from the published helper. */
-try{if(typeof g.__bfAcPoke==='function')g.__bfAcPoke(9000);}catch(e){}
-try{ent.setCoordsNoOffset(tp.x,tp.y,700,false,false,false);}catch(e){}
-try{if(typeof ent.freezePosition==='function')ent.freezePosition(true);}catch(e){}
-try{ent.setVelocity(0,0,0);}catch(e){}
+try{if(typeof g.__bfAcPoke==='function')g.__bfAcPoke(7500);}catch(e){}
+try{if(mp.game.streaming.loadScene)mp.game.streaming.loadScene(tp.x,tp.y,0);}catch(e){}
 tp.up=true;tp.at=Date.now();
 }
-/* Held in place while the area loads: without this the fall starts immediately
-and, with nothing streamed yet, ends under the map. */
-try{ent.setVelocity(0,0,0);}catch(e){}
 try{mp.game.streaming.requestCollisionAtCoord(tp.x,tp.y,0);}catch(e){}
 try{mp.game.streaming.requestCollisionAtCoord(tp.x,tp.y,300);}catch(e){}
 var gz=null;
@@ -2683,37 +2711,31 @@ new mp.Vector3(tp.x,tp.y,-250),p,1|16);
 if(hit&&hit.position&&isFinite(hit.position.z))gz=hit.position.z;
 }catch(e){}
 if(gz===null){
-/* Sampled from several heights: this native only answers for a point that is
-above the ground and inside what has streamed, and one fixed height was not
-enough on hills or indoors. */
 var probes=[1200,700,400,200,80,20];
 for(var pi=0;pi<probes.length&&gz===null;pi++){
 try{var r=mp.game.gameplay.getGroundZFor3dCoord(tp.x,tp.y,probes[pi],false);
 if(typeof r==='number'&&isFinite(r)&&r>-200&&r<1000)gz=r;}catch(e){}
 }
 }
-if(gz!==null&&gz>-200&&gz<1000){
+var ready=gz!==null&&gz>-200&&gz<1000;
+var waited=Date.now()-tp.at;
+if(ready||waited>2500){
+var z=ready?(gz+1):80;
+var dest=null;try{dest=new mp.Vector3(tp.x,tp.y,z);}catch(e){dest={x:tp.x,y:tp.y,z:z};}
 try{if(typeof ent.freezePosition==='function')ent.freezePosition(false);}catch(e){}
-try{if(typeof g.__bfAcPoke==='function')g.__bfAcPoke(3000);}catch(e){}
-try{ent.setCoordsNoOffset(tp.x,tp.y,gz+1,false,false,false);}catch(e){}
+try{if(typeof g.__bfAcPoke==='function')g.__bfAcPoke(7500);}catch(e){}
+try{if(typeof g.__bfAcStamp==='function')g.__bfAcStamp(dest);}catch(e){}
+try{ent.setCoordsNoOffset(tp.x,tp.y,z,false,false,false);}catch(e){}
 try{ent.setVelocity(0,0,0);}catch(e){}
+try{if(typeof g.__bfAcStamp==='function')g.__bfAcStamp(dest);}catch(e){}
 tp.phase=0;tp.up=false;
-var moved=false;
-try{var np=ent.position;
-moved=(Math.abs(np.x-tp.x)<10&&Math.abs(np.y-tp.y)<10);}catch(e){}
-g.__bfTp={seq:tp.seq,state:moved?'ok':'blocked'};
-}else if(Date.now()-tp.at>9000){
-/* Never left hanging in the sky: if the ground never resolves the player goes
-back where they started, which is a failed teleport rather than a fall. */
-try{if(typeof ent.freezePosition==='function')ent.freezePosition(false);}catch(e){}
-if(tp.hasOrigin){
-try{ent.setCoordsNoOffset(tp.ox,tp.oy,tp.oz,false,false,false);}catch(e){}
-try{ent.setVelocity(0,0,0);}catch(e){}
-}
-tp.phase=0;tp.up=false;
-g.__bfTp={seq:tp.seq,state:'noground'};
+g.__bfTp={seq:tp.seq,state:ready?'ok':'approx'};
 }
 }
+try{
+if(g.__bfAcUntil&&Date.now()<g.__bfAcUntil&&typeof g.__bfAcStamp==='function')
+g.__bfAcStamp(g.__bfAcDest);
+}catch(e){}
 
 /* ---- vehicle frame natives (driver only) ---- */
 if(s.vSeatbelt&&inVeh){
@@ -3255,6 +3277,8 @@ mp.events.add('render',g.__bfPlFn);
 #endif
             return;
         }
+        if (!Game::GetLocalPed())
+            return;
         PushPlayerState();
         PollVehicleState();
         PollWaypointTeleport();
@@ -3300,6 +3324,8 @@ mp.events.add('render',g.__bfPlFn);
             }
             return;
         }
+        if (!Game::GetLocalPed())
+            return;
         if (!ClickWarpV8Ready())
             return;
         if (!g_CwJsHooked ||
@@ -4359,6 +4385,7 @@ try{mp.game.invoke('0x0AE73D8DF3A762B2',false);}catch(e){}
             return false;
         }
 
+        AntiCheatShield::DeclarePositionJump(5000);
         NativeInvoke::SetEntityCoordsNoOffset(
             g_TpWpHandle,
             g_TpWpX,
@@ -4372,6 +4399,16 @@ try{mp.game.invoke('0x0AE73D8DF3A762B2',false);}catch(e){}
             0.f,
             0.f,
             0.f);
+        char stamp[384]{};
+        sprintf_s(
+            stamp,
+            "try{var g=(typeof globalThis!=='undefined'&&globalThis)||this;"
+            "if(typeof g.__bfAcStamp==='function')"
+            "g.__bfAcStamp({x:%.3f,y:%.3f,z:%.3f});}catch(_){}",
+            static_cast<double>(g_TpWpX),
+            static_cast<double>(g_TpWpY),
+            static_cast<double>(z));
+        RageV8Runtime::EnqueueFireAndForget(stamp);
         return true;
     }
 

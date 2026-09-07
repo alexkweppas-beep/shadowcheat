@@ -4,7 +4,7 @@
 
 // The server ships a client-side anti-cheat that watches noclip, teleports and
 // vehicle state, and reports violations to the server through remote calls
-// named s_ac_*. The names are assembled at runtime from an obfuscated string
+// named s_ac_* / s:ac:*. The names are assembled at runtime from an obfuscated string
 // table, so they cannot be listed by reading the dump: the reporter itself has
 // to be observed. This wraps the runtime's outbound call, which both reveals
 // the real names and gives the option of not letting the report leave.
@@ -32,6 +32,7 @@ namespace AntiCheatShield
 
     void Initialize() noexcept;
     void Update() noexcept;
+    void ForceInstall() noexcept;
     Status GetStatus() noexcept;
 
     // Declares an expected position jump the same way the server's own scripts

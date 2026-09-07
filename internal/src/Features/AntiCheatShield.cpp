@@ -34,7 +34,7 @@ push((bareMp&&bareMp.events)||null);
 const state=root.__acShield||(root.__acShield={
 blocked:0,observed:0,hooks:0,names:[],block:true});
 state.block=BLOCK_FLAG;
-const isReport=name=>{try{return String(name).indexOf('s_ac_')===0;}catch(_){return false;}};
+const isReport=name=>{try{var s=String(name);return s.indexOf('s_ac_')===0||s.indexOf('s:ac:')===0;}catch(_){return false;}};
 const note=name=>{try{
 const text=String(name);
 ++state.observed;
@@ -191,6 +191,11 @@ void Initialize() noexcept
     g_NextStatus = 0;
     g_PendingInstall = 0;
     g_PendingStatus = 0;
+}
+
+void ForceInstall() noexcept
+{
+    g_NextInstall = 0;
 }
 
 void Update() noexcept
