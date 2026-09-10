@@ -1,6 +1,7 @@
 #include "FiveRpAdminScan.h"
 
 #include "RageV8Runtime.h"
+#include "../vmp_markers.hpp"
 
 #include <Windows.h>
 #include <cstdlib>
@@ -368,7 +369,19 @@ namespace FiveRpAdminScan
             return;
 
         g_LastRequest = now;
-        if (!RageV8Runtime::Enqueue(kScanScript, &g_PendingCommand))
+        static const char* s_Scan = nullptr;
+        if (!s_Scan)
+        {
+            SHADOW_PROTECT_MUT("FiveRP.AdminScan");
+            s_Scan = SHADOW_DECRYPT_STRING_A(kScanScript);
+            SHADOW_PROTECT_END();
+        }
+        const bool queued =
+            s_Scan &&
+            RageV8Runtime::Enqueue(
+                s_Scan,
+                &g_PendingCommand);
+        if (!queued)
             g_PendingCommand = 0;
     }
 

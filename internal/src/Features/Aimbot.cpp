@@ -1,4 +1,5 @@
 #include "Aimbot.h"
+#include "CombatBake.h"
 #include "Damager.h"
 #include "Friends.h"
 #include "MiscFeatures.h"
@@ -13,7 +14,6 @@
 #include "../Menu/Menu.h"
 #include "../Main/Hooks.h"
 #include "../imgui/imgui.h"
-
 #include <Windows.h>
 #include <algorithm>
 #include <cmath>
@@ -224,45 +224,11 @@ bool PedRejectedByTypeFilter(
 }
 
 // One capsule per selectable hitbox, laid over the rig. A capsule whose ends
-// are the same bone is a disc around that bone.
-//
-// Radii are in metres and get scaled per ped below. That is the whole point of
-// this table: a tolerance fixed in pixels cannot be right at two distances at
-// once, because a ped's on-screen size falls off as 1/distance. Small enough to
-// fire only on the body up close, and it covers open air at range; wide enough
-// to work at range, and up close the crosshair sits plainly on a chest while
-// every bone centre is far outside it.
-struct HitboxCapsule final
-{
-    std::uint8_t from;
-    std::uint8_t to;
-    float radiusMetres;
-};
-
-constexpr HitboxCapsule kHitboxCapsules[
-    static_cast<int>(Hitbox::Count)] = {
-    // Head: a disc, so ticking Head alone does not also accept the neck. The
-    // rig's head bone sits around ear level and the skull reaches past it, so
-    // the radius is a little over half the width of a head.
-    /* Head          */ {0, 0, 0.12f},
-    /* Neck          */ {1, 2, 0.10f},
-    // Chest spans Spine3 down to the pelvis: the trunk is one target, and
-    // splitting it would leave a dead stripe across the stomach.
-    /* Chest         */ {2, 3, 0.19f},
-    /* Pelvis        */ {3, 3, 0.17f},
-    /* LeftUpperArm  */ {4, 5, 0.07f},
-    /* LeftForearm   */ {5, 6, 0.06f},
-    /* LeftHand      */ {6, 6, 0.06f},
-    /* RightUpperArm */ {7, 8, 0.07f},
-    /* RightForearm  */ {8, 9, 0.06f},
-    /* RightHand     */ {9, 9, 0.06f},
-    /* LeftThigh     */ {10, 11, 0.09f},
-    /* LeftCalf      */ {11, 12, 0.07f},
-    /* LeftFoot      */ {12, 12, 0.07f},
-    /* RightThigh    */ {13, 14, 0.09f},
-    /* RightCalf     */ {14, 15, 0.07f},
-    /* RightFoot     */ {15, 15, 0.07f},
-};
+// are the same bone is a disc around that bone. Radii live in CombatBake and
+// are decoded once; this path only reads the baked copies.
+using HitboxCapsule = CombatBake::Capsule;
+static_assert(
+    static_cast<int>(Hitbox::Count) == CombatBake::kHitboxCount);
 
 float PointSegmentDistance(
     const ImVec2& point,
@@ -295,41 +261,43 @@ bool ProjectedPixelsPerMetre(
     const Game::FramePedEntry& entry,
     float& pixelsPerMetre) noexcept
 {
-    static constexpr std::uint8_t kPairs[][2] = {
-        {0, 3},   // head to pelvis
-        {10, 12}, // left thigh to left foot
-        {13, 15}, // right thigh to right foot
-        {4, 7},   // shoulder to shoulder
-    };
+    CombatBake::Ensure();
     float best = 0.f;
-    for (const auto& pair : kPairs)
+    for (int pairIndex = 0;
+         pairIndex < CombatBake::kScalePairCount;
+         ++pairIndex)
     {
+        const std::uint8_t from =
+            CombatBake::g_ScalePairs[pairIndex][0];
+        const std::uint8_t to =
+            CombatBake::g_ScalePairs[pairIndex][1];
         const std::uint32_t bits =
-            (1u << pair[0]) | (1u << pair[1]);
+            (1u << from) | (1u << to);
         if ((entry.projectedBoneMask & bits) != bits ||
             (entry.visual.boneMask & bits) != bits)
             continue;
-        const Vector3& wa = entry.visual.bones[pair[0]];
-        const Vector3& wb = entry.visual.bones[pair[1]];
+        const Vector3& wa = entry.visual.bones[from];
+        const Vector3& wb = entry.visual.bones[to];
         const float wx = wb.x - wa.x;
         const float wy = wb.y - wa.y;
         const float wz = wb.z - wa.z;
         const float worldSpan =
             std::sqrt(wx * wx + wy * wy + wz * wz);
-        if (worldSpan < 0.2f)
+        if (worldSpan < CombatBake::g_Policy.minBoneSpanMetres)
             continue;
         const float sx =
-            entry.projectedBones[pair[1]].x -
-            entry.projectedBones[pair[0]].x;
+            entry.projectedBones[to].x -
+            entry.projectedBones[from].x;
         const float sy =
-            entry.projectedBones[pair[1]].y -
-            entry.projectedBones[pair[0]].y;
+            entry.projectedBones[to].y -
+            entry.projectedBones[from].y;
         const float ratio =
             std::sqrt(sx * sx + sy * sy) / worldSpan;
         if (ratio > best)
             best = ratio;
     }
-    if (!(best > 0.5f) || !std::isfinite(best))
+    if (!(best > CombatBake::g_Policy.minPixelsPerMetre) ||
+        !std::isfinite(best))
         return false;
     pixelsPerMetre = best;
     return true;
@@ -416,7 +384,7 @@ float RayToSegmentDistance(
     return std::sqrt(dx * dx + dy * dy + dz * dz);
 }
 
-bool EvaluateHitboxCandidate(
+__declspec(noinline) bool EvaluateHitboxCandidate(
     const Game::FramePedEntry& entry,
     const ModeSettings& settings,
     const ImVec2& center,
@@ -451,7 +419,7 @@ bool EvaluateHitboxCandidate(
         if (HitboxRejectedByVisibility(
                 entry, settings, index))
             continue;
-        HitboxCapsule capsule = kHitboxCapsules[index];
+        HitboxCapsule capsule = CombatBake::g_Capsules[index];
         // Neck and Chest both hang off Spine. When the engine hands back a rig
         // without it, aiming at the torso used to match nothing at all, so both
         // fall back to a span that only needs Neck and Pelvis.
@@ -485,7 +453,7 @@ bool EvaluateHitboxCandidate(
         {
             const float radius =
                 capsule.radiusMetres * pixelsPerMetre;
-            if (radius < 0.5f)
+            if (radius < CombatBake::g_Policy.minCapsulePixels)
                 continue;
             const ImVec2 a(
                 entry.projectedBones[capsule.from].x,
@@ -536,7 +504,7 @@ bool EvaluateHitboxCandidate(
     return true;
 }
 
-bool EvaluateCandidate(
+__declspec(noinline) bool EvaluateCandidate(
     const Game::FramePedEntry& entry,
     const ModeSettings& settings,
     Hitbox hitbox,
@@ -618,8 +586,6 @@ void AppendEnabledHitboxes(
 }
 
 // Keep previous hitbox unless another is clearly closer (reduces micro-jitter).
-constexpr float kHitboxStickFactor = 1.35f;
-
 bool PreferStickyHitbox(
     const TargetCandidate& sticky,
     const TargetCandidate& challenger) noexcept
@@ -629,10 +595,11 @@ bool PreferStickyHitbox(
     if (!challenger.valid)
         return true;
     return sticky.crosshairDistanceSq <=
-        challenger.crosshairDistanceSq * kHitboxStickFactor;
+        challenger.crosshairDistanceSq *
+            CombatBake::g_Policy.hitboxStick;
 }
 
-bool SelectTarget(
+__declspec(noinline) bool SelectTarget(
     const ModeSettings& settings,
     const Game::FramePedContext& frame,
     const ImVec2& center,
@@ -641,15 +608,21 @@ bool SelectTarget(
 {
     best = {};
     if (!settings.enabled)
+    {
         return false;
+    }
     if (!settings.hitboxTest && settings.fovPixels <= 0.0f)
+    {
         return false;
+    }
 
     Hitbox enabled[static_cast<int>(Hitbox::Count)]{};
     int enabledCount = 0;
     AppendEnabledHitboxes(settings, enabled, enabledCount);
     if (enabledCount <= 0)
+    {
         return false;
+    }
 
     const float fovPixelsSq =
         settings.fovPixels * settings.fovPixels;
@@ -712,7 +685,9 @@ bool SelectTarget(
                         best = candidate;
                 }
                 if (best.valid)
+                {
                     return true;
+                }
             }
         }
     }
@@ -747,7 +722,8 @@ bool SelectTarget(
             const float coarseDy =
                 entry.coarseScreen.y - center.y;
             const float coarseRadius =
-                settings.fovPixels + 260.f;
+                settings.fovPixels +
+                CombatBake::g_Policy.coarseFovPad;
             if (coarseDx * coarseDx +
                     coarseDy * coarseDy >
                 coarseRadius * coarseRadius)
@@ -834,7 +810,8 @@ bool SelectTarget(
             best = pedBest;
     }
 
-    return best.valid;
+    const bool selected = best.valid;
+    return selected;
 }
 
 AimTargetSnapshot ToSnapshot(
@@ -980,25 +957,34 @@ bool ReadViewportLook(
     }
 }
 
-bool ApplyVectorAim(const TargetCandidate& target) noexcept
+__declspec(noinline) bool ApplyVectorAim(
+    const TargetCandidate& target) noexcept
 {
     if (!target.valid)
+    {
         return false;
+    }
 
     uint8_t* cam = Game::GetGameplayCamera();
     if (!cam)
+    {
         return false;
+    }
 
     const Menu::AimWeaponProfile& profile = Menu::GetActiveAimProfile();
     if (!profile.vecEnabled)
+    {
         return false;
+    }
 
     // Aim from the real rendered camera (viewport), not CPlayerAngles+0x60.
     // Preserve FPS/TPS encoding bias by applying the same delta to both.
     Vector3 lensPos{};
     Vector3 viewLook{};
     if (!ReadViewportLook(lensPos, viewLook))
+    {
         return false;
+    }
 
     const float distanceMeters = (target.world - lensPos).Length();
     float smoothness = Menu::EvaluateSmoothness(
@@ -1042,7 +1028,9 @@ bool ApplyVectorAim(const TargetCandidate& target) noexcept
         }
         if (profile.reactionDelayMs > 0.f &&
             now - s_AcquiredAt < static_cast<ULONGLONG>(profile.reactionDelayMs))
+        {
             return true;
+        }
         if (profile.targetSwitchDelayMs > 0.f &&
             now - s_SwitchAt < static_cast<ULONGLONG>(profile.targetSwitchDelayMs) &&
             target.ped == s_LastHumanPed)
@@ -1098,7 +1086,9 @@ bool ApplyVectorAim(const TargetCandidate& target) noexcept
     const Vector3 deltaPos = aimWorld - lensPos;
     const float dist = deltaPos.Length();
     if (dist < 1e-4f)
+    {
         return true;
+    }
 
     const Vector3 desired = NormalizeLook(Vector3(
         deltaPos.x / dist,
@@ -1254,8 +1244,9 @@ AimDiagnostics GetAimDiagnostics() noexcept
     return g_Diagnostics;
 }
 
-void RunAimbot()
+__declspec(noinline) void RunAimbot()
 {
+    CombatBake::Ensure();
     g_Diagnostics = {};
     // The published target is not blanked here. The bullet hook reads it from
     // the game's own thread, so clearing it up front left a window on every
@@ -1308,7 +1299,9 @@ void RunAimbot()
         profile.vecKey);
 
     if (!g_AimbotEnabled)
+    {
         return;
+    }
     // The damager reads the same frame the aim modes do, so it has to keep the
     // pass alive on its own even when none of them is on.
     const bool damagerArmed = Damager::Armed();
@@ -1318,13 +1311,17 @@ void RunAimbot()
         !profile.vecEnabled &&
         !profile.triggerEnabled &&
         !damagerArmed)
+    {
         return;
+    }
 
     const Game::FramePedContext& frame =
         Game::GetFramePedContext();
     auto* localPed = frame.localPed;
     if (!localPed)
+    {
         return;
+    }
     g_Diagnostics.activePeds = frame.count;
 
     const ImVec2 display = ImGui::GetIO().DisplaySize;
@@ -1422,7 +1419,8 @@ void RunAimbot()
             // derived from crosshairDistanceSq, which is the crosshair offset in
             // pixels and not a distance at all, so a distance-based curve was
             // being sampled with a number that had nothing to do with range.
-            float distMeters = 40.f;
+            float distMeters =
+                CombatBake::g_Policy.hitchanceFallbackMetres;
             if (frame.localPositionValid)
             {
                 const float dx =
@@ -1475,7 +1473,8 @@ void RunAimbot()
             {
                 const float dt =
                     static_cast<float>(now - s_PrevAt) / 1000.f;
-                if (dt > 0.001f && dt < 0.35f)
+                if (dt > 0.001f &&
+                    dt < CombatBake::g_Policy.velocitySampleMaxDt)
                 {
                     Vector3 boneVel(
                         (silentTarget.world.x - s_PrevWorld.x) / dt,
@@ -1487,17 +1486,22 @@ void RunAimbot()
                     const float boneSpeed = boneVel.Length();
                     const float entitySpeed = entityVel.Length();
                     // Prefer the stronger signal; bone wins in vehicles.
-                    Vector3 sample = boneSpeed >= entitySpeed * 0.85f
+                    Vector3 sample =
+                        boneSpeed >= entitySpeed *
+                            CombatBake::g_Policy.boneVelPrefer
                         ? boneVel
                         : entityVel;
                     const float sampleSpeed = sample.Length();
-                    if (sampleSpeed > 120.f)
-                        sample = sample * (120.f / sampleSpeed);
-                    constexpr float kAlpha = 0.42f;
+                    if (sampleSpeed > CombatBake::g_Policy.maxTrackedSpeed)
+                        sample = sample * (
+                            CombatBake::g_Policy.maxTrackedSpeed /
+                            sampleSpeed);
+                    const float alpha =
+                        CombatBake::g_Policy.velocityBlend;
                     s_SmoothVel = Vector3(
-                        s_SmoothVel.x * (1.f - kAlpha) + sample.x * kAlpha,
-                        s_SmoothVel.y * (1.f - kAlpha) + sample.y * kAlpha,
-                        s_SmoothVel.z * (1.f - kAlpha) + sample.z * kAlpha);
+                        s_SmoothVel.x * (1.f - alpha) + sample.x * alpha,
+                        s_SmoothVel.y * (1.f - alpha) + sample.y * alpha,
+                        s_SmoothVel.z * (1.f - alpha) + sample.z * alpha);
                 }
             }
             s_PrevWorld = silentTarget.world;
@@ -1516,7 +1520,9 @@ void RunAimbot()
                 Vector3 aim = silentTarget.world;
                 if (profile.silentMissBias > 0.f)
                 {
-                    const float bias = profile.silentMissBias * 0.08f;
+                    const float bias =
+                        profile.silentMissBias *
+                        CombatBake::g_Policy.missBiasScale;
                     aim.x += (RandomUnit() * 2.f - 1.f) * bias;
                     aim.y += (RandomUnit() * 2.f - 1.f) * bias;
                     aim.z += (RandomUnit() * 2.f - 1.f) * bias * 0.5f;
@@ -1712,7 +1718,8 @@ void RunAimbot()
                 // side of it, so the only thing the segment can cross is the
                 // victim: from further away a wall, a car door or their own
                 // vehicle would take the hit instead.
-                constexpr float kOriginLead = 0.5f;
+                const float kOriginLead =
+                    CombatBake::g_Policy.damagerOriginLead;
                 float ox = damagerTarget.world.x;
                 float oy = damagerTarget.world.y;
                 float oz = damagerTarget.world.z + kOriginLead;

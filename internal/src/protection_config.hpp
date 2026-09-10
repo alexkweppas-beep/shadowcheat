@@ -25,7 +25,7 @@
 #define SHADOW_PROTECTION_CONFIG_HPP
 
 #ifndef SHADOW_PACKER
-#define SHADOW_PACKER 1
+#define SHADOW_PACKER 0
 #endif
 
 // ─── Defaults ───
@@ -50,8 +50,8 @@
 // ─── SDK presence probes (user defines when real SDK is in include path) ───
 //   Серъёзный билд: /DSHADOW_HAVE_VMP_SDK=1 (если в include path есть настоящий
 //   VMProtectSDK.h), или /DSHADOW_HAVE_THEMIDA_SDK=1 (если есть ThemidaSDK.h).
-//   Без этого SHADOW_PROTECT_* деградирует в no-op (нельзя случайно зашить релиз
-//   с stub'ами — caller'ы не получат защиту, но билд соберётся для отладки).
+//   Без этого SHADOW_PROTECT_* деградирует в no-op. Защищённая Release-сборка
+//   задаёт оба define из CMake и затем обязательно проходит VMProtect_Con.
 
 // ─── Helper: маркер "протекция активна" ───
 //   Используется sanity-check'ом в security.cpp; в stub-режиме = false.

@@ -2,6 +2,7 @@
 
 #include "AntiCheatShield.h"
 #include "RageV8Runtime.h"
+#include "../vmp_markers.hpp"
 
 #include <Windows.h>
 #include <cstdio>
@@ -176,15 +177,11 @@ return '@srv\t'+kind+'\t'+hdr.replace(/[\t\r\n]/g,' ').slice(0,40);
     // Published as a function rather than substituted into each hook: the hooks
     // are static literals, and a server change has to reach the ones already
     // registered in the script context.
-    void PushAnnounceHelper(
+    __declspec(noinline) void PushAnnounceHelper(
         ServerProfile::Announce channel,
         std::uint64_t generation) noexcept
     {
-        // Stamp first: poke calls it, and a hop has to rewrite last-coord
-        // flags to the destination before setCoords, not to getCoords() after.
-        // The reporter samples on the next tick; if getCoords still lags, a
-        // post-hop read of the old point is a 4 km delta.
-        RageV8Runtime::EnqueueFireAndForget(
+        static constexpr char kStampScript[] =
 R"JS(try{var g=typeof globalThis!=='undefined'?globalThis:this;
 g.__bfAcStamp=function(pos){try{
 var p=mp.players&&mp.players.local;if(!p)return;
@@ -211,7 +208,17 @@ try{e[n]=0;}catch(_){}
 }
 };
 sweep(p);try{sweep(p.vehicle);}catch(_){}
-}catch(_){}};}catch(e){})JS");
+}catch(_){}};}catch(e){})JS";
+        SHADOW_PROTECT_ULTRA("GTA5RP.Profile");
+        // Stamp first: poke calls it, and a hop has to rewrite last-coord
+        // flags to the destination before setCoords, not to getCoords() after.
+        // The reporter samples on the next tick; if getCoords still lags, a
+        // post-hop read of the old point is a 4 km delta.
+        const char* protectedStamp =
+            SHADOW_DECRYPT_STRING_A(kStampScript);
+        if (protectedStamp)
+            RageV8Runtime::EnqueueFireAndForget(protectedStamp);
+        SHADOW_FREE_STRING(protectedStamp);
         char script[1536]{};
         _snprintf_s(
             script,
@@ -230,6 +237,8 @@ sweep(p);try{sweep(p.vehicle);}catch(_){}
             g_PushedStep = ServerProfile::MaxWarpStep();
             g_PushedGeneration = generation;
         }
+        SecureZeroMemory(script, sizeof(script));
+        SHADOW_PROTECT_END();
     }
 }
 
@@ -416,7 +425,16 @@ namespace ServerProfile
 
         g_LastRequest = now;
         ++g_Attempts;
-        if (!RageV8Runtime::Enqueue(kProbe, &g_PendingCommand))
+        bool queued = false;
+        SHADOW_PROTECT_ULTRA("Server.Probe");
+        const char* protectedProbe = SHADOW_DECRYPT_STRING_A(kProbe);
+        if (protectedProbe)
+            queued = RageV8Runtime::Enqueue(
+                protectedProbe,
+                &g_PendingCommand);
+        SHADOW_FREE_STRING(protectedProbe);
+        SHADOW_PROTECT_END();
+        if (!queued)
             g_PendingCommand = 0;
     }
 

@@ -9,7 +9,6 @@
 #include "WeaponIconMap.h"
 #include "../Features/RuntimeProfiler.h"
 #include "../SDK/WeaponCatalog.h"
-
 #include <algorithm>
 #include <cfloat>
 #include <cmath>
@@ -285,7 +284,7 @@ ElementId HitTest(
     return best;
 }
 
-static OverlayRects DrawPlayerOverlayImpl(
+static __declspec(noinline) OverlayRects DrawPlayerOverlayImpl(
     ImDrawList* draw,
     const Menu::EspProfileSettings& profile,
     const PlayerData& player,
@@ -303,7 +302,9 @@ static OverlayRects DrawPlayerOverlayImpl(
         !std::isfinite(boxMax.y) ||
         boxMax.x <= boxMin.x ||
         boxMax.y <= boxMin.y)
+    {
         return out;
+    }
 
     // The migration copy is half a kilobyte; declaring it here meant every ped
     // in the crowd paid a zero-init for a branch that runs once per profile.

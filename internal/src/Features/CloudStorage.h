@@ -13,12 +13,12 @@ struct Item final {
 constexpr int kMaxItems = 32;
 
 void Initialize();
-// Re-read C:\RAGEMP\cloud.session if the token was not loaded yet.
+// Re-read the launcher's shared auth page if the protected token is absent.
 bool EnsureSession();
 void Shutdown();
 bool IsAvailable();
 const char *LastError();
-// Unix seconds from cloud.session trailer; 0 if unknown.
+// Unix seconds derived from the launcher's subscription data; 0 if unknown.
 std::int64_t SubscriptionEndsAt() noexcept;
 const char* GetUsername() noexcept;
 

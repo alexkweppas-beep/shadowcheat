@@ -9,6 +9,7 @@
 #include "../Menu/Menu.h"
 #include "../SDK/Game.h"
 #include "../SDK/RageBuildFlavor.h"
+#include "../vmp_markers.hpp"
 
 #include <Windows.h>
 #include <cmath>
@@ -231,12 +232,15 @@ namespace
             g_ScriptKey.includeNonPlayers == includeNonPlayers &&
             g_ScriptKey.familyLookup == familyLookupDemand &&
             g_ScriptKey.identity == identity &&
-            lstrcmpA(g_ScriptKey.adminKey, adminKey) == 0)
-            return g_SnapshotScript[0] != 0;
+            lstrcmpA(g_ScriptKey.adminKey, adminKey) == 0 &&
+            g_SnapshotScript[0] != 0)
+            return true;
 
-        const int length = std::snprintf(
-            g_SnapshotScript,
-            sizeof(g_SnapshotScript),
+        static const char* s_Format = nullptr;
+        if (!s_Format)
+        {
+            SHADOW_PROTECT_ULTRA("Names.Snapshot");
+            s_Format = SHADOW_DECRYPT_STRING_A(
             "const rows=[],seen={};"
             "const adminKey='%s';"
             "const adminVars=[%s];"
@@ -711,15 +715,23 @@ namespace
             "try{for(const k in cache.pendingFam)++famPending;}catch(_){}"
             "rows.push(['@identity',helpers?1:0,0,0,0,famCache,famPending,"
             "0,0,0,0].join('\\t'));"
-            "return rows.join('\\n');",
-            adminKey,
-            adminVars,
-            identity,
-            families ? 1 : 0,
-            roleplayHealth ? 1 : 0,
-            needsVisibility ? 1 : 0,
-            includeNonPlayers ? 1 : 0,
-            familyLookupDemand ? 1 : 0);
+            "return rows.join('\\n');");
+            SHADOW_PROTECT_END();
+        }
+        if (!s_Format)
+            return false;
+        const int length = std::snprintf(
+            g_SnapshotScript,
+            sizeof(g_SnapshotScript),
+            s_Format,
+                adminKey,
+                adminVars,
+                identity,
+                families ? 1 : 0,
+                roleplayHealth ? 1 : 0,
+                needsVisibility ? 1 : 0,
+                includeNonPlayers ? 1 : 0,
+                familyLookupDemand ? 1 : 0);
         const bool ok = length > 0 &&
             length < static_cast<int>(
                 sizeof(g_SnapshotScript));
@@ -1804,6 +1816,8 @@ namespace RagePlayerNames
                             visibilityDemand
                                 ? 24u : 0u);
                 }
+                // Keep the built script. Enqueue copies it; wiping the buffer
+                // forced a Ultra decrypt + snprintf on every 400 ms refresh.
             }
         }
     }

@@ -4,6 +4,7 @@
 #include "FiveRpMetadataResolver.h"
 #include "RageV8Runtime.h"
 #include "ServerProfile.h"
+#include "../vmp_markers.hpp"
 #include "../Menu/Menu.h"
 #include "../Menu/IconsFontAwesome6.h"
 #include "../Menu/Leyawin/custom_widgets.hpp"
@@ -154,16 +155,26 @@ namespace
         }
     }
 
-    void QueueLoad() noexcept
+    __declspec(noinline) void QueueLoad() noexcept
     {
         if (g_LoadRequested ||
             g_ServerKind != ServerKind::FiveRp)
             return;
         g_LastLoadAttempt = GetTickCount64();
-        if (!QueueScript(
-                FiveRpFarmBotScript::kSource,
+        bool queued = false;
+        SHADOW_PROTECT_ULTRA("FiveRP.Load");
+        const char* protectedSource =
+            SHADOW_DECRYPT_STRING_A(FiveRpFarmBotScript::kSource);
+        if (protectedSource)
+        {
+            queued = QueueScript(
+                protectedSource,
                 RequestKind::Load,
-                "Load 5RP farm bot"))
+                "Load 5RP farm bot");
+        }
+        SHADOW_FREE_STRING(protectedSource);
+        SHADOW_PROTECT_END();
+        if (!queued)
         {
             Menu::PushNotification(
                 "5RP Farm",

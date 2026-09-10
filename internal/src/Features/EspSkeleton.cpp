@@ -1,27 +1,11 @@
 #include "EspSkeleton.h"
+#include "CombatBake.h"
 
 #include <cmath>
 
 namespace
 {
     using Bone = RagePlayerNames::BoneSlot;
-    constexpr EspSkeleton::BonePair kPairs[] = {
-        {Bone::Head, Bone::Neck},
-        {Bone::Neck, Bone::Spine},
-        {Bone::Spine, Bone::Pelvis},
-        {Bone::Neck, Bone::LeftUpperArm},
-        {Bone::LeftUpperArm, Bone::LeftForearm},
-        {Bone::LeftForearm, Bone::LeftHand},
-        {Bone::Neck, Bone::RightUpperArm},
-        {Bone::RightUpperArm, Bone::RightForearm},
-        {Bone::RightForearm, Bone::RightHand},
-        {Bone::Pelvis, Bone::LeftThigh},
-        {Bone::LeftThigh, Bone::LeftCalf},
-        {Bone::LeftCalf, Bone::LeftFoot},
-        {Bone::Pelvis, Bone::RightThigh},
-        {Bone::RightThigh, Bone::RightCalf},
-        {Bone::RightCalf, Bone::RightFoot}
-    };
 
     constexpr int kBoneCount =
         static_cast<int>(Bone::Count);
@@ -32,9 +16,22 @@ namespace EspSkeleton
     const BonePair* CanonicalPairs(
         int& count) noexcept
     {
-        count = static_cast<int>(
-            sizeof(kPairs) / sizeof(kPairs[0]));
-        return kPairs;
+        CombatBake::Ensure();
+        static BonePair pairs[CombatBake::kSkeletonPairCount]{};
+        static bool filled = false;
+        if (!filled)
+        {
+            for (int i = 0; i < CombatBake::kSkeletonPairCount; ++i)
+            {
+                pairs[i].from = static_cast<Bone>(
+                    CombatBake::g_SkeletonFrom[i]);
+                pairs[i].to = static_cast<Bone>(
+                    CombatBake::g_SkeletonTo[i]);
+            }
+            filled = true;
+        }
+        count = CombatBake::kSkeletonPairCount;
+        return pairs;
     }
 
     bool ValidateProjected(

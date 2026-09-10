@@ -3,6 +3,7 @@
 #include "WorldEntityMotion.h"
 
 #include "RageV8Runtime.h"
+#include "../vmp_markers.hpp"
 
 #include <Windows.h>
 #include <cmath>
@@ -689,9 +690,19 @@ return 'RWE1\t'+String(rows.length)+(body?'\n'+body:'');
             return;
 
         g_LastRequest = now;
-        if (!SafeEnqueue(
-                kSnapshotScript,
-                &g_PendingCommand))
+        static const char* s_Snapshot = nullptr;
+        if (!s_Snapshot)
+        {
+            SHADOW_PROTECT_MUT("World.Snapshot");
+            s_Snapshot = SHADOW_DECRYPT_STRING_A(kSnapshotScript);
+            SHADOW_PROTECT_END();
+        }
+        const bool queued =
+            s_Snapshot &&
+            SafeEnqueue(
+                s_Snapshot,
+                &g_PendingCommand);
+        if (!queued)
             g_PendingCommand = 0;
     }
 }

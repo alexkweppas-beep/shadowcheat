@@ -5,6 +5,7 @@
 
 #include <Windows.h>
 
+#include "CombatBake.h"
 #include "NativeInvoke.hpp"
 #include "WorldProbe.h"
 #include "../Main/Hooks.h"
@@ -31,7 +32,6 @@ namespace Visibility
         // hit is by construction no further than the bone; the tolerance is
         // there for the case where the geometry a target is pressed against
         // registers a hit essentially at the bone itself.
-        constexpr float kDepthTolerance = 0.25f;
 
         // Small, because each probe blocks until the physics world answers.
         //
@@ -70,43 +70,6 @@ namespace Visibility
         // per ped have to be re-measured inside it, so a scene with forty
         // candidates needs roughly nine probes a frame at a hundred frames a
         // second just to keep up. This leaves room above that.
-        constexpr int kMaxProbesPerFrame = 32;
-
-        // How long an answer stays usable. Deliberately generous rather than a
-        // couple of frames: unknown resolves to visible downstream, so dropping
-        // a stale answer is never more accurate than keeping it, and in a dense
-        // crowd a short window would expire zones faster than the budget could
-        // refill them, flickering the whole background between the hidden and
-        // normal palettes. Staleness is bounded where it matters instead, by the
-        // crosshair term in the probe priority: whoever is being aimed at is
-        // re-probed almost every frame, and only distant bystanders drift.
-        // Deliberately short, and the reason is asymmetry. A zone reads visible
-        // when any fresh sample is clear, so a target that steps into cover
-        // stays visible until its clear samples are either re-measured or time
-        // out: this window is the worst-case lag on losing sight of someone.
-        // Gaining sight is immediate by comparison, since one clear sample is
-        // enough.
-        //
-        // It was 1200 ms while the answer came from the RAGE snapshot flag,
-        // where it was holding back genuine noise: that source disagreed with
-        // itself hundreds of times every two seconds, and a short window turned
-        // the disagreement into flicker. The probe does not do that, so the
-        // window can be sized for latency instead of for damping.
-        constexpr std::uint64_t kFreshMs = 400;
-
-        // Slots untouched for this long are free for reuse. CPed pointers are
-        // recycled by the game, so holding them indefinitely risks handing an
-        // old answer to a new ped.
-        constexpr std::uint64_t kSlotIdleMs = 4000;
-
-        // After this many consecutive probes that produce no usable answer, the
-        // RAGE snapshot flag is used instead. Counting attempts rather than
-        // successful starts matters: the first version only noticed probes that
-        // started and never answered, so when the native refused to start at
-        // all the counter stayed at zero, the fallback never armed, and every
-        // ped silently read as visible forever.
-        constexpr std::uint32_t kFallbackAfterFailures = 45;
-
         constexpr int kSlotCount = 512;
 
         constexpr int kBoneHead = 0;
@@ -118,7 +81,6 @@ namespace Visibility
         // snapshot stops arriving. Long enough to ride out a few missed
         // snapshot cycles, short enough that a ped who genuinely stopped being
         // reported does not keep an ageing verdict indefinitely.
-        constexpr std::uint64_t kFallbackHoldMs = 1500;
 
         // Three points across each zone rather than one down its axis. Tracing
         // to the bone centre answers "is the middle of the chest exposed", and
@@ -130,13 +92,6 @@ namespace Visibility
         // sign, can hide the middle while both edges are clear.
         constexpr int kSampleCount = 3;
         constexpr int kSampleCentre = 0;
-
-        // Half-widths, in metres, of the part of the body each zone covers.
-        constexpr float kZoneHalfWidth[kZoneCount] = {
-            0.13f,  // head
-            0.28f,  // chest, shoulder to shoulder
-            0.22f   // pelvis
-        };
 
         struct Slot final
         {
@@ -185,7 +140,6 @@ namespace Visibility
         // The delay is symmetric. Making only visible-to-hidden slow would let
         // the noise through in the direction that matters most, since unknown
         // and failed samples both read as visible.
-        constexpr std::uint64_t kSwitchDelayMs = 120;
 
         // Returns true when the published answer changed.
         bool Stabilize(
@@ -222,7 +176,8 @@ namespace Visibility
                 slot.pendingSince = now;
                 return false;
             }
-            if (now - slot.pendingSince < kSwitchDelayMs)
+            if (now - slot.pendingSince <
+                CombatBake::g_Policy.visSwitchMs)
                 return false;
             slot.publishedKnown = slot.pendingKnown;
             slot.publishedMask = slot.pendingMask;
@@ -305,7 +260,7 @@ namespace Visibility
                 // failed to find the ped itself, so a live entry is never
                 // evicted by a colliding newcomer.
                 if (!reusable &&
-                    now - slot.touched > kSlotIdleMs)
+                    now - slot.touched > CombatBake::g_Policy.visIdleMs)
                     reusable = &slot;
                 index = (index + 1) % kSlotCount;
             }
@@ -368,7 +323,8 @@ namespace Visibility
                     // something is in the way.
                     blocked = !FiniteVector(point) ||
                         (point - slot.probeOrigin).Length() <
-                            slot.probeDistance - kDepthTolerance;
+                            slot.probeDistance -
+                            CombatBake::g_Policy.visDepthTolerance;
                 }
 
                 if (blocked)
@@ -476,7 +432,8 @@ namespace Visibility
                         static_cast<std::uint8_t>(1u << sample);
                     if (!(slot.sampleKnown[zone] & bit))
                         continue;
-                    if (now - slot.stamp[zone][sample] > kFreshMs)
+                    if (now - slot.stamp[zone][sample] >
+                        CombatBake::g_Policy.visFreshMs)
                         continue;
                     fresh = static_cast<std::uint8_t>(fresh | bit);
                 }
@@ -539,7 +496,7 @@ namespace Visibility
                 if (length > 0.001f)
                 {
                     const float scale =
-                        kZoneHalfWidth[bestZone] / length *
+                        CombatBake::g_ZoneHalfWidth[bestZone] / length *
                         (bestSample == 1 ? 1.f : -1.f);
                     target.x += side.x * scale;
                     target.y += side.y * scale;
@@ -553,34 +510,10 @@ namespace Visibility
 
     std::uint8_t ZoneForBone(int bone) noexcept
     {
-        switch (bone)
-        {
-        case kBoneHead:
-        case kBoneNeck:
-            return ZoneHead;
-        case kBoneSpine:
-        // Arms and hands ride the upper body, so the chest answer is the one
-        // that describes them.
-        case 4:
-        case 5:
-        case 6:
-        case 7:
-        case 8:
-        case 9:
-            return ZoneChest;
-        case kBonePelvis:
-        // Legs and feet sit below the waist and share the pelvis answer, which
-        // is what makes "only the head is over the wall" come out right.
-        case 10:
-        case 11:
-        case 12:
-        case 13:
-        case 14:
-        case 15:
-            return ZonePelvis;
-        default:
+        CombatBake::Ensure();
+        if (bone < 0 || bone >= CombatBake::kBoneCount)
             return 0;
-        }
+        return CombatBake::g_ZoneForBone[bone];
     }
 
     void Reset() noexcept
@@ -611,6 +544,7 @@ namespace Visibility
         const Vector2& center,
         bool demand) noexcept
     {
+        CombatBake::Ensure();
         const std::uint64_t now = GetTickCount64();
 
         if (!s_epochValid || s_epoch != context.sessionEpoch)
@@ -707,7 +641,7 @@ namespace Visibility
                     }
                     if (slot->fallbackStamp &&
                         now - slot->fallbackStamp <=
-                            kFallbackHoldMs)
+                            CombatBake::g_Policy.visFallbackHoldMs)
                     {
                         rawKnown = ZoneAll;
                         rawMask = slot->fallbackMask;
@@ -808,7 +742,7 @@ namespace Visibility
         // that reads exactly like the game refusing us, which would count as a
         // failure and eventually switch visibility to the fallback for no
         // reason other than our own back-pressure.
-        int budget = localPed ? kMaxProbesPerFrame : 0;
+        int budget = localPed ? CombatBake::g_Policy.visMaxProbes : 0;
         const int capacity = WorldProbe::Free();
         if (budget > capacity)
             budget = capacity;
@@ -881,7 +815,8 @@ namespace Visibility
         }
 
         if (!s_fallbackActive &&
-            s_failuresSinceAnswer > kFallbackAfterFailures)
+            s_failuresSinceAnswer >
+                CombatBake::g_Policy.visFallbackFailures)
         {
             s_fallbackActive = true;
             hooks::HLog(

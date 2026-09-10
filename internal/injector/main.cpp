@@ -96,6 +96,48 @@ namespace
         return data;
     }
 
+    // Overwrite a file with zeros and delete it. Used by --wipe to match the
+    // kernel path's forensic cleanup: once the payload is mapped, its bytes
+    // have no reason to stay on disk.
+    bool WipeFileFromDisk(const wchar_t* path)
+    {
+        HANDLE file = CreateFileW(
+            path, GENERIC_WRITE, 0, nullptr, OPEN_EXISTING,
+            FILE_ATTRIBUTE_NORMAL, nullptr);
+        if (file == INVALID_HANDLE_VALUE)
+            return false;
+        LARGE_INTEGER size{};
+        GetFileSizeEx(file, &size);
+        uint8_t zeros[65536]{};
+        LARGE_INTEGER begin{};
+        SetFilePointerEx(file, begin, nullptr, FILE_BEGIN);
+        LONGLONG left = size.QuadPart;
+        bool ok = true;
+        while (left > 0 && ok) {
+            const DWORD chunk = left > static_cast<LONGLONG>(sizeof(zeros))
+                ? static_cast<DWORD>(sizeof(zeros))
+                : static_cast<DWORD>(left);
+            DWORD written = 0;
+            ok = WriteFile(file, zeros, chunk, &written, nullptr) &&
+                written == chunk;
+            left -= written;
+        }
+        CloseHandle(file);
+        return ok && DeleteFileW(path) != FALSE;
+    }
+
+    // The local copy of the image holds the fully resolved payload (imports
+    // fixed up, relocations applied) — everything a memory dump of THIS
+    // process would need. Zero it no matter which path wmain exits through.
+    struct ZeroOnExit
+    {
+        std::vector<uint8_t>& v;
+        ~ZeroOnExit() {
+            if (!v.empty())
+                SecureZeroMemory(v.data(), v.size());
+        }
+    };
+
     struct PeInfo
     {
         IMAGE_NT_HEADERS64* nt{};
@@ -446,10 +488,52 @@ namespace
         }
     }
 
-    // After DllMain has run, drop the initial RWX: headers become read-only
-    // (the payload zeroed them itself) and each section gets the tightest
-    // protection its characteristics allow. A private RWX region of image
-    // size is the loudest VAD-scan signal; this removes it.
+    // A zeroed page still reads as zeros; a decommitted page does not read
+    // at all. Headers and the .init section (DllMain and its helpers, dead
+    // after attach) are decommitted so a
+    // memory dumper gets a read error instead of their contents.
+    void DecommitRange(HANDLE process, void* remoteBase, uint32_t rva, uint32_t size)
+    {
+        if (!size)
+            return;
+        VirtualFreeEx(process,
+                      reinterpret_cast<uint8_t*>(remoteBase) + rva,
+                      size, MEM_DECOMMIT);
+    }
+
+    void DecommitSection(
+        HANDLE process,
+        void* remoteBase,
+        const PeInfo& pe,
+        const char* wanted)
+    {
+        if (!wanted)
+            return;
+        for (uint16_t i = 0; i < pe.sectionCount; ++i) {
+            const auto& s = pe.sections[i];
+            char name[9]{};
+            memcpy(name, s.Name, 8);
+            if (strcmp(name, wanted) != 0)
+                continue;
+            const uint32_t size =
+                s.Misc.VirtualSize ? s.Misc.VirtualSize : s.SizeOfRawData;
+            DecommitRange(process, remoteBase, s.VirtualAddress, size);
+            Log("%s section decommitted (%u bytes at RVA 0x%X)",
+                wanted, size, s.VirtualAddress);
+            return;
+        }
+    }
+
+    // After the protected entry has returned, drop the initial RWX: headers
+    // are decommitted and each section gets the tightest protection its
+    // characteristics allow. A private RWX region of
+    // image size is the loudest VAD-scan signal; this removes it.
+    //
+    // Two sections are special-cased:
+    //   .init  — already decommitted by DecommitInitSection, skip it here.
+    //   .vault — stays PAGE_EXECUTE_READ even though its characteristics say
+    //     writable: the payload re-encrypts it at rest and flips protection
+    //     itself around each call, so it must never be left RWX.
     void ApplySectionProtections(HANDLE process, void* remoteBase, const PeInfo& pe)
     {
         auto protect = [&](uint32_t rva, uint32_t size, DWORD prot) {
@@ -460,12 +544,19 @@ namespace
                              size, prot, &oldProt);
         };
 
-        protect(0, pe.sizeOfHeaders, PAGE_READONLY);
+        DecommitRange(process, remoteBase, 0, pe.sizeOfHeaders);
 
         for (uint16_t i = 0; i < pe.sectionCount; ++i) {
             const auto& s = pe.sections[i];
             uint32_t size = s.Misc.VirtualSize ? s.Misc.VirtualSize : s.SizeOfRawData;
             if (!size) continue;
+
+            char name[9]{};
+            memcpy(name, s.Name, 8);
+            if (strcmp(name, ".init") == 0 ||
+                strcmp(name, ".reloc") == 0 ||
+                strcmp(name, ".rsrc") == 0)
+                continue;
 
             const DWORD c = s.Characteristics;
             const bool x = (c & IMAGE_SCN_MEM_EXECUTE) != 0;
@@ -473,7 +564,9 @@ namespace
             const bool w = (c & IMAGE_SCN_MEM_WRITE) != 0;
 
             DWORD prot = PAGE_NOACCESS;
-            if (x)      prot = r ? PAGE_EXECUTE_READ : PAGE_EXECUTE;
+            if (strcmp(name, ".vault") == 0)
+                prot = PAGE_EXECUTE_READ;
+            else if (x) prot = r ? PAGE_EXECUTE_READ : PAGE_EXECUTE;
             else if (w) prot = PAGE_READWRITE;
             else if (r) prot = PAGE_READONLY;
 
@@ -481,36 +574,92 @@ namespace
         }
     }
 
-    // Stub run by the new remote thread. CreateRemoteThread passes a single
-    // argument, DllMain wants (base, reason, reserved), so the stub fixes the
-    // registers and then calls the real entry. Returning from the start
-    // routine is legal: the thread start thunk exits the thread for us.
-    void BuildEntryStub(
-        uint8_t* stub, uintptr_t base, uintptr_t entry)
+    std::vector<uintptr_t> CollectTlsCallbacks(
+        uint8_t* localImage,
+        const PeInfo& pe,
+        uintptr_t remoteBase)
     {
-        uint32_t off = 0;
-        // mov rcx, base
-        stub[off++] = 0x48; stub[off++] = 0xB9;
-        memcpy(stub + off, &base, 8); off += 8;
-        // mov edx, 1  (DLL_PROCESS_ATTACH)
-        stub[off++] = 0xBA;
-        const uint32_t one = 1;
-        memcpy(stub + off, &one, 4); off += 4;
-        // xor r8d, r8d
-        stub[off++] = 0x45; stub[off++] = 0x31; stub[off++] = 0xC0;
-        // sub rsp, 0x28  (shadow space + alignment)
-        stub[off++] = 0x48; stub[off++] = 0x83; stub[off++] = 0xEC;
-        stub[off++] = 0x28;
-        // mov rax, entry
-        stub[off++] = 0x48; stub[off++] = 0xB8;
-        memcpy(stub + off, &entry, 8); off += 8;
-        // call rax
-        stub[off++] = 0xFF; stub[off++] = 0xD0;
-        // add rsp, 0x28
-        stub[off++] = 0x48; stub[off++] = 0x83; stub[off++] = 0xC4;
-        stub[off++] = 0x28;
-        // ret
-        stub[off++] = 0xC3;
+        std::vector<uintptr_t> result;
+        const auto& directory =
+            pe.nt->OptionalHeader.DataDirectory[IMAGE_DIRECTORY_ENTRY_TLS];
+        if (!directory.VirtualAddress)
+            return result;
+        auto* tls = reinterpret_cast<IMAGE_TLS_DIRECTORY64*>(
+            RvaToLocal(localImage, pe, directory.VirtualAddress));
+        if (!tls || !tls->AddressOfCallBacks)
+            return result;
+
+        const auto callbacksVa =
+            static_cast<uintptr_t>(tls->AddressOfCallBacks);
+        uint32_t callbacksRva = 0;
+        if (callbacksVa >= remoteBase &&
+            callbacksVa < remoteBase + pe.sizeOfImage) {
+            callbacksRva =
+                static_cast<uint32_t>(callbacksVa - remoteBase);
+        } else if (callbacksVa >= pe.imageBase &&
+                   callbacksVa < pe.imageBase + pe.sizeOfImage) {
+            callbacksRva =
+                static_cast<uint32_t>(callbacksVa - pe.imageBase);
+        } else {
+            return result;
+        }
+
+        auto* callbacks = reinterpret_cast<uint64_t*>(
+            RvaToLocal(localImage, pe, callbacksRva));
+        if (!callbacks)
+            return result;
+        for (std::size_t index = 0;
+             index < 64 && callbacks[index];
+             ++index) {
+            const auto callback =
+                static_cast<uintptr_t>(callbacks[index]);
+            if (callback >= remoteBase &&
+                callback < remoteBase + pe.sizeOfImage) {
+                result.push_back(callback);
+            }
+        }
+        return result;
+    }
+
+    // One remote start runs every TLS callback and then the protected PE entry.
+    // VMProtect may add TLS initialisation; skipping it leaves the VM runtime
+    // half-initialised and the first virtualised function faults.
+    std::vector<uint8_t> BuildEntryStub(
+        uintptr_t base,
+        const std::vector<uintptr_t>& tlsCallbacks,
+        uintptr_t entry)
+    {
+        std::vector<uint8_t> stub;
+        stub.reserve(32 + (tlsCallbacks.size() + 1) * 32);
+        auto byte = [&](uint8_t value) { stub.push_back(value); };
+        auto value32 = [&](uint32_t value) {
+            const auto* data = reinterpret_cast<const uint8_t*>(&value);
+            stub.insert(stub.end(), data, data + sizeof(value));
+        };
+        auto value64 = [&](uint64_t value) {
+            const auto* data = reinterpret_cast<const uint8_t*>(&value);
+            stub.insert(stub.end(), data, data + sizeof(value));
+        };
+
+        // shadow space + x64 call alignment
+        byte(0x48); byte(0x83); byte(0xEC); byte(0x28);
+        auto emitCall = [&](uintptr_t target) {
+            // mov rcx, base
+            byte(0x48); byte(0xB9); value64(base);
+            // mov edx, DLL_PROCESS_ATTACH
+            byte(0xBA); value32(DLL_PROCESS_ATTACH);
+            // xor r8d, r8d
+            byte(0x45); byte(0x31); byte(0xC0);
+            // mov rax, target; call rax
+            byte(0x48); byte(0xB8); value64(target);
+            byte(0xFF); byte(0xD0);
+        };
+        for (const auto callback : tlsCallbacks)
+            emitCall(callback);
+        emitCall(entry);
+        byte(0x48); byte(0x83); byte(0xC4); byte(0x28);
+        byte(0xC3);
+        return stub;
     }
 
     // Mirrors the kernel driver's readiness gate: the payload must not be
@@ -549,10 +698,13 @@ namespace
 int wmain(int argc, wchar_t** argv)
 {
     bool watch = false;
+    bool wipe = false;
     const wchar_t* dllPath = nullptr;
     for (int i = 1; i < argc; ++i) {
         if (_wcsicmp(argv[i], L"--watch") == 0)
             watch = true;
+        else if (_wcsicmp(argv[i], L"--wipe") == 0)
+            wipe = true;
         else
             dllPath = argv[i];
     }
@@ -592,6 +744,7 @@ int wmain(int argc, wchar_t** argv)
         Log("cannot read %ls", dllPath);
         return 1;
     }
+    ZeroOnExit imageWiper{image};
     PeInfo pe{};
     if (!ParsePe(image.data(), pe)) {
         Log("not a PE64: %ls", dllPath);
@@ -657,35 +810,27 @@ int wmain(int argc, wchar_t** argv)
     }
     Log("image written");
 
-    // TLS callbacks, if the image has any. Static CRT images usually register
-    // none, but a loader would call them before DllMain, so we do.
-    const auto& tlsDir =
-        pe.nt->OptionalHeader.DataDirectory[IMAGE_DIRECTORY_ENTRY_TLS];
-    if (tlsDir.VirtualAddress) {
-        auto* tls = reinterpret_cast<IMAGE_TLS_DIRECTORY64*>(
-            RvaToLocal(image.data(), pe, tlsDir.VirtualAddress));
-        if (tls && tls->AddressOfCallBacks) {
-            // The callback array is an array of VAs; they were relocated above.
-            auto* callbacks = reinterpret_cast<uint64_t*>(RvaToLocal(
-                image.data(), pe,
-                static_cast<uint32_t>(
-                    tls->AddressOfCallBacks - pe.imageBase)));
-            if (callbacks && *callbacks) {
-                Log("WARNING: TLS callbacks present, not supported by the stub");
-            }
-        }
-    }
+    const auto tlsCallbacks = CollectTlsCallbacks(
+        image.data(),
+        pe,
+        reinterpret_cast<uintptr_t>(remoteBase));
+    if (!tlsCallbacks.empty())
+        Log("running %zu TLS callback(s)", tlsCallbacks.size());
 
-    uint8_t stub[64]{};
-    BuildEntryStub(
-        stub,
+    const auto stub = BuildEntryStub(
         reinterpret_cast<uintptr_t>(remoteBase),
+        tlsCallbacks,
         reinterpret_cast<uintptr_t>(remoteBase) + pe.entryRva);
     void* remoteStub = VirtualAllocEx(
-        process, nullptr, sizeof(stub), MEM_COMMIT | MEM_RESERVE,
+        process, nullptr, stub.size(), MEM_COMMIT | MEM_RESERVE,
         PAGE_EXECUTE_READWRITE);
     if (!remoteStub ||
-        !WriteProcessMemory(process, remoteStub, stub, sizeof(stub), nullptr)) {
+        !WriteProcessMemory(
+            process,
+            remoteStub,
+            stub.data(),
+            stub.size(),
+            nullptr)) {
         Log("stub write failed: %lu", GetLastError());
         VirtualFreeEx(process, remoteBase, 0, MEM_RELEASE);
         CloseHandle(process);
@@ -711,12 +856,26 @@ int wmain(int argc, wchar_t** argv)
 
     VirtualFreeEx(process, remoteStub, 0, MEM_RELEASE);
 
-    // DllMain wiped the PE header while the region was still RWX; now
-    // tighten every section to its final protection.
-    if (exitCode == 1)
+    // VMProtect's entry wrapper has returned, so its header page can now be
+    // removed safely. Decommit dead startup/reconstruction metadata and then
+    // tighten every remaining section to its final protection.
+    if (exitCode == 1) {
+        DecommitSection(process, remoteBase, pe, ".init");
+        DecommitSection(process, remoteBase, pe, ".reloc");
+        DecommitSection(process, remoteBase, pe, ".rsrc");
         ApplySectionProtections(process, remoteBase, pe);
+    }
 
     CloseHandle(process);
+
+    if (wipe && exitCode == 1) {
+        if (WipeFileFromDisk(dllPath))
+            Log("payload wiped from disk: %ls", dllPath);
+        else
+            Log("WARNING: payload wipe failed for %ls: %lu", dllPath,
+                GetLastError());
+    }
+
     Log("done. Check C:\\RAGEMP\\cheat_log.txt and press F4 in game.");
     return 0;
 }

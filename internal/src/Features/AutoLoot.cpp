@@ -2,6 +2,7 @@
 
 #include "RageV8Runtime.h"
 #include "ServerProfile.h"
+#include "../vmp_markers.hpp"
 
 #include <Windows.h>
 #include <cstdio>
@@ -602,13 +603,30 @@ namespace AutoLoot
             names);
         if (header <= 0)
             return;
+        static const char* s_Body = nullptr;
+        if (!s_Body)
+        {
+            SHADOW_PROTECT_MUT("AutoLoot.Load");
+            s_Body = SHADOW_DECRYPT_STRING_A(kBody);
+            SHADOW_PROTECT_END();
+        }
+        if (!s_Body)
+        {
+            SecureZeroMemory(names, sizeof(names));
+            SecureZeroMemory(script, sizeof(script));
+            return;
+        }
         lstrcpynA(
             script + header,
-            kBody,
+            s_Body,
             static_cast<int>(sizeof(script)) - header);
 
         g_LastRequest = now;
-        if (!RageV8Runtime::Enqueue(script, &g_PendingCommand))
+        const bool queued =
+            RageV8Runtime::Enqueue(script, &g_PendingCommand);
+        SecureZeroMemory(names, sizeof(names));
+        SecureZeroMemory(script, sizeof(script));
+        if (!queued)
             g_PendingCommand = 0;
     }
 }

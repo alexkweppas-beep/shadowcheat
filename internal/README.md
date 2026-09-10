@@ -19,6 +19,7 @@ Boot — всё это касается только загрузки драйв
 ```text
 shadow_injector.exe            # инжект в уже запущенную GTA5
 shadow_injector.exe --watch    # ждать запуска GTA5 и инжектить при старте
+shadow_injector.exe --wipe     # после успешного маппинга затереть DLL на диске
 ```
 
 `--watch` повторяет тайминг ядерного пути: ждёт, пока в процессе появятся
@@ -30,11 +31,30 @@ shadow_injector.exe --watch    # ждать запуска GTA5 и инжект�
 ## Сборка
 
 ```bash
-cmake -S . -B build -A x64
+cmake -S . -B build -A x64 -DSHADOW_VMP_ROOT="D:/tools/VMProtect"
 cmake --build build --config Release
 ```
 
-На выходе `build/Release/shadow_internal.dll` и `build/Release/shadow_injector.exe`.
+Release по умолчанию собирается с SDK-маркерами и сразу проходит через
+`VMProtect_Con`. На выходе `build/Release/shadow_internal.dll` уже защищён;
+необработанная DLL удаляется fail-closed скриптом. Если консоль завершилась с
+ошибкой или предупреждением, сборка считается неуспешной и сырой файл не
+маскируется под релиз.
+
+Для локальной отладки без протектора надо указать явно:
+
+```bash
+cmake -S . -B build-dev -A x64 -DSHADOW_ENABLE_VMP=OFF
+```
+
+Чтобы сохранять сырой файл рядом для сравнения, добавьте
+`-DSHADOW_KEEP_VMP_RAW=ON`. Такой файл нельзя отдавать пользователям.
+
+Персональный watermark, заранее созданный в VMProtect, задаётся через
+`-DSHADOW_VMP_WATERMARK=<имя>`. Для раздачи лучше собирать отдельный watermark
+на пользователя: он не запрещает дамп, но позволяет определить источник слива.
+
+Вместе также собирается `build/Release/shadow_injector.exe`.
 
 Требуется MSVC (Build Tools 2022 достаточно) и Windows SDK. Сторонние
 зависимости вендорены в `third_party/`, качать при сборке ничего не нужно.
@@ -47,8 +67,9 @@ cmake --build build --config Release
   Директив по умолчанию не хватает: C-половина статического CRT сама не
   подтягивается, это видно как неразрешённые `strtoul` и
   `__stdio_common_vsprintf_s`.
-- Точка входа — `DllMain` напрямую (`/ENTRY:DllMain`). В вручную замапленном
-  образе нет CRT-стартапа, который вызвал бы её сам.
+- Точка входа — статический CRT (`/ENTRY:_DllMainCRTStartup`), который
+  инициализирует runtime и затем вызывает `DllMain`. Инжектор выполняет TLS
+  callbacks защищённого образа перед точкой входа.
 
 ## Что пишется на диск
 

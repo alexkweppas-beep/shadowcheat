@@ -52,7 +52,6 @@
 #include "../SDK/RageBuildFlavor.h"
 #include "../SDK/WeaponGroups.h"
 #include "../SDK/WeaponCatalog.h"
-
 #include <algorithm>
 #include <cmath>
 #include <ctime>
@@ -1528,7 +1527,7 @@ namespace Menu
         RenderObjectFilterEditor(UIScale());
     }
 
-    void RenderVisualsPage()
+    __declspec(noinline) void RenderVisualsPage()
     {
         const float scale = UIScale();
 

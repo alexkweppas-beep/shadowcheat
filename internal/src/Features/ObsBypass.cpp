@@ -3,6 +3,7 @@
 #include "WorldOverlay.h"
 #include "../Main/Hooks.h"
 #include "../Memory/Pattern.h"
+#include "../vmp_markers.hpp"
 #include <MinHook.h>
 #include "../imgui/imgui.h"
 #include "../imgui/imgui_impl_dx11.h"
@@ -527,16 +528,21 @@ uint8_t* g_ResolvedCapture = nullptr;
 
 bool TryInstall() noexcept
 {
+    SHADOW_PROTECT_VIRT("Obs.Install");
     HMODULE obs = GetModuleHandleW(L"graphics-hook64.dll");
     if (!obs)
         obs = GetModuleHandleW(L"graphics-hook.dll");
     if (!obs)
+    {
+        SHADOW_PROTECT_END();
         return false;
+    }
 
     if (!g_ResolvedCapture) {
         g_ResolvedCapture = ResolveD3d11Capture(obs);
         if (!g_ResolvedCapture) {
             hooks::HLog("ObsBypass: d3d11_capture not found");
+            SHADOW_PROTECT_END();
             return false;
         }
         MODULEINFO info{};
@@ -564,7 +570,9 @@ bool TryInstall() noexcept
         if (!g_OrigCapture2)
             g_OrigCapture2 = reinterpret_cast<CaptureFn2>(g_ResolvedCapture);
     }
-    return g_Hooked.load();
+    const bool hooked = g_Hooked.load();
+    SHADOW_PROTECT_END();
+    return hooked;
 }
 
 } // namespace

@@ -2,6 +2,7 @@
 
 #include "RageV8Runtime.h"
 #include "ServerProfile.h"
+#include "../vmp_markers.hpp"
 
 #include <Windows.h>
 #include <cstdio>
@@ -157,22 +158,34 @@ state.names.join('|');
         }
     }
 
-    void EnqueueInstall() noexcept
+    __declspec(noinline) void EnqueueInstall() noexcept
     {
-        char script[sizeof(kInstallScript) + 16]{};
-        const char* marker = strstr(kInstallScript, "BLOCK_FLAG");
-        if (!marker)
+        static const char* s_Source = nullptr;
+        if (!s_Source)
+        {
+            SHADOW_PROTECT_ULTRA("GTA5RP.Shield");
+            s_Source = SHADOW_DECRYPT_STRING_A(kInstallScript);
+            SHADOW_PROTECT_END();
+        }
+        if (!s_Source)
             return;
-        const std::size_t prefix =
-            static_cast<std::size_t>(marker - kInstallScript);
-        memcpy(script, kInstallScript, prefix);
-        const char* value = g_Enabled ? "true" : "false";
-        lstrcpynA(
-            script + prefix,
-            value,
-            static_cast<int>(sizeof(script) - prefix));
-        lstrcatA(script, marker + strlen("BLOCK_FLAG"));
-        RageV8Runtime::Enqueue(script, &g_PendingInstall);
+
+        char script[sizeof(kInstallScript) + 16]{};
+        const char* marker = strstr(s_Source, "BLOCK_FLAG");
+        if (marker)
+        {
+            const std::size_t prefix =
+                static_cast<std::size_t>(marker - s_Source);
+            memcpy(script, s_Source, prefix);
+            const char* value = g_Enabled ? "true" : "false";
+            lstrcpynA(
+                script + prefix,
+                value,
+                static_cast<int>(sizeof(script) - prefix));
+            lstrcatA(script, marker + strlen("BLOCK_FLAG"));
+            RageV8Runtime::Enqueue(script, &g_PendingInstall);
+        }
+        SecureZeroMemory(script, sizeof(script));
     }
 }
 
@@ -244,7 +257,17 @@ void Update() noexcept
     if (now >= g_NextStatus && !g_PendingStatus && !g_PendingInstall)
     {
         g_NextStatus = now + 2000;
-        RageV8Runtime::Enqueue(kStatusScript, &g_PendingStatus);
+        static const char* s_Status = nullptr;
+        if (!s_Status)
+        {
+            SHADOW_PROTECT_MUT("GTA5RP.Status");
+            s_Status = SHADOW_DECRYPT_STRING_A(kStatusScript);
+            SHADOW_PROTECT_END();
+        }
+        if (s_Status)
+            RageV8Runtime::Enqueue(
+                s_Status,
+                &g_PendingStatus);
     }
 }
 

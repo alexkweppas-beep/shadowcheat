@@ -50,7 +50,6 @@
 #include "../SDK/RageBuildFlavor.h"
 #include "../SDK/WeaponGroups.h"
 #include "../SDK/WeaponCatalog.h"
-
 #include <algorithm>
 #include <cmath>
 #include <ctime>
@@ -1968,7 +1967,7 @@ namespace Menu
         ImGui::PopStyleVar();
     }
 
-    static void RenderAimbotPage()
+    static __declspec(noinline) void RenderAimbotPage()
     {
         struct ModeTransition final
         {
@@ -2002,10 +2001,14 @@ namespace Menu
         }
 
         if (RenderAimRemoveConfirm(scale))
+        {
             return;
+        }
         AimWeaponProfile* profile = EditedAimProfile();
         if (!profile)
+        {
             return;
+        }
 
         const float dt = ImClamp(
             ImGui::GetIO().DeltaTime,
@@ -2205,7 +2208,7 @@ namespace Menu
         PushGeneralToLegacy();
     }
 
-    void RenderCombatPage()
+    __declspec(noinline) void RenderCombatPage()
     {
         RenderAimbotPage();
     }

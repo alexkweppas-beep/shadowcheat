@@ -3,6 +3,7 @@
 #include "UkraineToolsScript.h"
 #include "RageV8Runtime.h"
 #include "ServerProfile.h"
+#include "../vmp_markers.hpp"
 #include "../Menu/Menu.h"
 #include "../Menu/IconsFontAwesome6.h"
 #include "../Menu/Leyawin/custom_widgets.hpp"
@@ -668,17 +669,27 @@ namespace
         }
     }
 
-    void QueueLoad() noexcept
+    __declspec(noinline) void QueueLoad() noexcept
     {
         if (g_LoadRequested)
             return;
         if (g_ServerKind != ServerKind::Ukraine)
             return;
         g_LastLoadAttempt = GetTickCount64();
-        if (!QueueScript(
-                UkraineToolsScript::kSource,
+        bool queued = false;
+        SHADOW_PROTECT_ULTRA("Ukraine.Load");
+        const char* protectedSource =
+            SHADOW_DECRYPT_STRING_A(UkraineToolsScript::kSource);
+        if (protectedSource)
+        {
+            queued = QueueScript(
+                protectedSource,
                 RequestKind::Load,
-                "Load Ukraine Tools"))
+                "Load Ukraine Tools");
+        }
+        SHADOW_FREE_STRING(protectedSource);
+        SHADOW_PROTECT_END();
+        if (!queued)
         {
             Menu::PushNotification(
                 "Ukraine Tools",

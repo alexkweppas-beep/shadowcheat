@@ -1,6 +1,7 @@
 #include "Offsets.h"
 #include "../Main/Hooks.h"
 #include "../Memory/Pattern.h"
+#include "../vmp_markers.hpp"
 
 namespace Offsets
 {
@@ -77,9 +78,11 @@ namespace Offsets
     // All RVAs verified against live game memory on build 1.0.231.0.
     bool Initialize()
     {
+        SHADOW_PROTECT_VIRT("Core.Offsets");
         HMODULE hExe = GetModuleHandleW(L"GTA5.exe");
         if (!hExe) {
             hooks::HLog("Offsets: GTA5.exe not loaded yet");
+            SHADOW_PROTECT_END();
             return false;
         }
         uintptr_t base = reinterpret_cast<uintptr_t>(hExe);
@@ -147,6 +150,9 @@ namespace Offsets
                 : "Offsets: GameplayDirector FAILED");
         hooks::HLog(GetBone ? "Offsets: GetBone OK" : "Offsets: GetBone FAILED");
 
-        return (WorldPtr != nullptr) && (ReplayInterfacePtr != nullptr);
+        const bool ok =
+            (WorldPtr != nullptr) && (ReplayInterfacePtr != nullptr);
+        SHADOW_PROTECT_END();
+        return ok;
     }
 }

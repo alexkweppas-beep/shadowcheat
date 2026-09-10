@@ -3,6 +3,7 @@
 #include "QuantToolsScript.h"
 #include "RageV8Runtime.h"
 #include "ServerProfile.h"
+#include "../vmp_markers.hpp"
 #include "../SDK/RageBuildFlavor.h"
 #include "../Menu/Menu.h"
 #include "../Menu/IconsFontAwesome6.h"
@@ -1225,17 +1226,27 @@ namespace
         }
     }
 
-    void QueueLoad() noexcept
+    __declspec(noinline) void QueueLoad() noexcept
     {
         if (g_LoadRequested)
             return;
         if (g_ServerKind != ServerKind::Quant)
             return;
         g_LastLoadAttempt = GetTickCount64();
-        if (!QueueScript(
-                QuantToolsScript::kSource,
+        bool queued = false;
+        SHADOW_PROTECT_ULTRA("Quant.Load");
+        const char* protectedSource =
+            SHADOW_DECRYPT_STRING_A(QuantToolsScript::kSource);
+        if (protectedSource)
+        {
+            queued = QueueScript(
+                protectedSource,
                 RequestKind::Load,
-                "Load Quant Tools"))
+                "Load Quant Tools");
+        }
+        SHADOW_FREE_STRING(protectedSource);
+        SHADOW_PROTECT_END();
+        if (!queued)
         {
             Menu::PushNotification(
                 "Quant Tools",

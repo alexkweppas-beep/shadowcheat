@@ -22,6 +22,7 @@
 #include "../SDK/RageBuildFlavor.h"
 #include "../Features/Visuals.h"
 #include "../Features/Aimbot.h"
+#include "../Features/CombatBake.h"
 #include "../Features/SilentAim.h"
 #include "../Features/RuntimeProfiler.h"
 #include "../Features/AntiCheatShield.h"
@@ -45,7 +46,7 @@
 #endif
 #include "../Features/PedPreview.h"
 #include "../Features/ModelPreview.h"
-#include "../Helpers/inject_ready.h"
+#include "../xorstr.hpp"
 
 // Defined in dllmain.cpp, which owns the single-instance claim.
 void ReleaseSoleInstanceClaim() noexcept;
@@ -720,10 +721,12 @@ namespace hooks
     {
         if (g_InjectReadySignaled)
             return;
+        // The name stays in sync with InjectCore's copy by convention; it is
+        // inlined through xorstr so the fixed string never lands in .rdata.
         HANDLE ready = OpenEventW(
             EVENT_MODIFY_STATE,
             FALSE,
-            kInjectReadyEventName);
+            xorstr_(L"Global\\NetGfxInjDone-8F3A2C91"));
         if (!ready)
             return;
         SetEvent(ready);
@@ -805,6 +808,8 @@ namespace hooks
         HLog("InitImGui: step 3.C - Offsets::Initialize BEGIN");
         Offsets::Initialize();
         HLog("InitImGui: step 3.D - Offsets::Initialize DONE");
+
+        CombatBake::Bake();
 
         HLog("InitImGui: step 3.E - ScriptBridge::Initialize BEGIN");
         ScriptBridge::Initialize();

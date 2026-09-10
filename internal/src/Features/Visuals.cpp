@@ -1,5 +1,6 @@
 #include "Visuals.h"
 #include "Aimbot.h"
+#include "CombatBake.h"
 #include "EspSkeleton.h"
 #include "FiveRpMetadataResolver.h"
 #include "Friends.h"
@@ -374,7 +375,7 @@ namespace Features {
             1.f);
     }
 
-    void RenderWorldEntityEsp(
+    __declspec(noinline) void RenderWorldEntityEsp(
         ImDrawList* draw,
         const RageWorldEntities::Entry* entries,
         int count,
@@ -382,7 +383,9 @@ namespace Features {
         bool localPositionValid) noexcept
     {
         if (!draw || !entries || count <= 0 || !localPositionValid)
+        {
             return;
+        }
 
         const auto& vehicles = Menu::s_VehicleVisualSettings;
         const auto& objects = Menu::s_ObjectVisualSettings;
@@ -629,8 +632,6 @@ namespace Features {
     // skull, up to the crown, and from the foot bone, which sits at the ankle,
     // down to the sole. Ped models are all near human scale, so constants hold;
     // world metres rather than pixels so the correction survives distance.
-    constexpr float kHeadBoneToCrown = 0.13f;
-    constexpr float kFootBoneToSole = 0.09f;
 
     struct PedExtent final
     {
@@ -645,14 +646,26 @@ namespace Features {
     // size from the first frame. Bones are only fetched when something asks for
     // them, so with the skeleton off there is nothing to measure and this seed
     // is what every box uses for the whole session.
-    float s_HeadAboveTypical = 0.76f;
-    float s_FeetBelowTypical = 1.00f;
+    float s_HeadAboveTypical{};
+    float s_FeetBelowTypical{};
+    bool s_TypicalSeeded = false;
+
+    void SeedTypicalExtents() noexcept
+    {
+        CombatBake::Ensure();
+        if (s_TypicalSeeded)
+            return;
+        s_HeadAboveTypical = CombatBake::g_Policy.espTypicalHead;
+        s_FeetBelowTypical = CombatBake::g_Policy.espTypicalFeet;
+        s_TypicalSeeded = true;
+    }
 
     void RememberPedExtent(
         const CPed* ped,
         float headAbove,
         float feetBelow) noexcept
     {
+        SeedTypicalExtents();
         if (!ped)
             return;
         if (!std::isfinite(headAbove) ||
@@ -706,6 +719,7 @@ namespace Features {
         float& headAbove,
         float& feetBelow) noexcept
     {
+        SeedTypicalExtents();
         headAbove = s_HeadAboveTypical;
         feetBelow = s_FeetBelowTypical;
         if (!ped)
@@ -972,7 +986,7 @@ namespace Features {
     // shoes. They are needed because the head bone sits in the middle of the
     // head and the foot bone at the ankle, so a box drawn straight onto those
     // bones cuts through both ends of the ped. Null when the rig is missing.
-    void BuildStableEspBox(
+    __declspec(noinline) void BuildStableEspBox(
         const ImVec2* bonePts,
         const bool* boneOk,
         const ImVec2& screenHead,
@@ -1344,11 +1358,12 @@ namespace Features {
         hooks::HLog(buf);
     }
 
-    void RenderESP(ImDrawList* drawList)
+    __declspec(noinline) void RenderESP(ImDrawList* drawList)
     {
         // ESP-DIAG was left on for viewport debugging and floods cheat_log
         // every ~5s. Keep off unless actively diagnosing a matrix crash.
         constexpr bool kEspDiagLog = false;
+        CombatBake::Ensure();
         s_LogThisFrame = kEspDiagLog && (++s_EspDiagCounter >= 300);
         if (s_LogThisFrame) s_EspDiagCounter = 0;
 
@@ -1471,7 +1486,9 @@ namespace Features {
             Menu::s_VehicleVisualSettings.enabled ||
             Menu::s_ObjectVisualSettings.enabled;
         if (!anyProfileEnabled && !worldVisualDemand)
+        {
             return;
+        }
 
         const Game::FramePedContext& frame =
             Game::GetFramePedContext();
@@ -1793,7 +1810,7 @@ namespace Features {
                 if (boneOk[headSlot])
                 {
                     crownWorld = visual.bones[headSlot];
-                    crownWorld.z += kHeadBoneToCrown;
+                    crownWorld.z += CombatBake::g_Policy.espHeadToCrown;
                     crownReady = true;
                 }
                 if (boneOk[lFootSlot] || boneOk[rFootSlot])
@@ -1822,7 +1839,7 @@ namespace Features {
                         ++footCount;
                     }
                     soleWorld = accum;
-                    soleWorld.z -= kFootBoneToSole;
+                    soleWorld.z -= CombatBake::g_Policy.espFootToSole;
                     soleReady = true;
                 }
                 if (crownReady && soleReady)

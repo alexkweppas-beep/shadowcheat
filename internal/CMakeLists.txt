@@ -31,6 +31,51 @@ option(SHADOW_DEV
 option(SHADOW_EVENT_LOGGER
     "Instrument the game's V8 and write an event log" ON)
 
+# Distribution builds are protected after link. The SDK markers alone are not
+# protection: they are ordinary imports until VMProtect_Con consumes them, so
+# the post-build step is fail-closed and never leaves a raw DLL under the
+# shipping filename.
+option(SHADOW_ENABLE_VMP
+    "Protect Release shadow_internal.dll with VMProtect" ON)
+option(SHADOW_KEEP_VMP_RAW
+    "Keep shadow_internal.raw.dll beside the protected artifact" OFF)
+set(SHADOW_VMP_ROOT "" CACHE PATH
+    "VMProtect directory containing VMProtect_Con.exe, Include/C and Lib/Windows")
+set(SHADOW_VMP_WATERMARK "" CACHE STRING
+    "Optional existing VMProtect watermark name")
+
+if(SHADOW_ENABLE_VMP)
+    if(NOT SHADOW_VMP_ROOT AND DEFINED ENV{SHADOW_VMP_ROOT})
+        file(TO_CMAKE_PATH "$ENV{SHADOW_VMP_ROOT}" SHADOW_VMP_ROOT)
+    endif()
+    if(NOT SHADOW_VMP_ROOT)
+        get_filename_component(_shadow_vmp_bundled
+            "${CMAKE_CURRENT_SOURCE_DIR}/../../../vmp 3.9.4 ultimate"
+            ABSOLUTE)
+        if(EXISTS "${_shadow_vmp_bundled}/VMProtect_Con.exe")
+            set(SHADOW_VMP_ROOT "${_shadow_vmp_bundled}")
+        endif()
+    endif()
+
+    set(SHADOW_VMP_CONSOLE
+        "${SHADOW_VMP_ROOT}/VMProtect_Con.exe")
+    set(SHADOW_VMP_INCLUDE
+        "${SHADOW_VMP_ROOT}/Include/C")
+    set(SHADOW_VMP_LIBRARY
+        "${SHADOW_VMP_ROOT}/Lib/Windows/VMProtectSDK64.lib")
+    foreach(_required
+            "${SHADOW_VMP_CONSOLE}"
+            "${SHADOW_VMP_INCLUDE}/VMProtectSDK.h"
+            "${SHADOW_VMP_LIBRARY}")
+        if(NOT EXISTS "${_required}")
+            message(FATAL_ERROR
+                "SHADOW_ENABLE_VMP=ON, but VMProtect file is missing: "
+                "${_required}. Set -DSHADOW_VMP_ROOT=... or explicitly use "
+                "-DSHADOW_ENABLE_VMP=OFF for an unprotected dev build.")
+        endif()
+    endforeach()
+endif()
+
 file(GLOB_RECURSE SHADOW_INTERNAL_SOURCES CONFIGURE_DEPENDS
     "${CMAKE_CURRENT_SOURCE_DIR}/src/*.cpp")
 if(SHADOW_DEV)
@@ -77,6 +122,16 @@ target_compile_definitions(internal PRIVATE
     UNICODE
     _UNICODE)
 
+if(SHADOW_ENABLE_VMP)
+    target_include_directories(internal PRIVATE "${SHADOW_VMP_INCLUDE}")
+    target_compile_definitions(internal PRIVATE
+        "$<$<CONFIG:Release>:SHADOW_PACKER=1>"
+        "$<$<CONFIG:Release>:SHADOW_HAVE_VMP_SDK=1>"
+        "$<$<CONFIG:Release>:SHADOW_PROTECTED_RELEASE=1>")
+    target_link_libraries(internal PRIVATE
+        "$<$<CONFIG:Release>:${SHADOW_VMP_LIBRARY}>")
+endif()
+
 if(SHADOW_DEV)
     target_compile_definitions(internal PRIVATE RAGEMP_DIAGNOSTICS)
     if(NOT SHADOW_EVENT_LOGGER)
@@ -97,12 +152,26 @@ target_compile_options(internal PRIVATE
     /wd26495
     /wd26800)
 
+if(MSVC)
+    target_compile_options(internal PRIVATE
+        "$<$<CONFIG:Release>:/O2>"
+        "$<$<CONFIG:Release>:/Ob2>"
+        "$<$<CONFIG:Release>:/GL>"
+        "$<$<CONFIG:Release>:/Gy>"
+        "$<$<CONFIG:Release>:/Gw>"
+        "$<$<CONFIG:Release>:/GS>"
+        "$<$<CONFIG:Release>:/sdl>"
+        "$<$<CONFIG:Release>:/Zc:inline>"
+        "$<$<CONFIG:Release>:/Brepro>")
+endif()
+
 target_link_libraries(internal PRIVATE
     d3d11
     dxgi
     d3dcompiler
     psapi
     winhttp
+    crypt32
     windowscodecs
     # Named explicitly rather than left to the default library directives: the
     # static CRT is split across three libraries and the C runtime half is not
@@ -127,10 +196,32 @@ target_link_libraries(internal PRIVATE
 # resolution, which had been reporting zeroes.
 target_link_options(internal PRIVATE
     /ENTRY:_DllMainCRTStartup
-    /SUBSYSTEM:WINDOWS)
+    /SUBSYSTEM:WINDOWS
+    # Never embed the absolute PDB path into the binary: it leaks the build
+    # machine's layout and username. DllMain still wipes the RSDS record at
+    # runtime as a second line for configs that link with /DEBUG.
+    /PDBALTPATH:shadow.pdb
+    "$<$<CONFIG:Release>:/LTCG>"
+    "$<$<CONFIG:Release>:/OPT:REF>"
+    "$<$<CONFIG:Release>:/OPT:ICF>"
+    "$<$<CONFIG:Release>:/INCREMENTAL:NO>"
+    "$<$<CONFIG:Release>:/DYNAMICBASE>"
+    "$<$<CONFIG:Release>:/HIGHENTROPYVA>"
+    "$<$<CONFIG:Release>:/NXCOMPAT>"
+    "$<$<CONFIG:Release>:/Brepro>"
+    "$<$<CONFIG:Release>:/RELEASE>")
+
+if(SHADOW_ENABLE_VMP)
+    set(_shadow_internal_output_name "shadow_internal.raw")
+else()
+    set(_shadow_internal_output_name "shadow_internal")
+endif()
 
 set_target_properties(internal PROPERTIES
-    OUTPUT_NAME "shadow_internal"
+    # The linker never writes the shipping filename when VMProtect is enabled.
+    # A failed protection step therefore cannot leave a naked DLL that looks
+    # like a valid distribution artifact.
+    OUTPUT_NAME "${_shadow_internal_output_name}"
     PREFIX ""
     C_STANDARD 11
     # Pinned rather than inherited: the repository root asks for C++20 and this
@@ -140,6 +231,21 @@ set_target_properties(internal PROPERTIES
     # Manual mapping bypasses the Windows loader, so nothing guarantees a CRT
     # DLL is resolvable in the target process: the runtime is linked in.
     MSVC_RUNTIME_LIBRARY "MultiThreaded")
+
+if(SHADOW_ENABLE_VMP)
+    add_custom_command(TARGET internal POST_BUILD
+        COMMAND "${CMAKE_COMMAND}"
+            "-DINPUT=$<TARGET_FILE:internal>"
+            "-DOUTPUT=$<TARGET_FILE_DIR:internal>/shadow_internal.dll"
+            "-DCONFIG=$<CONFIG>"
+            "-DVMP_CONSOLE=${SHADOW_VMP_CONSOLE}"
+            "-DVMP_PROJECT=${CMAKE_CURRENT_SOURCE_DIR}/protection/shadow_internal.vmp"
+            "-DVMP_WATERMARK=${SHADOW_VMP_WATERMARK}"
+            "-DKEEP_RAW=${SHADOW_KEEP_VMP_RAW}"
+            -P "${CMAKE_CURRENT_SOURCE_DIR}/cmake/RunVMProtect.cmake"
+        COMMENT "Protecting shadow_internal.dll with VMProtect"
+        VERBATIM)
+endif()
 
 # The no-driver delivery path: a usermode manual-map injector that loads
 # shadow_internal.dll into GTA5.exe without touching the kernel.

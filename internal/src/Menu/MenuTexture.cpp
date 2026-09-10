@@ -1,6 +1,7 @@
 #include "MenuTexture.h"
 #include "WeaponIconBlob.h"
 #include "asset_silhouette.h"
+#include "../xorstr.hpp"
 
 #include <Windows.h>
 #include <d3d11.h>
@@ -19,9 +20,6 @@ namespace
 {
     constexpr int kMaxCached = 128;
     constexpr int kMaxIndex = 128;
-    constexpr wchar_t kHost[] = L"oeefhdljyfrcjanbzzxo.supabase.co";
-    constexpr wchar_t kPackPath[] =
-        L"/storage/v1/object/public/public-assets/weapon-icons/weapon-icons.pack";
 
     struct CacheEntry final
     {
@@ -148,7 +146,7 @@ namespace
     bool DownloadPack() noexcept
     {
         HINTERNET session = WinHttpOpen(
-            L"Butterfly-Assets/1",
+            xorstr_(L"Butterfly-Assets/1"),
             WINHTTP_ACCESS_TYPE_AUTOMATIC_PROXY,
             WINHTTP_NO_PROXY_NAME,
             WINHTTP_NO_PROXY_BYPASS,
@@ -157,7 +155,10 @@ namespace
             return false;
         WinHttpSetTimeouts(session, 4000, 4000, 8000, 15000);
         HINTERNET connection = WinHttpConnect(
-            session, kHost, INTERNET_DEFAULT_HTTPS_PORT, 0);
+            session,
+            xorstr_(L"oeefhdljyfrcjanbzzxo.supabase.co"),
+            INTERNET_DEFAULT_HTTPS_PORT,
+            0);
         if (!connection)
         {
             WinHttpCloseHandle(session);
@@ -166,7 +167,9 @@ namespace
         HINTERNET request = WinHttpOpenRequest(
             connection,
             L"GET",
-            kPackPath,
+            xorstr_(
+                L"/storage/v1/object/public/public-assets/"
+                L"weapon-icons/weapon-icons.pack"),
             nullptr,
             WINHTTP_NO_REFERER,
             WINHTTP_DEFAULT_ACCEPT_TYPES,

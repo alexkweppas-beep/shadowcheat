@@ -11,6 +11,7 @@
 #include "../SDK/RageMpBuildProfile.h"
 #include "../SDK/RageBuildFlavor.h"
 #include "../SDK/V8Internal87.h"
+#include "../vmp_markers.hpp"
 
 #include <TlHelp32.h>
 #include <cmath>
@@ -164,6 +165,7 @@ namespace
     {
         std::uint64_t id{};
         std::uint64_t generation{};
+        std::uint32_t length{};
         char* script{};
     };
 
@@ -297,6 +299,7 @@ namespace
     FiveRpPlayersProbe g_FiveRpPlayersProbe{};
 
     char* g_WrappedSource = nullptr;
+    std::size_t g_WrappedSourceLength = 0;
     Command g_ExecutingCommand{};
 
     char* AllocateScriptBuffer() noexcept
@@ -315,10 +318,31 @@ namespace
     // not leak the allocation they are clearing.
     void ResetCommand(Command& command) noexcept
     {
+        if (command.script &&
+            command.length < RageV8Runtime::kMaxScriptLength)
+        {
+            SecureZeroMemory(
+                command.script,
+                static_cast<std::size_t>(command.length) + 1);
+        }
         command.id = 0;
         command.generation = 0;
+        command.length = 0;
         if (command.script)
             command.script[0] = 0;
+    }
+
+    void WipeWrappedSource() noexcept
+    {
+        if (g_WrappedSource && g_WrappedSourceLength)
+        {
+            SecureZeroMemory(
+                g_WrappedSource,
+                g_WrappedSourceLength + 1);
+        }
+        g_WrappedSourceLength = 0;
+        if (g_WrappedSource)
+            g_WrappedSource[0] = 0;
     }
 
     double ElapsedMilliseconds(std::int64_t started) noexcept
@@ -485,24 +509,35 @@ namespace
         return *reinterpret_cast<const std::uint8_t*>(address);
     }
 
-    bool MatchesRuntimeFingerprints(std::uintptr_t base) noexcept
+    __declspec(noinline) bool MatchesRuntimeFingerprints(std::uintptr_t base) noexcept
     {
+        bool ok = true;
+        SHADOW_PROTECT_ULTRA("Core.V8.Fingerprint");
         for (const auto& fingerprint : kRuntimeFingerprints)
         {
             const auto* actual =
                 reinterpret_cast<const std::uint8_t*>(
                     base + fingerprint.rva);
             if (!IsReadable(actual, sizeof(fingerprint.bytes)))
-                return false;
+            {
+                ok = false;
+                break;
+            }
             for (std::size_t index = 0;
                  index < sizeof(fingerprint.bytes);
                  ++index)
             {
                 if (actual[index] != fingerprint.bytes[index])
-                    return false;
+                {
+                    ok = false;
+                    break;
+                }
             }
+            if (!ok)
+                break;
         }
-        return true;
+        SHADOW_PROTECT_END();
+        return ok;
     }
 
     std::uint16_t TaggedType(std::uintptr_t tagged) noexcept
@@ -600,171 +635,183 @@ namespace
         return ReadPointer(globalHandles + 0x08) != 0;
     }
 
-    void* FindIsolate(
+    __declspec(noinline) void* FindIsolate(
         std::uintptr_t moduleBase,
         DWORD& ownerThreadId) noexcept
     {
-        ownerThreadId = 0;
-        const DWORD key = ReadU32(moduleBase + kIsolateTlsKeyRva);
-        if (key == TLS_OUT_OF_INDEXES)
-            return nullptr;
-
-        HMODULE ntdll = GetModuleHandleW(L"ntdll.dll");
-        const auto queryThread = ntdll
-            ? reinterpret_cast<NtQueryInformationThreadFn>(
-                GetProcAddress(ntdll, "NtQueryInformationThread"))
-            : nullptr;
-        if (!queryThread)
-            return nullptr;
-
-        HANDLE snapshot =
-            CreateToolhelp32Snapshot(TH32CS_SNAPTHREAD, 0);
-        if (snapshot == INVALID_HANDLE_VALUE)
-            return nullptr;
-
         void* found = nullptr;
-        THREADENTRY32 entry{};
-        entry.dwSize = sizeof(entry);
-        if (Thread32First(snapshot, &entry))
+        SHADOW_PROTECT_ULTRA("Core.V8.Isolate");
+        do
         {
-            do
+            ownerThreadId = 0;
+            const DWORD key = ReadU32(moduleBase + kIsolateTlsKeyRva);
+            if (key == TLS_OUT_OF_INDEXES)
+                break;
+
+            HMODULE ntdll = GetModuleHandleW(L"ntdll.dll");
+            const auto queryThread = ntdll
+                ? reinterpret_cast<NtQueryInformationThreadFn>(
+                    GetProcAddress(ntdll, "NtQueryInformationThread"))
+                : nullptr;
+            if (!queryThread)
+                break;
+
+            HANDLE snapshot =
+                CreateToolhelp32Snapshot(TH32CS_SNAPTHREAD, 0);
+            if (snapshot == INVALID_HANDLE_VALUE)
+                break;
+
+            THREADENTRY32 entry{};
+            entry.dwSize = sizeof(entry);
+            if (Thread32First(snapshot, &entry))
             {
-                if (entry.th32OwnerProcessID != GetCurrentProcessId())
-                    continue;
-                HANDLE thread = OpenThread(
-                    THREAD_QUERY_INFORMATION,
-                    FALSE,
-                    entry.th32ThreadID);
-                if (!thread)
+                do
                 {
-                    thread = OpenThread(
-                        THREAD_QUERY_LIMITED_INFORMATION,
+                    if (entry.th32OwnerProcessID != GetCurrentProcessId())
+                        continue;
+                    HANDLE thread = OpenThread(
+                        THREAD_QUERY_INFORMATION,
                         FALSE,
                         entry.th32ThreadID);
-                }
-                if (!thread)
-                    continue;
-
-                ThreadBasicInformationLocal information{};
-                const LONG status = queryThread(
-                    thread,
-                    0,
-                    &information,
-                    sizeof(information),
-                    nullptr);
-                CloseHandle(thread);
-                if (status < 0 || !information.tebBaseAddress)
-                    continue;
-
-                void* isolate = ReadTlsValue(
-                    information.tebBaseAddress,
-                    key);
-                if (!IsValidIsolate(isolate))
-                {
-                    for (DWORD slot = 0; slot < 64; ++slot)
+                    if (!thread)
                     {
-                        isolate = ReadTlsValue(
-                            information.tebBaseAddress,
-                            slot);
-                        if (IsValidIsolate(isolate))
-                            break;
+                        thread = OpenThread(
+                            THREAD_QUERY_LIMITED_INFORMATION,
+                            FALSE,
+                            entry.th32ThreadID);
                     }
-                }
-                if (IsValidIsolate(isolate))
-                {
-                    found = isolate;
-                    ownerThreadId = entry.th32ThreadID;
-                    break;
-                }
-            } while (Thread32Next(snapshot, &entry));
-        }
-        CloseHandle(snapshot);
+                    if (!thread)
+                        continue;
+
+                    ThreadBasicInformationLocal information{};
+                    const LONG status = queryThread(
+                        thread,
+                        0,
+                        &information,
+                        sizeof(information),
+                        nullptr);
+                    CloseHandle(thread);
+                    if (status < 0 || !information.tebBaseAddress)
+                        continue;
+
+                    void* isolate = ReadTlsValue(
+                        information.tebBaseAddress,
+                        key);
+                    if (!IsValidIsolate(isolate))
+                    {
+                        for (DWORD slot = 0; slot < 64; ++slot)
+                        {
+                            isolate = ReadTlsValue(
+                                information.tebBaseAddress,
+                                slot);
+                            if (IsValidIsolate(isolate))
+                                break;
+                        }
+                    }
+                    if (IsValidIsolate(isolate))
+                    {
+                        found = isolate;
+                        ownerThreadId = entry.th32ThreadID;
+                        break;
+                    }
+                } while (Thread32Next(snapshot, &entry));
+            }
+            CloseHandle(snapshot);
+        } while (false);
+        SHADOW_PROTECT_END();
         return found;
     }
 
-    bool ResolveApi() noexcept
+    __declspec(noinline) bool ResolveApi() noexcept
     {
-        HMODULE module =
-            GetModuleHandleW(RageMpBuildProfile::kModuleName);
-        if (!module)
-            return false;
-        if (!RageMpBuildProfile::MatchesLoadedModule(module))
+        bool resolved = false;
+        SHADOW_PROTECT_ULTRA("Core.V8.Resolve");
+        do
         {
-            SetState(
-                RageV8Runtime::State::Error,
-                "Unsupported multiplayer.dll build");
-            return false;
-        }
+            HMODULE module =
+                GetModuleHandleW(RageMpBuildProfile::kModuleName);
+            if (!module)
+                break;
+            if (!RageMpBuildProfile::MatchesLoadedModule(module))
+            {
+                SetState(
+                    RageV8Runtime::State::Error,
+                    "Unsupported multiplayer.dll build");
+                break;
+            }
 
-        g_Api = {};
-        g_TaskRunner = nullptr;
-        g_TaskRunnerControl = nullptr;
-        InterlockedExchange(&g_TaskInUse[0], 0);
-        InterlockedExchange(&g_TaskInUse[1], 0);
-        InterlockedExchange(&g_PumpQueued, 0);
-        g_Api.base = reinterpret_cast<std::uintptr_t>(module);
-        if (!MatchesRuntimeFingerprints(g_Api.base))
-        {
-            SetState(
-                RageV8Runtime::State::Error,
-                "multiplayer.dll V8 opcode profile mismatch");
-            return false;
-        }
-        g_Api.platform = *reinterpret_cast<void**>(
-            g_Api.base + kPlatformSingletonRva);
-        g_Api.isolate =
-            FindIsolate(g_Api.base, g_Api.ownerThreadId);
-        g_Api.handleScopeCtor =
-            reinterpret_cast<HandleScopeCtor>(
-                g_Api.base + kHandleScopeCtorRva);
-        g_Api.handleScopeDtor =
-            reinterpret_cast<HandleScopeDtor>(
-                g_Api.base + kHandleScopeDtorRva);
-        g_Api.newFromUtf8 =
-            reinterpret_cast<StringNewFromUtf8>(
-                g_Api.base + kStringNewFromUtf8Rva);
-        g_Api.valueToUtf8 =
-            reinterpret_cast<ValueToUtf8>(
-                g_Api.base + kValueToUtf8Rva);
-        g_Api.cleanupUtf8 =
-            reinterpret_cast<Utf8Cleanup>(
-                g_Api.base + kUtf8CleanupRva);
-        g_Api.objectGetByKey =
-            reinterpret_cast<ObjectGetByKey>(
-                g_Api.base + kObjectGetByKeyRva);
-        g_Api.objectSetByKey =
-            reinterpret_cast<ObjectSetByKey>(
-                g_Api.base + kObjectSetByKeyRva);
-        g_Api.functionCall =
-            reinterpret_cast<FunctionCall>(
-                g_Api.base + kFunctionCallRva);
-        g_Api.globalizeReference =
-            reinterpret_cast<GlobalizeReference>(
-                g_Api.base + kGlobalizeReferenceRva);
+            g_Api = {};
+            g_TaskRunner = nullptr;
+            g_TaskRunnerControl = nullptr;
+            InterlockedExchange(&g_TaskInUse[0], 0);
+            InterlockedExchange(&g_TaskInUse[1], 0);
+            InterlockedExchange(&g_PumpQueued, 0);
+            g_Api.base = reinterpret_cast<std::uintptr_t>(module);
+            if (!MatchesRuntimeFingerprints(g_Api.base))
+            {
+                SetState(
+                    RageV8Runtime::State::Error,
+                    "multiplayer.dll V8 opcode profile mismatch");
+                break;
+            }
+            g_Api.platform = *reinterpret_cast<void**>(
+                g_Api.base + kPlatformSingletonRva);
+            g_Api.isolate =
+                FindIsolate(g_Api.base, g_Api.ownerThreadId);
+            g_Api.handleScopeCtor =
+                reinterpret_cast<HandleScopeCtor>(
+                    g_Api.base + kHandleScopeCtorRva);
+            g_Api.handleScopeDtor =
+                reinterpret_cast<HandleScopeDtor>(
+                    g_Api.base + kHandleScopeDtorRva);
+            g_Api.newFromUtf8 =
+                reinterpret_cast<StringNewFromUtf8>(
+                    g_Api.base + kStringNewFromUtf8Rva);
+            g_Api.valueToUtf8 =
+                reinterpret_cast<ValueToUtf8>(
+                    g_Api.base + kValueToUtf8Rva);
+            g_Api.cleanupUtf8 =
+                reinterpret_cast<Utf8Cleanup>(
+                    g_Api.base + kUtf8CleanupRva);
+            g_Api.objectGetByKey =
+                reinterpret_cast<ObjectGetByKey>(
+                    g_Api.base + kObjectGetByKeyRva);
+            g_Api.objectSetByKey =
+                reinterpret_cast<ObjectSetByKey>(
+                    g_Api.base + kObjectSetByKeyRva);
+            g_Api.functionCall =
+                reinterpret_cast<FunctionCall>(
+                    g_Api.base + kFunctionCallRva);
+            g_Api.globalizeReference =
+                reinterpret_cast<GlobalizeReference>(
+                    g_Api.base + kGlobalizeReferenceRva);
 
-        const bool valid =
-            g_Api.platform &&
-            g_Api.isolate &&
-            g_Api.ownerThreadId &&
-            g_Api.handleScopeCtor &&
-            g_Api.handleScopeDtor &&
-            g_Api.newFromUtf8 &&
-            g_Api.valueToUtf8 &&
-            g_Api.cleanupUtf8 &&
-            g_Api.objectGetByKey &&
-            g_Api.objectSetByKey &&
-            g_Api.functionCall &&
-            g_Api.globalizeReference;
-        if (!valid)
-        {
-            InterlockedExchange(&g_InitializeStarted, 0);
-            SetState(
-                RageV8Runtime::State::Uninitialized,
-                "multiplayer.dll loaded; waiting for V8 owner thread");
-            return false;
-        }
-        InterlockedExchange(&g_BuildMatched, 1);
-        return true;
+            const bool valid =
+                g_Api.platform &&
+                g_Api.isolate &&
+                g_Api.ownerThreadId &&
+                g_Api.handleScopeCtor &&
+                g_Api.handleScopeDtor &&
+                g_Api.newFromUtf8 &&
+                g_Api.valueToUtf8 &&
+                g_Api.cleanupUtf8 &&
+                g_Api.objectGetByKey &&
+                g_Api.objectSetByKey &&
+                g_Api.functionCall &&
+                g_Api.globalizeReference;
+            if (!valid)
+            {
+                InterlockedExchange(&g_InitializeStarted, 0);
+                SetState(
+                    RageV8Runtime::State::Uninitialized,
+                    "multiplayer.dll loaded; waiting for V8 owner thread");
+                break;
+            }
+            InterlockedExchange(&g_BuildMatched, 1);
+            resolved = true;
+        } while (false);
+        SHADOW_PROTECT_END();
+        return resolved;
     }
 
     LONG CALLBACK RootCaptureHandler(EXCEPTION_POINTERS* pointers)
@@ -993,8 +1040,19 @@ namespace
             return false;
         }
         Command& slot = g_Commands[g_CommandRead];
+        // The destination is the previous executing slot. Wipe its old source
+        // before recycling the allocation; otherwise every script ever run is
+        // recoverable from the unused tail of the command ring.
+        if (command.script &&
+            command.length < RageV8Runtime::kMaxScriptLength)
+        {
+            SecureZeroMemory(
+                command.script,
+                static_cast<std::size_t>(command.length) + 1);
+        }
         command.id = slot.id;
         command.generation = slot.generation;
+        command.length = slot.length;
         // Buffers are swapped rather than copied: the slot keeps owning one,
         // and a pop stays O(1) instead of moving up to a megabyte.
         char* const returned = command.script;
@@ -1002,6 +1060,7 @@ namespace
         slot.script = returned;
         slot.id = 0;
         slot.generation = 0;
+        slot.length = 0;
         if (slot.script)
             slot.script[0] = 0;
         g_CommandRead =
@@ -1024,6 +1083,9 @@ namespace
             return false;
         }
         command = g_CameraCommand;
+        SecureZeroMemory(
+            &g_CameraCommand,
+            sizeof(g_CameraCommand));
         Unlock(g_CameraCommandLock);
         return true;
     }
@@ -1394,29 +1456,38 @@ namespace
         return false;
     }
 
-    bool PrepareWrappedSource(const char* script) noexcept
+    __declspec(noinline) bool PrepareWrappedSource(
+        const char* script) noexcept
     {
-        if (!g_WrappedSource)
-            g_WrappedSource = AllocateScriptBuffer();
-        if (!g_WrappedSource)
-            return false;
-        g_WrappedSource[0] = 0;
-        AppendText(
-            g_WrappedSource,
-            RageV8Runtime::kMaxScriptLength,
-            "(function(mp){try{\n");
-        AppendText(
-            g_WrappedSource,
-            RageV8Runtime::kMaxScriptLength,
-            script);
-        AppendText(
-            g_WrappedSource,
-            RageV8Runtime::kMaxScriptLength,
-            "\n}catch(e){return 'BridgeError: '+"
-            "(e&&e.stack?e.stack:e);}})");
-        return lstrlenA(g_WrappedSource) <
-            static_cast<int>(
-                RageV8Runtime::kMaxScriptLength) - 1;
+        bool ok = false;
+        do
+        {
+            if (!g_WrappedSource)
+                g_WrappedSource = AllocateScriptBuffer();
+            if (!g_WrappedSource)
+                break;
+            WipeWrappedSource();
+            AppendText(
+                g_WrappedSource,
+                RageV8Runtime::kMaxScriptLength,
+                "(function(mp){try{\n");
+            AppendText(
+                g_WrappedSource,
+                RageV8Runtime::kMaxScriptLength,
+                script);
+            AppendText(
+                g_WrappedSource,
+                RageV8Runtime::kMaxScriptLength,
+                "\n}catch(e){return 'BridgeError: '+"
+                "(e&&e.stack?e.stack:e);}})");
+            g_WrappedSourceLength =
+                static_cast<std::size_t>(lstrlenA(g_WrappedSource));
+            ok = g_WrappedSourceLength <
+                RageV8Runtime::kMaxScriptLength - 1;
+            if (!ok)
+                WipeWrappedSource();
+        } while (false);
+        return ok;
     }
 
     void FormatResult(
@@ -1748,6 +1819,7 @@ namespace
 #if RAGEMP_DEV_BUILD && !defined(RESOURCE_DUMPER_SAFE_JS)
         traceStage(success ? "done-ok" : "done-empty");
 #endif
+        WipeWrappedSource();
 
         if (command.id)
             PushResult(command.id, success, result.text);
@@ -2448,8 +2520,12 @@ namespace
                             &g_RootCaptured,
                             0);
                         g_RootPersistent = nullptr;
+                        WipeWrappedSource();
                     }
                 }
+                SecureZeroMemory(
+                    &cameraCommand,
+                    sizeof(cameraCommand));
             }
             if (PopCommand(g_ExecutingCommand))
             {
@@ -2478,6 +2554,7 @@ namespace
                             &g_RootCaptured,
                             0);
                         g_RootPersistent = nullptr;
+                        WipeWrappedSource();
                     }
                 }
                 else
@@ -2532,6 +2609,7 @@ namespace
                     hooks::HLog(line);
                 }
 #endif
+                ResetCommand(g_ExecutingCommand);
             }
         }
 
@@ -2854,6 +2932,7 @@ namespace RageV8Runtime
         }
         command.id = id;
         command.generation = CurrentGeneration();
+        command.length = static_cast<std::uint32_t>(length);
         CopyText(
             command.script,
             RageV8Runtime::kMaxScriptLength,
@@ -2916,6 +2995,7 @@ namespace RageV8Runtime
         }
         command.id = 0;
         command.generation = CurrentGeneration();
+        command.length = static_cast<std::uint32_t>(length);
         CopyText(
             command.script,
             RageV8Runtime::kMaxScriptLength,

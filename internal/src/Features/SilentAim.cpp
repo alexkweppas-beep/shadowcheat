@@ -1,11 +1,13 @@
 #include "SilentAim.h"
 #include "Aimbot.h"
+#include "CombatBake.h"
 #include "../Menu/Menu.h"
 #include "../SDK/Game.h"
 #include "../SDK/Math.h"
 #include "../SDK/Offsets.h"
 #include "../Memory/Pattern.h"
 #include "../Main/Hooks.h"
+#include "../vmp_markers.hpp"
 
 #include <Windows.h>
 #include <MinHook.h>
@@ -21,8 +23,6 @@ namespace {
 // agree: anything older than the compensation clamp would be aimed at a
 // position nothing corrects. 350 ms used to be accepted with no compensation at
 // all, which is over two metres of error on a sprinting target.
-constexpr float kTargetMaxAgeSeconds = 0.2f;
-constexpr std::uint64_t kTargetMaxAgeMs = 200;
 
 // sp¬ sBulletInstance signature.
 using BulletInstanceFn = std::int64_t(__fastcall*)(
@@ -94,7 +94,9 @@ Vector3 PredictAimPoint(
         !std::isfinite(targetVel.x) ||
         !std::isfinite(targetVel.y) ||
         !std::isfinite(targetVel.z))
+    {
         return aim;
+    }
 
     // Two-pass ballistic lead: t ≈ |aim - muzzle| / v_bullet.
     Vector3 predicted = aim;
@@ -104,7 +106,7 @@ Vector3 PredictAimPoint(
         const float dy = predicted.y - muzzle.y;
         const float dz = predicted.z - muzzle.z;
         const float dist = std::sqrt(dx * dx + dy * dy + dz * dz);
-        if (!(dist > 0.05f))
+        if (!(dist > CombatBake::g_Policy.silentMinRay))
             break;
         const float t = dist / speed;
         predicted.x = aim.x + targetVel.x * t;
@@ -118,7 +120,7 @@ Vector3 PredictAimPoint(
     const float leadZ = predicted.z - aim.z;
     const float leadLen =
         std::sqrt(leadX * leadX + leadY * leadY + leadZ * leadZ);
-    constexpr float kMaxLead = 7.5f;
+    const float kMaxLead = CombatBake::g_Policy.silentMaxLead;
     if (leadLen > kMaxLead)
     {
         const float s = kMaxLead / leadLen;
@@ -130,11 +132,13 @@ Vector3 PredictAimPoint(
     if (!std::isfinite(predicted.x) ||
         !std::isfinite(predicted.y) ||
         !std::isfinite(predicted.z))
+    {
         return aim;
+    }
     return predicted;
 }
 
-std::int64_t __fastcall hkBulletInstance(
+__declspec(noinline) std::int64_t __fastcall hkBulletInstance(
     std::int64_t* bulletInstance,
     const std::int64_t* weaponInfo,
     Vector3* start,
@@ -145,6 +149,7 @@ std::int64_t __fastcall hkBulletInstance(
     bool isAccurate)
 {
     InterlockedIncrement(&g_ActiveCallbacks);
+    CombatBake::Ensure();
 
     const Menu::AimWeaponProfile& profile =
         Menu::GetActiveAimProfile();
@@ -168,7 +173,8 @@ std::int64_t __fastcall hkBulletInstance(
             const bool fresh =
                 target.updatedAt != 0 &&
                 now >= target.updatedAt &&
-                (now - target.updatedAt) <= kTargetMaxAgeMs;
+                (now - target.updatedAt) <=
+                    CombatBake::g_Policy.silentTargetAgeMs;
             const bool visibleOk =
                 profile.silentWallshot ||
                 !profile.silentVisible ||
@@ -193,8 +199,12 @@ std::int64_t __fastcall hkBulletInstance(
                     {
                         float age = static_cast<float>(
                             now - target.updatedAt) / 1000.f;
-                        if (age > kTargetMaxAgeSeconds)
-                            age = kTargetMaxAgeSeconds;
+                        const float maxAge =
+                            static_cast<float>(
+                                CombatBake::g_Policy.silentTargetAgeMs) /
+                            1000.f;
+                        if (age > maxAge)
+                            age = maxAge;
                         aim.x += target.velocity.x * age;
                         aim.y += target.velocity.y * age;
                         aim.z += target.velocity.z * age;
@@ -233,11 +243,13 @@ std::int64_t __fastcall hkBulletInstance(
                         const float dz = predicted.z - muzzle.z;
                         const float length = std::sqrt(
                             dx * dx + dy * dy + dz * dz);
-                        if (length > 0.05f && std::isfinite(length))
+                        if (length > CombatBake::g_Policy.silentMinRay &&
+                            std::isfinite(length))
                         {
-                            constexpr float kOvershootMetres = 0.6f;
+                            const float overshoot =
+                                CombatBake::g_Policy.silentOvershoot;
                             const float scale =
-                                (length + kOvershootMetres) / length;
+                                (length + overshoot) / length;
                             traceEnd.x = muzzle.x + dx * scale;
                             traceEnd.y = muzzle.y + dy * scale;
                             traceEnd.z = muzzle.z + dz * scale;
@@ -275,11 +287,14 @@ std::int64_t __fastcall hkBulletInstance(
                             dx * dx + dy * dy + dz * dz);
                         // Point blank has no cover worth clearing, and backing
                         // off past the muzzle would flip the ray.
-                        if (length > 1.2f && std::isfinite(length))
+                        if (length >
+                                CombatBake::g_Policy.silentWallshotMinLength &&
+                            std::isfinite(length))
                         {
                             // Only cover within this distance of the target is
                             // still in the way, so it does not need to be large.
-                            constexpr float kBackoffMetres = 0.75f;
+                            const float kBackoffMetres =
+                                CombatBake::g_Policy.silentBackoff;
                             float backoff = length * 0.5f;
                             if (backoff > kBackoffMetres)
                                 backoff = kBackoffMetres;
@@ -318,18 +333,23 @@ std::int64_t __fastcall hkBulletInstance(
 
 } // namespace
 
-bool Initialize() noexcept
+__declspec(noinline) bool Initialize() noexcept
 {
+    SHADOW_PROTECT_ULTRA("Silent.Initialize");
     InterlockedExchange(
         &g_RngState,
         static_cast<LONG>(GetTickCount64() ^ 0x51Bu));
 
     if (g_Installed.load())
+    {
+        SHADOW_PROTECT_END();
         return true;
+    }
 
     HMODULE module = GetModuleHandleW(L"GTA5.exe");
     if (!module) {
         g_Message = "GTA5.exe not loaded";
+        SHADOW_PROTECT_END();
         return false;
     }
 
@@ -339,6 +359,7 @@ bool Initialize() noexcept
     if (!match) {
         g_Message = "bullet_instance pattern not found";
         hooks::HLog("SilentAim: bullet_instance pattern miss");
+        SHADOW_PROTECT_END();
         return false;
     }
 
@@ -351,6 +372,7 @@ bool Initialize() noexcept
         MH_Initialize() != MH_ERROR_ALREADY_INITIALIZED)
     {
         g_Message = "MinHook initialization failed";
+        SHADOW_PROTECT_END();
         return false;
     }
 
@@ -361,6 +383,7 @@ bool Initialize() noexcept
     {
         g_Message = "MinHook create failed";
         hooks::HLog("SilentAim: MH_CreateHook failed");
+        SHADOW_PROTECT_END();
         return false;
     }
 
@@ -369,6 +392,7 @@ bool Initialize() noexcept
         g_Original = nullptr;
         g_Message = "MinHook enable failed";
         hooks::HLog("SilentAim: MH_EnableHook failed");
+        SHADOW_PROTECT_END();
         return false;
     }
 
@@ -380,6 +404,7 @@ bool Initialize() noexcept
         "SilentAim: bullet_instance hooked RVA=0x%llX",
         static_cast<unsigned long long>(g_ResolvedRva.load()));
     hooks::HLog(buf);
+    SHADOW_PROTECT_END();
     return true;
 }
 

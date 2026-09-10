@@ -63,7 +63,6 @@ namespace ServerProfile
 #include "../SDK/RageBuildFlavor.h"
 #include "../SDK/WeaponGroups.h"
 #include "../SDK/WeaponCatalog.h"
-
 #include <algorithm>
 #include <cmath>
 #include <ctime>
@@ -1909,7 +1908,7 @@ namespace Menu
         ApplyUIFontVariant(io);
     }
 
-    void InitializeStyle()
+    __declspec(noinline) void InitializeStyle()
     {
         ImGuiStyle& style = ImGui::GetStyle();
         style.WindowPadding = set->window_padding;
@@ -2227,7 +2226,7 @@ namespace Menu
         }
     }
 
-    static void RenderActivePage(ImGuiStyle* style)
+    static __declspec(noinline) void RenderActivePage(ImGuiStyle* style)
     {
         ApplyPreviewForcedTab();
         switch (s_AcceptedMainPage)
@@ -2341,7 +2340,7 @@ namespace Menu
             ImGui::PopFont();
     }
 
-    void Render(bool& bOpen)
+    __declspec(noinline) void Render(bool& bOpen)
     {
         SetRenderPhase("enter");
         InitLeyawinGlobals();

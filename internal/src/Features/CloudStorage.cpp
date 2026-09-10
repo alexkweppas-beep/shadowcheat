@@ -24,6 +24,7 @@
 
 #define WIN32_LEAN_AND_MEAN
 #include <Windows.h>
+#include <dpapi.h>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -32,6 +33,7 @@
 #include <new>
 
 #include "../xorstr.hpp"
+#include "../vmp_markers.hpp"
 #include "CloudStorage.h"
 
 #pragma comment(lib, "winhttp.lib")
@@ -66,8 +68,14 @@ constexpr wchar_t kHost[] = {L's', L'h', L'a', L'd', L'o', L'w', L'c', L'h',
 // product sent for kind="config" calls
 constexpr char kConfigProduct[] = "ragemp";
 
-// Live JWT token copied from shared memory
-char g_Token[512]{};
+// The JWT is never kept as plaintext between requests. CryptProtectMemory
+// binds this ciphertext to the current process; a blind memory/string dump no
+// longer yields a reusable Bearer token. A debugger executing code in-process
+// can still ask Windows to decrypt it, so this is exposure reduction, not a
+// trust boundary.
+alignas(CRYPTPROTECTMEMORY_BLOCK_SIZE)
+unsigned char g_ProtectedToken[512]{};
+volatile LONG g_HasToken = 0;
 char g_Error[128] = "Cloud unavailable";
 
 // Unix timestamp of subscription expiry (0 = unknown/expired).
@@ -75,6 +83,59 @@ char g_Error[128] = "Cloud unavailable";
 std::int64_t g_ExpiresAt = 0;
 
 char g_Username[64]{};
+
+void ClearToken() noexcept {
+  SecureZeroMemory(g_ProtectedToken, sizeof(g_ProtectedToken));
+  InterlockedExchange(&g_HasToken, 0);
+}
+
+bool HasToken() noexcept {
+  return InterlockedCompareExchange(&g_HasToken, 0, 0) != 0;
+}
+
+__declspec(noinline) bool StoreToken(const char* value) noexcept {
+  bool ok = false;
+  SHADOW_PROTECT_ULTRA("Cloud.StoreToken");
+  char plaintext[sizeof(g_ProtectedToken)]{};
+  ok = value && value[0];
+  if (ok) {
+    lstrcpynA(plaintext, value, static_cast<int>(sizeof(plaintext)));
+    ok = CryptProtectMemory(
+             plaintext,
+             sizeof(plaintext),
+             CRYPTPROTECTMEMORY_SAME_PROCESS) != FALSE;
+  }
+  if (ok) {
+    CopyMemory(g_ProtectedToken, plaintext, sizeof(g_ProtectedToken));
+    InterlockedExchange(&g_HasToken, 1);
+  } else {
+    ClearToken();
+  }
+  SecureZeroMemory(plaintext, sizeof(plaintext));
+  SHADOW_PROTECT_END();
+  return ok;
+}
+
+__declspec(noinline) bool LoadToken(char* output, std::size_t capacity) noexcept {
+  bool ok = false;
+  SHADOW_PROTECT_ULTRA("Cloud.LoadToken");
+  do {
+    if (!output || capacity < sizeof(g_ProtectedToken) || !HasToken())
+      break;
+    CopyMemory(output, g_ProtectedToken, sizeof(g_ProtectedToken));
+    if (!CryptUnprotectMemory(
+            output,
+            sizeof(g_ProtectedToken),
+            CRYPTPROTECTMEMORY_SAME_PROCESS)) {
+      SecureZeroMemory(output, capacity);
+      break;
+    }
+    output[capacity - 1] = 0;
+    ok = output[0] != 0;
+  } while (false);
+  SHADOW_PROTECT_END();
+  return ok;
+}
 
 void SetError(const char *value) {
   lstrcpynA(g_Error, value ? value : "Cloud error", sizeof(g_Error));
@@ -156,6 +217,48 @@ static bool BuildJsonBody(char *buf, std::size_t cap,
   return true;
 }
 
+static __declspec(noinline) bool BuildAuthHeader(
+    wchar_t* output,
+    std::size_t capacity,
+    bool isJson) noexcept {
+  bool ok = false;
+  SHADOW_PROTECT_ULTRA("Cloud.AuthHeader");
+  do {
+    if (!output || capacity < 64)
+      break;
+    char token[512]{};
+    if (!LoadToken(token, sizeof(token))) {
+      SecureZeroMemory(token, sizeof(token));
+      break;
+    }
+    wchar_t wideToken[512]{};
+    const int converted = MultiByteToWideChar(
+        CP_UTF8,
+        0,
+        token,
+        -1,
+        wideToken,
+        static_cast<int>(sizeof(wideToken) / sizeof(wideToken[0])));
+    SecureZeroMemory(token, sizeof(token));
+    if (converted <= 0) {
+      SecureZeroMemory(wideToken, sizeof(wideToken));
+      break;
+    }
+    const int written = swprintf_s(
+        output,
+        capacity,
+        L"Authorization: Bearer %s\r\n"
+        L"Content-Type: %s\r\n"
+        L"Cache-Control: no-store\r\n",
+        wideToken,
+        isJson ? L"application/json" : L"text/plain");
+    SecureZeroMemory(wideToken, sizeof(wideToken));
+    ok = written > 0;
+  } while (false);
+  SHADOW_PROTECT_END();
+  return ok;
+}
+
 // ── Generic HTTPS POST to our backend ──
 static bool Request(const wchar_t *path,
                     const char *bodyPayload, // may be nullptr for list endpoint
@@ -163,7 +266,7 @@ static bool Request(const wchar_t *path,
                     char *response, std::size_t responseCapacity,
                     DWORD &status) {
   status = 0;
-  if (!g_Token[0] || !path || !response || responseCapacity < 2) {
+  if (!HasToken() || !path || !response || responseCapacity < 2) {
     SetError("Cloud session unavailable");
     return false;
   }
@@ -198,24 +301,22 @@ static bool Request(const wchar_t *path,
     return false;
   }
 
-  DWORD dwFlags = SECURITY_FLAG_IGNORE_UNKNOWN_CA |
-                  SECURITY_FLAG_IGNORE_CERT_WRONG_USAGE |
-                  SECURITY_FLAG_IGNORE_CERT_CN_INVALID |
-                  SECURITY_FLAG_IGNORE_CERT_DATE_INVALID;
-  WinHttpSetOption(hReq, WINHTTP_OPTION_SECURITY_FLAGS, &dwFlags, sizeof(dwFlags));
+  // Keep WinHTTP's normal certificate validation. Ignoring CA, hostname and
+  // expiry errors turns the short-lived plaintext below into a trivial MITM
+  // token leak and defeats the point of protecting it at rest.
 
-  // Build Authorization header using the JWT from shared memory
+  // Build the header in a short-lived buffer. BuildAuthHeader decrypts the
+  // token only on its own stack and wipes both narrow and wide copies.
   wchar_t authHdr[640]{};
-  {
-    wchar_t wToken[512]{};
-    MultiByteToWideChar(CP_UTF8, 0, g_Token, -1, wToken,
-                        static_cast<int>(sizeof(wToken) / sizeof(wToken[0])));
-    swprintf_s(authHdr,
-               L"Authorization: Bearer %s\r\n"
-               L"Content-Type: %s\r\n"
-               L"Cache-Control: no-store\r\n",
-               wToken, isJson ? L"application/json" : L"text/plain");
-    SecureZeroMemory(wToken, sizeof(wToken));
+  if (!BuildAuthHeader(
+          authHdr,
+          sizeof(authHdr) / sizeof(authHdr[0]),
+          isJson)) {
+    WinHttpCloseHandle(hReq);
+    WinHttpCloseHandle(hConn);
+    WinHttpCloseHandle(hSession);
+    SetError("Cloud session unavailable");
+    return false;
   }
 
   const DWORD bodyLen = bodyPayload ? static_cast<DWORD>(lstrlenA(bodyPayload)) : 0;
@@ -281,7 +382,7 @@ static bool Request(const wchar_t *path,
     return false; // Error already set by 'too large'
   }
   if (status == 401) {
-    SecureZeroMemory(g_Token, sizeof(g_Token));
+    ClearToken();
     SetError("Cloud session expired");
     return false;
   }
@@ -294,43 +395,58 @@ static bool Request(const wchar_t *path,
 }
 
 // ── Try to refresh token from shared memory ──
-static bool RefreshTokenFromSharedMem() {
-  // The loader self-cleans and exits right after inject, so it no
-  // longer anchors the mapping object. A name-opened object dies
-  // with its last handle, so a successful read keeps our handle
-  // open — the section then outlives the loader for later refreshes.
-  static HANDLE s_KeepAlive = nullptr;
-  HANDLE hMap = s_KeepAlive;
-  if (!hMap) {
-    hMap = OpenFileMappingA(FILE_MAP_READ, FALSE,
-                            xorstr_("Local\\SHADOW_IPC_AUTH_SECTION"));
-    if (!hMap)
-      return false;
-  }
-
-  const auto *auth = static_cast<const ShadowSharedAuth *>(
-      MapViewOfFile(hMap, FILE_MAP_READ, 0, 0, sizeof(ShadowSharedAuth)));
+static __declspec(noinline) bool RefreshTokenFromSharedMem() {
   bool ok = false;
-  if (auth && auth->magic == SHADOW_SHARED_MAGIC && auth->version == 1 &&
-      auth->token[0]) {
-    lstrcpynA(g_Token, auth->token, sizeof(g_Token));
-    lstrcpynA(g_Username, auth->username, sizeof(g_Username));
-    // days_remaining actually stores HOURS remaining, not days
-    const int32_t hoursLeft = auth->days_remaining;
-    if (hoursLeft > 0) {
-      const std::int64_t now = static_cast<std::int64_t>(time(nullptr));
-      g_ExpiresAt = now + static_cast<std::int64_t>(hoursLeft) * 3600;
-    } else {
-      g_ExpiresAt = 0;
+  SHADOW_PROTECT_ULTRA("Cloud.Session");
+  do {
+    bool writable = true;
+    HANDLE hMap = OpenFileMappingA(
+        FILE_MAP_READ | FILE_MAP_WRITE,
+        FALSE,
+        xorstr_("Local\\SHADOW_IPC_AUTH_SECTION"));
+    if (!hMap) {
+      writable = false;
+      hMap = OpenFileMappingA(
+          FILE_MAP_READ,
+          FALSE,
+          xorstr_("Local\\SHADOW_IPC_AUTH_SECTION"));
     }
-    ok = true;
-  }
-  if (auth)
-    UnmapViewOfFile(auth);
-  if (ok)
-    s_KeepAlive = hMap; // hold the section object open
-  else if (!s_KeepAlive)
+    if (!hMap)
+      break;
+
+    auto* auth = static_cast<ShadowSharedAuth*>(
+        MapViewOfFile(
+            hMap,
+            writable ? FILE_MAP_READ | FILE_MAP_WRITE : FILE_MAP_READ,
+            0,
+            0,
+            sizeof(ShadowSharedAuth)));
+    if (auth && auth->magic == SHADOW_SHARED_MAGIC && auth->version == 1 &&
+        auth->token[0]) {
+      ok = StoreToken(auth->token);
+      if (ok) {
+        lstrcpynA(g_Username, auth->username, sizeof(g_Username));
+        // days_remaining actually stores HOURS remaining, not days
+        const int32_t hoursLeft = auth->days_remaining;
+        if (hoursLeft > 0) {
+          const std::int64_t now = static_cast<std::int64_t>(time(nullptr));
+          g_ExpiresAt = now + static_cast<std::int64_t>(hoursLeft) * 3600;
+        } else {
+          g_ExpiresAt = 0;
+        }
+      }
+      // DllMain reads this before signalling injection-ready. The loader no
+      // longer needs a reusable JWT in the shared page afterwards.
+      if (writable) {
+        SecureZeroMemory(auth->token, sizeof(auth->token));
+        SecureZeroMemory(auth->hwid, sizeof(auth->hwid));
+      }
+    }
+    if (auth)
+      UnmapViewOfFile(auth);
     CloseHandle(hMap);
+  } while (false);
+  SHADOW_PROTECT_END();
   return ok;
 }
 
@@ -373,20 +489,23 @@ static int ParseListResponse(const char *response, Item *items, int capacity) {
 // ────────────────────────────────────────────────────────────
 
 void Initialize() {
-  SecureZeroMemory(g_Token, sizeof(g_Token));
+  ClearToken();
   RefreshTokenFromSharedMem();
 }
 
 bool EnsureSession() {
-  if (g_Token[0])
+  if (HasToken())
     return true;
   return RefreshTokenFromSharedMem();
 }
 
-void Shutdown() { SecureZeroMemory(g_Token, sizeof(g_Token)); }
+void Shutdown() {
+  ClearToken();
+  SecureZeroMemory(g_Username, sizeof(g_Username));
+}
 
 bool IsAvailable() {
-  if (g_Token[0])
+  if (HasToken())
     return true;
   return RefreshTokenFromSharedMem();
 }

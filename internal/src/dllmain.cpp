@@ -38,6 +38,10 @@
 #include "imgui.h"
 #include "xorstr.hpp"
 
+#define SHADOW_INIT_CODE \
+    __declspec(code_seg(".init")) __declspec(noinline)
+#pragma comment(linker, "/SECTION:.init,ER")
+
 // Module handle of this DLL (set in DllMain).
 HMODULE g_ThisModule = nullptr;
 
@@ -92,7 +96,7 @@ HANDLE g_Heap = nullptr;
 HANDLE g_PrivateHeap = nullptr;
 static PRUNTIME_FUNCTION g_RuntimeFunctionTable = nullptr;
 
-static bool RegisterMappedExceptionTable(HMODULE module)
+static SHADOW_INIT_CODE bool RegisterMappedExceptionTable(HMODULE module)
 {
     if (!module)
         return false;
@@ -129,6 +133,51 @@ static bool RegisterMappedExceptionTable(HMODULE module)
                reinterpret_cast<DWORD64>(module)) != FALSE;
 }
 
+// The header wipe hides the directory table, but the RSDS record and absolute
+// PDB path live in a read-only section and survive a normal memory dump. Remove
+// that payload while the manual mapper still has the image writable.
+static SHADOW_INIT_CODE void WipeCodeViewRecords(HMODULE module)
+{
+    if (!module)
+        return;
+    auto* base = reinterpret_cast<BYTE*>(module);
+    const auto* dos = reinterpret_cast<const IMAGE_DOS_HEADER*>(base);
+    if (dos->e_magic != IMAGE_DOS_SIGNATURE || dos->e_lfanew <= 0)
+        return;
+    const auto* nt = reinterpret_cast<const IMAGE_NT_HEADERS64*>(
+        base + dos->e_lfanew);
+    if (nt->Signature != IMAGE_NT_SIGNATURE)
+        return;
+    const auto& directory =
+        nt->OptionalHeader.DataDirectory[IMAGE_DIRECTORY_ENTRY_DEBUG];
+    if (!directory.VirtualAddress ||
+        directory.Size < sizeof(IMAGE_DEBUG_DIRECTORY) ||
+        static_cast<ULONGLONG>(directory.VirtualAddress) + directory.Size >
+            nt->OptionalHeader.SizeOfImage)
+        return;
+
+    auto* entries = reinterpret_cast<IMAGE_DEBUG_DIRECTORY*>(
+        base + directory.VirtualAddress);
+    const DWORD count =
+        directory.Size / sizeof(IMAGE_DEBUG_DIRECTORY);
+    for (DWORD index = 0; index < count; ++index)
+    {
+        auto& entry = entries[index];
+        if (entry.Type == IMAGE_DEBUG_TYPE_CODEVIEW &&
+            entry.AddressOfRawData &&
+            entry.SizeOfData &&
+            static_cast<ULONGLONG>(entry.AddressOfRawData) +
+                    entry.SizeOfData <=
+                nt->OptionalHeader.SizeOfImage)
+        {
+            SecureZeroMemory(
+                base + entry.AddressOfRawData,
+                entry.SizeOfData);
+        }
+        SecureZeroMemory(&entry, sizeof(entry));
+    }
+}
+
 // ImGui allocator functions exposed to hooks namespace.
 namespace hooks {
     void* ImHeapAllocFn(size_t sz, void*) {
@@ -157,7 +206,7 @@ namespace hooks {
 // the image is never unmapped.
 static HANDLE g_InstanceClaim = nullptr;
 
-static bool ClaimSoleInstance() noexcept
+static SHADOW_INIT_CODE bool ClaimSoleInstance() noexcept
 {
     wchar_t name[64]{};
     const unsigned long pid = GetCurrentProcessId();
@@ -190,7 +239,10 @@ void ReleaseSoleInstanceClaim() noexcept
 //   We install the D3D11 Present VTable hook here. The hook itself
 //   runs on the next frame, on the game's render thread.
 // -------------------------------------------------------------------
-extern "C" BOOL WINAPI DllMain(HMODULE hModule, DWORD reason, LPVOID lpReserved)
+extern "C" SHADOW_INIT_CODE BOOL WINAPI DllMain(
+    HMODULE hModule,
+    DWORD reason,
+    LPVOID lpReserved)
 {
     if (reason == DLL_PROCESS_ATTACH) {
 
@@ -257,14 +309,21 @@ extern "C" BOOL WINAPI DllMain(HMODULE hModule, DWORD reason, LPVOID lpReserved)
         // header, which is about to stop existing.
         ModelPreview::CacheEmbeddedMeshResource();
 
-        // Wipe the PE header: a valid MZ/PE signature at the mapping base is
-        // the loudest in-memory marker of an unlisted module. Everything that
-        // needed the header (exception table registration, resource cache,
-        // SizeOfImage) has already consumed it.
+        WipeCodeViewRecords(hModule);
+
+        // With a naked manual-map image it is safe to wipe here. A protected
+        // image is still executing inside VMProtect's entry wrapper: erasing
+        // its headers before that wrapper regains control can break post-entry
+        // finalisation. The injector decommits the header page immediately
+        // after the protected entry returns instead.
+#if !defined(SHADOW_PROTECTED_RELEASE)
         if (sizeOfHeaders) {
             SecureZeroMemory(
                 reinterpret_cast<void*>(hModule), sizeOfHeaders);
         }
+#else
+        UNREFERENCED_PARAMETER(sizeOfHeaders);
+#endif
     }
     return TRUE;
 }

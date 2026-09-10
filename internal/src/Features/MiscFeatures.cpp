@@ -10,6 +10,7 @@
 #include "ServerProfile.h"
 #include "AntiCheatShield.h"
 #include "VehicleMovement.h"
+#include "../vmp_markers.hpp"
 #include "../Menu/Menu.h"
 #include "../SDK/Game.h"
 #include "../SDK/Offsets.h"
@@ -1501,7 +1502,13 @@ try{if(typeof g.__bfAcStamp==='function')g.__bfAcStamp(np);}catch(e){}
 };
 mp.events.add('render',g.__bfMvFn);
 }catch(e){}})();)JS";
-        if (!EnqueueFreecamScript(kHook))
+        bool queued = false;
+        SHADOW_PROTECT_ULTRA("Misc.Freecam");
+        const char* protectedHook = SHADOW_DECRYPT_STRING_A(kHook);
+        queued = protectedHook && EnqueueFreecamScript(protectedHook);
+        SHADOW_FREE_STRING(protectedHook);
+        SHADOW_PROTECT_END();
+        if (!queued)
             return false;
         g_FcJsHooked = true;
         return true;
@@ -2040,7 +2047,13 @@ here as well would give two independent triggers for one press. */
 };
 mp.events.add('render',g.__bfCwFn);
 }catch(e){}})();)JS";
-        if (!EnqueueClickWarpScript(kHook))
+        bool queued = false;
+        SHADOW_PROTECT_ULTRA("Misc.ClickWarp");
+        const char* protectedHook = SHADOW_DECRYPT_STRING_A(kHook);
+        queued = protectedHook && EnqueueClickWarpScript(protectedHook);
+        SHADOW_FREE_STRING(protectedHook);
+        SHADOW_PROTECT_END();
+        if (!queued)
             return false;
         g_CwJsHooked = true;
         return true;
@@ -2138,7 +2151,13 @@ g.__bfTp=null;
 g.__bfVeh=null;
 }catch(e){}})();)JS";
 
-        if (EnqueuePlayerScript(kReset))
+        bool resetQueued = false;
+        SHADOW_PROTECT_ULTRA("Misc.Reset");
+        const char* protectedReset = SHADOW_DECRYPT_STRING_A(kReset);
+        resetQueued = protectedReset && EnqueuePlayerScript(protectedReset);
+        SHADOW_FREE_STRING(protectedReset);
+        SHADOW_PROTECT_END();
+        if (resetQueued)
             s_ResetDone = true;
     }
 
@@ -2971,7 +2990,13 @@ inv('0x93A3996368C94158',s._vs,1);inv('0xB59E4BD37AE292DB',s._vs,1);s._vs=0;
 };
 mp.events.add('render',g.__bfPlFn);
 }catch(e){}})();)JS";
-        if (!EnqueuePlayerScript(kHook))
+        bool queued = false;
+        SHADOW_PROTECT_ULTRA("Misc.Player");
+        const char* protectedHook = SHADOW_DECRYPT_STRING_A(kHook);
+        queued = protectedHook && EnqueuePlayerScript(protectedHook);
+        SHADOW_FREE_STRING(protectedHook);
+        SHADOW_PROTECT_END();
+        if (!queued)
             return false;
         g_PlJsHooked = true;
         return true;
@@ -4091,7 +4116,13 @@ try{mp.game.invoke('0x0AE73D8DF3A762B2',false);}catch(e){}
 }
 });
 }catch(e){}})();)JS";
-        if (!EnqueueWorldScript(kHook))
+        bool queued = false;
+        SHADOW_PROTECT_ULTRA("Misc.World");
+        const char* protectedHook = SHADOW_DECRYPT_STRING_A(kHook);
+        queued = protectedHook && EnqueueWorldScript(protectedHook);
+        SHADOW_FREE_STRING(protectedHook);
+        SHADOW_PROTECT_END();
+        if (!queued)
             return false;
         g_WtJsHooked = true;
         return true;

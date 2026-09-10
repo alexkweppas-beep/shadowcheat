@@ -98,11 +98,13 @@ namespace VisualPolicy
         float playerMaximumDistanceSquared,
         float npcMaximumDistanceSquared) noexcept
     {
+        int assigned = 0;
+        do {
         if (!snapshots || !peds ||
             !usedSnapshots || !usedPeds ||
             !assignedPed ||
             snapshotCount <= 0 || pedCount <= 0)
-            return 0;
+            break;
         if (snapshotCount > 256)
             snapshotCount = 256;
         if (pedCount > 256)
@@ -156,7 +158,6 @@ namespace VisualPolicy
             bucketHeads[bucket] = pedIndex;
         }
 
-        int assigned = 0;
         for (int snapshotIndex = 0;
              snapshotIndex < snapshotCount;
              ++snapshotIndex)
@@ -237,7 +238,7 @@ namespace VisualPolicy
                                 bestTypePenalty ||
                             (typePenalty ==
                                  bestTypePenalty &&
-                             distanceSquared >=
+                            distanceSquared >=
                                  bestDistanceSquared))
                             continue;
                         bestTypePenalty =
@@ -255,6 +256,7 @@ namespace VisualPolicy
             usedPeds[bestPed] = true;
             ++assigned;
         }
+        } while (false);
         return assigned;
     }
 }

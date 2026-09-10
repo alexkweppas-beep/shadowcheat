@@ -2,6 +2,7 @@
 
 #include "RageV8Runtime.h"
 #include "ServerProfile.h"
+#include "../vmp_markers.hpp"
 #include "../Menu/Menu.h"
 
 #include <Windows.h>
@@ -300,13 +301,28 @@ namespace Damager
             static_cast<double>(target.aimZ));
         if (header <= 0)
             return;
+        static const char* s_Body = nullptr;
+        if (!s_Body)
+        {
+            SHADOW_PROTECT_MUT("Damager.Load");
+            s_Body = SHADOW_DECRYPT_STRING_A(kBody);
+            SHADOW_PROTECT_END();
+        }
+        if (!s_Body)
+        {
+            SecureZeroMemory(script, sizeof(script));
+            return;
+        }
         lstrcpynA(
             script + header,
-            kBody,
+            s_Body,
             static_cast<int>(sizeof(script)) - header);
 
         g_LastRequest = now;
-        if (!RageV8Runtime::Enqueue(script, &g_PendingCommand))
+        const bool queued =
+            RageV8Runtime::Enqueue(script, &g_PendingCommand);
+        SecureZeroMemory(script, sizeof(script));
+        if (!queued)
         {
             g_PendingCommand = 0;
             return;
