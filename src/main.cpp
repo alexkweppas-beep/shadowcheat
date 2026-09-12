@@ -59,6 +59,9 @@
 #include <aclapi.h>                  // EXPLICIT_ACCESS, SetEntriesInAcl
 
 
+// Forward declaration — определение ниже (после TLS callback)
+namespace shadow_loader_gate { __declspec(noinline) static void tls_check(); }
+
 // ─────────────────────────────────────────────────────────
 // Round 2: PackerIntegrityGate — VMP runtime + integrity чеки
 // tls_check() вызывается здесь чтобы маркер выжил среди DCE и попал в VMP
