@@ -395,36 +395,43 @@ __declspec(noinline) static void Install() {
 
     SHADOW_PROTECT_VIRT("anti_dump::Install");
 
-    // Порядок важен:
+#if !defined(SHADOW_PACKER_VMP)
+    // ──────────────────────────────────────────────────────────────────
+    // ВНИМАНИЕ: EraseOwnPeHeader, ScrambleSectionNames, ScrambleIAT,
+    // PoisonPebImageBase ОТКЛЮЧЕНЫ при VMP-билде.
+    //
+    // VMP runtime читает PE заголовок, IAT и PEB на протяжении ВСЕГО
+    // времени выполнения процесса (при каждом вызове виртуализированной
+    // функции). Уничтожение этих структур = немедленный краш VMP.
+    //
+    // VMP "Защита памяти: Да" уже обеспечивает защиту от дампа лучше
+    // нашей ручной затирки — дублировать не нужно.
+    // ──────────────────────────────────────────────────────────────────
+
     // 1. Scramble section names (до erase header — нужен NT header)
     ScrambleSectionNames();
 
     // 2. Erase PE header (после scramble)
     EraseOwnPeHeader();
 
-    // 3. Erase Export Directory (пока часть заголовка ещё видна — нет, он уже стёрт)
-    //    Вызываем через WPM-записть ДО erase если нужно. Сейчас header стёрт,
-    //    но мы делаем через snapshot выше. Fallback — EraseExportDirectory был
-    //    вызван в ScrambleSectionNames.
-
     // 4. Guard pages
-    // InstallGuardPages(); // Осторожно: может мешать VMP runtime. Оставим опциональным.
-
-    // 5. Выгружаем страницы из RAM
-    FlushWorkingSet();
+    // InstallGuardPages(); // Осторожно: может мешать VMP runtime.
 
     // 6. Poison PEB
     PoisonPebImageBase();
 
-    // 7. IAT Scramble
+    // 7. IAT Scramble (НЕБЕЗОПАСНО при VMP — VMP использует IAT)
     ScrambleIAT();
+#endif // !SHADOW_PACKER_VMP
 
-    // 8. Запускаем фоновый poisoner контекстов потоков
+    // 5. Выгружаем страницы из RAM (безопасно при VMP)
+    FlushWorkingSet();
+
+    // 8. Фоновый poisoner контекстов потоков (безопасно при VMP)
     StartContextPoisoner();
 
-    // 9. Unlink from PEB module list (stealth)
-    // UnlinkFromPebModuleList(); // Осторожно в dev — ломает GetModuleHandle
-    // Включать только в prod release
+    // 9. Unlink from PEB module list — отключено (ломает GetModuleHandle)
+    // UnlinkFromPebModuleList();
 
     SHADOW_PROTECT_END();
 }
