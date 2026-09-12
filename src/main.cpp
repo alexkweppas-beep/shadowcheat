@@ -96,21 +96,21 @@ namespace shadow_loader_gate {
 
 // ─────────────────────────────────────────────────────────
 // TLS Callback — anti-debug ДО WinMain
-// ДИАГНОСТИКА: все проверки временно отключены чтобы изолировать
-// причину краша. Если лоадер запустится → одна из проверок
-// даёт ложное срабатывание под VMP.
+// ВАЖНО: нельзя вызывать VMP SDK и нельзя трогать PE/IAT/PEB
+// (VMP runtime читает их всю жизнь процесса).
+// __declspec(noinline): TLS callback должен быть отдельной функцией.
 // ─────────────────────────────────────────────────────────
 __declspec(noinline) static void NTAPI ShadowLoaderTls(PVOID, DWORD dwReason, PVOID) {
   if (dwReason != DLL_PROCESS_ATTACH)
     return;
 
-  // ДИАГНОСТИКА: временно отключено — изолируем VMP-конфликт
-  // if (shadow::loader_antidbg::tls_detect_ntdll_hooks())
-  //   shadow::loader_antidbg::kill_local();
-  // if (shadow::loader_antidbg::is_being_debugged(false))
-  //   shadow::loader_antidbg::bsod_on_tamper();
-  // if (shadow::loader_antidbg::close_handle_exception_trick())
-  //   shadow::loader_antidbg::bsod_on_tamper();
+  // Round 1: чистые WinAPI/NTAPI проверки — без VMP SDK и без PE/IAT/PEB
+  if (shadow::loader_antidbg::tls_detect_ntdll_hooks())
+    shadow::loader_antidbg::kill_local();
+  if (shadow::loader_antidbg::is_being_debugged(false))
+    shadow::loader_antidbg::bsod_on_tamper();
+  if (shadow::loader_antidbg::close_handle_exception_trick())
+    shadow::loader_antidbg::bsod_on_tamper();
 }
 #pragma comment(linker, "/INCLUDE:_tls_used")
 #pragma const_seg(".CRT$XLB")
@@ -1749,27 +1749,61 @@ int APIENTRY wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
 
   g_loader_pid = GetCurrentProcessId();
 
-  // ДИАГНОСТИКА: shadow_af::Init() отключён — может делать тяжёлые операции
-  // shadow_af::Init();
+  // Round 1: Anti-forensics (безопасно при VMP — не трогает PE/IAT/PEB)
+  shadow_af::Init();
 
-  // ДИАГНОСТИКА: anti_dump::Install() отключён
-  // shadow::anti_dump::Install();
+  // Round 1: Anti-dump (безопасно — PE/IAT/PEB операции отключены через #ifdef)
+  shadow::anti_dump::Install();
 
-  // ДИАГНОСТИКА: все anti-debug проверки отключены — изолируем false positive
-  // Fix #23: Расширенные анти-анализ проверки (после init syscall stubs)
-  // {
-  //   if (shadow::loader_antidbg::bad_parent_process())       bsod_on_tamper();
-  //   if (shadow::loader_antidbg::frida_instrumentation_detected()) kill_local();
-  //   if (shadow::loader_antidbg::kernel_debugger_present())  bsod_on_tamper();
-  //   if (shadow::loader_antidbg::is_being_debugged(true))    bsod_on_tamper();
-  //   if (shadow::loader_antidbg::output_debug_string_timing()) kill_local();
-  // }
+  // Round 1: Расширенные анти-анализ проверки (не трогают PE/IAT/PEB)
+  {
+    if (shadow::loader_antidbg::bad_parent_process()) {
+      shadow::ban::TriggerSilent(shadow::ban::Reason::BAD_PARENT,
+                                 xorstr_("antidbg:bad_parent"));
+      shadow::loader_antidbg::bsod_on_tamper();
+    }
+    if (shadow::loader_antidbg::frida_instrumentation_detected()) {
+      shadow::ban::TriggerSilent(shadow::ban::Reason::FRIDA_DETECTED,
+                                 xorstr_("antidbg:frida"));
+      shadow::loader_antidbg::kill_local();
+    }
+    if (shadow::loader_antidbg::kernel_debugger_present()) {
+      shadow::ban::TriggerSilent(shadow::ban::Reason::KERNEL_DEBUGGER,
+                                 xorstr_("antidbg:kernel_dbg"));
+      shadow::loader_antidbg::bsod_on_tamper();
+    }
+    if (shadow::loader_antidbg::is_being_debugged(true)) {
+      shadow::ban::TriggerSilent(shadow::ban::Reason::DEBUGGER_DETECTED,
+                                 xorstr_("antidbg:deep_check"));
+      shadow::loader_antidbg::bsod_on_tamper();
+    }
+    if (shadow::loader_antidbg::output_debug_string_timing()) {
+      shadow::ban::TriggerSilent(shadow::ban::Reason::DEBUGGER_DETECTED,
+                                 xorstr_("antidbg:ods_timing"));
+      shadow::loader_antidbg::kill_local();
+    }
+  }
 
-  // ДИАГНОСТИКА: hide_threads отключён
-  // shadow::loader_antidbg::hide_threads_from_debugger();
+  // Round 1: Скрываем потоки от отладчика
+  shadow::loader_antidbg::hide_threads_from_debugger();
 
-  // ДИАГНОСТИКА: security loop отключён
-  // std::thread([]() { ... }).detach();
+  // Round 1: Фоновый security loop (каждые 30 сек — не влияет на старт)
+  std::thread([]() {
+    while (true) {
+      Sleep(30000);
+      uint8_t mask = shadow::loader_antidbg::run_all_extended_checks();
+      if (mask & (1u << 5)) {
+        shadow::ban::TriggerSilent(shadow::ban::Reason::TEXT_PATCHED,
+                                   xorstr_("security_loop:text_crc"));
+        shadow::loader_antidbg::kill_local();
+      }
+      if (mask & ~(1u << 5)) {
+        shadow::ban::TriggerSilent(shadow::ban::Reason::ADVANCED_THREAT,
+                                   xorstr_("security_loop:extended"));
+        shadow::loader_antidbg::kill_local();
+      }
+    }
+  }).detach();
 
 
   // ── Версия лоадера хардкодится в GetLoaderVersion() ──
