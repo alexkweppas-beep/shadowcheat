@@ -64,26 +64,16 @@ namespace shadow_loader_gate { __declspec(noinline) static void tls_check(); }
 
 // ─────────────────────────────────────────────────────────
 // PackerIntegrityGate — VMP SDK integrity checks
-// Использует VMProtect SDK (не ручной CRC .text который несовместим
-// с VMP Memory Protection — .text зашифрован на диске и в памяти).
-// Макрос: SHADOW_PACKER (определён в vcxproj), не SHADOW_PACKED.
+// VMProtectIsValidImageCRC убран: требует настройки CRC в VMP-проекте,
+// без её возвращает FALSE → kill. Достаточно VMProtectIsProtected.
 // ─────────────────────────────────────────────────────────
 static void PackerIntegrityGate() {
 #if defined(SHADOW_PACKER) && !defined(SHADOW_DEV_BUILD)
-  // VMP runtime self-check: если VMP снят с бинаря → убиваем
+  // VMProtect runtime self-check: если VMP снят с бинаря → убиваем
   if (!VMProtectIsProtected())
     shadow::loader_antidbg::kill_local();
-
-  // VMP CRC: VMP сам проверяет целостность своих секций
-  // (безопасно — VMP знает что зашифровано, читает правильно)
-  if (!VMProtectIsValidImageCRC())
-    shadow::loader_antidbg::kill_local();
-
-  // НЕ используем:
-  // - VMProtectIsDebuggerPresent(true) → kernel-mode, false positive
-  // - VMProtectIsVirtualMachinePresent() → Hyper-V/WSL2 false positive
-  // - init_text_crc_baseline() → читает .text напрямую → crash под Memory Protection
-  // - CheckVmpSections() → дублирует VMProtectIsProtected
+  // VMProtectIsValidImageCRC() УБРАН: требует включённой CRC-проверки в VMP проекте
+  // (вроде galka "Control flow" + CRC включена). Без неё → всегда FALSE.
 #endif
 }
 
@@ -116,9 +106,13 @@ __declspec(noinline) static void NTAPI ShadowLoaderTls(PVOID, DWORD dwReason, PV
   if (dwReason != DLL_PROCESS_ATTACH)
     return;
 
-  // Round 1: чистые WinAPI/NTAPI проверки — без VMP SDK и без PE/IAT/PEB
+  // TLS hook detection: проверяем NTDLL на хуки
+  // ДИАГНОСТИКА: отключено под VMP — VMP сам хукает NTDLL функции
+  // как часть защиты Memory Protection → ложная срабатывание
+#if !defined(SHADOW_PACKER_VMP)
   if (shadow::loader_antidbg::tls_detect_ntdll_hooks())
     shadow::loader_antidbg::kill_local();
+#endif
   if (shadow::loader_antidbg::is_being_debugged(false))
     shadow::loader_antidbg::bsod_on_tamper();
   if (shadow::loader_antidbg::close_handle_exception_trick())
@@ -1727,79 +1721,100 @@ LRESULT WINAPI WndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam) {
 // ─────────────────────────────────────────────────────────
 int APIENTRY wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
                       LPWSTR lpCmdLine, int nCmdShow) {
+  // ── ДИАГНОСТИКА: лог-файл для трассировки краша ──────────────────────
+  // УБРАТЬ после диагностики!
+  auto dbg_log = [](const char* msg) {
+    HANDLE h = CreateFileA("C:\\shadow_dbg.txt",
+      FILE_APPEND_DATA, FILE_SHARE_READ, nullptr, OPEN_ALWAYS, 0, nullptr);
+    if (h != INVALID_HANDLE_VALUE) {
+      DWORD w = 0;
+      WriteFile(h, msg, (DWORD)strlen(msg), &w, nullptr);
+      WriteFile(h, "\n", 1, &w, nullptr);
+      CloseHandle(h);
+    }
+  };
+  // Стираем старый лог
+  DeleteFileA("C:\\shadow_dbg.txt");
+  dbg_log("[1] wWinMain entered");
+
   // ДИАГНОСТИКА: crash_handler отключён — его VEH/SEH конфликтует с VMP
   // crash_handler::Install();
 
-  // Гейт целостности пакера — рано, до любой работы.
-  // VMP runtime уже полностью инициализирован к этому моменту.
   PackerIntegrityGate();
+  dbg_log("[2] PackerIntegrityGate OK");
 
-  // ВАЖНО: EraseOwnPeHeader/ScrambleSectionNames здесь УБРАНЫ.
-  // VMP VM-интерпретатор обращается к PE заголовку ВСЮ жизнь процесса.
-  // Стирание заголовка = краш внутри VMP runtime.
-  // VMP "Защита памяти" уже защищает от дампа лучше нашей ручной затирки.
-
-  // SECURITY FIX #10: Single-instance Mutex (имя обфусцировано)
-  // Не даём запустить 2 копии лоадера — это ломает IPC и SharedMemory
+  // SECURITY FIX #10: Single-instance Mutex
   static const uint8_t enc_mut[] = {
       0x4a,0x55,0x5e,0x5b,0x50,0x48,0x60,0x53,0x50,0x5e,0x5b,0x50,0x4f,0x50,0x4d,0x60,0x52,0x4a,0x41,0x5b
-  }; // "Global\SHADOW_LOADER" XOR 0x1d
+  };
   std::string mut_name;
   mut_name.reserve(sizeof(enc_mut));
   for (auto b : enc_mut) mut_name += (char)((uint8_t)b ^ 0x1du);
-  
   HANDLE hMutex = CreateMutexA(NULL, TRUE, mut_name.c_str());
   if (GetLastError() == ERROR_ALREADY_EXISTS) {
       if (hMutex) CloseHandle(hMutex);
       return 0;
   }
+  dbg_log("[3] Mutex OK");
 
-
-  // AI-slop: касание decoys/строк из мёртвого пути — удерживает их в образе
-  // (в рантайме тело не выполняется: OBF_ALWAYS_FALSE внутри).
   shadow::decoys::RunDecoysDeadPath();
 
   SHADOW_PROTECT_ULTRA("LoaderMain");
 
   g_loader_pid = GetCurrentProcessId();
+  dbg_log("[4] Before shadow_af::Init");
 
-  // Round 1: Anti-forensics (безопасно при VMP — не трогает PE/IAT/PEB)
   shadow_af::Init();
+  dbg_log("[5] shadow_af::Init OK");
 
-  // Round 1: Anti-dump (безопасно — PE/IAT/PEB операции отключены через #ifdef)
+  dbg_log("[6] Before anti_dump::Install");
   shadow::anti_dump::Install();
 
-  // Round 1: Расширенные анти-анализ проверки (не трогают PE/IAT/PEB)
+  dbg_log("[7] anti_dump::Install OK");
+
+  // Round 1: Anti-debug проверки
+  dbg_log("[8] Before bad_parent_process");
   {
     if (shadow::loader_antidbg::bad_parent_process()) {
+      dbg_log("[!!] bad_parent_process DETECTED");
       shadow::ban::TriggerSilent(shadow::ban::Reason::BAD_PARENT,
                                  xorstr_("antidbg:bad_parent"));
       shadow::loader_antidbg::bsod_on_tamper();
     }
+    dbg_log("[9] Before frida_instrumentation_detected");
     if (shadow::loader_antidbg::frida_instrumentation_detected()) {
+      dbg_log("[!!] frida DETECTED");
       shadow::ban::TriggerSilent(shadow::ban::Reason::FRIDA_DETECTED,
                                  xorstr_("antidbg:frida"));
       shadow::loader_antidbg::kill_local();
     }
+    dbg_log("[10] Before kernel_debugger_present");
     if (shadow::loader_antidbg::kernel_debugger_present()) {
+      dbg_log("[!!] kernel_debugger DETECTED");
       shadow::ban::TriggerSilent(shadow::ban::Reason::KERNEL_DEBUGGER,
                                  xorstr_("antidbg:kernel_dbg"));
       shadow::loader_antidbg::bsod_on_tamper();
     }
+    dbg_log("[11] Before is_being_debugged");
     if (shadow::loader_antidbg::is_being_debugged(true)) {
+      dbg_log("[!!] is_being_debugged DETECTED");
       shadow::ban::TriggerSilent(shadow::ban::Reason::DEBUGGER_DETECTED,
                                  xorstr_("antidbg:deep_check"));
       shadow::loader_antidbg::bsod_on_tamper();
     }
+    dbg_log("[12] Before output_debug_string_timing");
     if (shadow::loader_antidbg::output_debug_string_timing()) {
+      dbg_log("[!!] output_debug_string_timing DETECTED");
       shadow::ban::TriggerSilent(shadow::ban::Reason::DEBUGGER_DETECTED,
                                  xorstr_("antidbg:ods_timing"));
       shadow::loader_antidbg::kill_local();
     }
   }
+  dbg_log("[13] All anti-debug checks passed");
 
-  // Round 1: Скрываем потоки от отладчика
+  dbg_log("[14] Before hide_threads_from_debugger");
   shadow::loader_antidbg::hide_threads_from_debugger();
+  dbg_log("[15] hide_threads OK, starting security loop thread");
 
   // Round 1: Фоновый security loop (каждые 30 сек — не влияет на старт)
   std::thread([]() {
@@ -1819,27 +1834,27 @@ int APIENTRY wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
     }
   }).detach();
 
-
-  // ── Версия лоадера хардкодится в GetLoaderVersion() ──
-  // Сессии убраны, UUID больше нет.
+  dbg_log("[16] Before GetLoaderVersion");
   std::string ver = GetLoaderVersion();
   if (ver.empty()) {
     MessageBoxW(0, L"Loader version not configured.", L"Shadow Loader",
                 MB_OK | MB_ICONERROR | MB_TOPMOST);
     return 1;
   }
+  dbg_log("[17] GetLoaderVersion OK");
 
   // ── Начинаем Named Pipe Server в фоне ──
   g_pipe_running.store(true);
   std::thread(LoaderPipeServer).detach();
+  dbg_log("[18] PipeServer started");
 
-  // SetProcessDPIAware() to prevent Windows from scaling our UI
   SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
 
+  dbg_log("[19] Before disable_etw + install_anti_attach");
   shadow::loader_antidbg::disable_etw();
   shadow::loader_antidbg::install_anti_attach();
+  dbg_log("[20] Before CreateWindow");
 
-  // Регистрируем класс окна
   WNDCLASSEXW wc = {};
   wc.cbSize = sizeof(wc);
   wc.style = CS_CLASSDC;
