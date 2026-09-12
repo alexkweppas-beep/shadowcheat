@@ -68,21 +68,14 @@ namespace shadow_loader_gate { __declspec(noinline) static void tls_check(); }
 // ─────────────────────────────────────────────────────────
 static void PackerIntegrityGate() {
 #if SHADOW_PACKED && !defined(SHADOW_DEV_BUILD)
-  // Точка VMP-маркера (tls_check защищен Ultra-мутацией/виртуализацией)
-  // Вызов здесь гарантирует что linker не устранит её (dead-code elimination)
+  // Точка VMP-маркера (не даёт DCE устранить tls_check)
   shadow_loader_gate::tls_check();
-
-  // VMP runtime self-checks
+  // Только VMProtectIsProtected — самый безопасный чек
+  // IsValidImageCRC и IsDebuggerPresent УБРАНЫ — false positive
   if (!VMProtectIsProtected())
     shadow::loader_antidbg::kill_local();
-  if (!VMProtectIsValidImageCRC())
-    shadow::loader_antidbg::kill_local();
-  if (VMProtectIsDebuggerPresent(true))
-    shadow::loader_antidbg::bsod_on_tamper();
-  // Примечание: VMProtectIsVirtualMachinePresent() не используем — Hyper-V/WSL2
-  // даёт false positive на многих реальных машинах.
 #endif
-  // Integrity чеки (работают в dev через #ifdef внутри)
+  // VMP секции: единственная надёжная проверка целостности
   {
     auto ir = shadow::integrity::CheckAll();
     if (!ir.vmp_sections_ok) {
@@ -90,7 +83,6 @@ static void PackerIntegrityGate() {
                                  xorstr_("integrity:vmp_sections"));
       shadow::loader_antidbg::kill_local();
     }
-    // file_size_ok и pe_checksum_ok убраны — ненадёжны после VMP
   }
   shadow::loader_antidbg::init_text_crc_baseline();
 }
@@ -103,12 +95,12 @@ static void PackerIntegrityGate() {
 namespace shadow_loader_gate {
   __declspec(noinline) static void tls_check() {
     SHADOW_PROTECT_ULTRA("shadow_loader_gate::tls_check");
-    // Дополнительная проверка VMP integrity внутри VMP-защищённой функции
+    // Проверяем только что VMP runtime есть
+    // VMProtectIsDebuggerPresent(true) УБРАН: kernel-mode чек — false positive
+    // VMProtectIsValidImageCRC() УБРАН: может падать на некоторых VMP конфигурациях
 #if SHADOW_PACKED && !defined(SHADOW_DEV_BUILD)
     if (!VMProtectIsProtected())
       shadow::loader_antidbg::kill_local();
-    if (VMProtectIsDebuggerPresent(true))
-      shadow::loader_antidbg::bsod_on_tamper();
 #endif
     SHADOW_PROTECT_END();
   }

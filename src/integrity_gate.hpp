@@ -113,20 +113,28 @@ __declspec(noinline) static bool CheckVmpSections() {
     WORD numSections = nt->FileHeader.NumberOfSections;
     if (numSections < SHADOW_MIN_SECTIONS) {
         SHADOW_PROTECT_END();
+#if defined(SHADOW_PACKER_VMP)
+        // Под VMP: не убиваем — VMProtectIsProtected() уже проверил целостность
+        return true;
+#else
         return false; // Слишко мало секций — VMP снят
+#endif
     }
 
     auto* sec = IMAGE_FIRST_SECTION(nt);
     int vmpCount = 0;
     for (WORD i = 0; i < numSections; i++, sec++) {
-        // Ищем секции с именем .vmp* ИЛИ .??? (настройка VMP "Сегменты: .???")
-        // .vmp: XOR 0xAB = {0x85, 0xDE, 0xDA, 0xDF}
-        static const uint8_t enc_vmp[] = {0x85, 0xDE, 0xDA, 0xDF};
+        // '.vmp' XOR 0xAB:
+        // '.' = 0x2E ^ 0xAB = 0x85
+        // 'v' = 0x76 ^ 0xAB = 0xDD
+        // 'm' = 0x6D ^ 0xAB = 0xC6
+        // 'p' = 0x70 ^ 0xAB = 0xDB
+        static const uint8_t enc_vmp[] = {0x85, 0xDD, 0xC6, 0xDB};
         bool is_vmp = true;
         for (int j = 0; j < 4; j++) {
             if (((uint8_t)sec->Name[j] ^ 0xABu) != enc_vmp[j]) { is_vmp = false; break; }
         }
-        // .???: имя которое VMP использует если "Сегменты: .???" включено
+        // '.???' — имя которое VMP использует если "Сегменты: .???" включено
         bool is_qqq = (sec->Name[0] == '.' &&
                        sec->Name[1] == '?' &&
                        sec->Name[2] == '?');
@@ -136,7 +144,14 @@ __declspec(noinline) static bool CheckVmpSections() {
 
     bool ok = (vmpCount >= SHADOW_MIN_VMP_SECTIONS);
     SHADOW_PROTECT_END();
+#if defined(SHADOW_PACKER_VMP)
+    // Под VMP: даже если не нашли — не убиваем.
+    // VMProtectIsProtected() уже гарантирует что VMP применён.
+    // Секции могут быть переименованы при дополнительных настройках VMP.
+    return true;
+#else
     return ok;
+#endif
 #endif
 }
 
