@@ -49,7 +49,7 @@
       <IntrinsicFunctions>true</IntrinsicFunctions>
       <SDLCheck>false</SDLCheck>
       <!-- SHADOW_DEV_BUILD убран: в release-билде не нужен, только открывает dev-пути -->
-      <PreprocessorDefinitions>SHADOW_PACKER=1;SHADOW_HAVE_VMP_SDK=1;NDEBUG;_WINDOWS;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <PreprocessorDefinitions>SHADOW_PACKER=1;SHADOW_PACKER_VMP=1;SHADOW_HAVE_VMP_SDK=1;NDEBUG;_WINDOWS;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <ConformanceMode>true</ConformanceMode>
       <LanguageStandard>stdcpp20</LanguageStandard>
       <AdditionalIncludeDirectories>$(ProjectDir)src;$(ProjectDir)src\imgui;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>

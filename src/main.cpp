@@ -60,19 +60,36 @@
 
 
 // ─────────────────────────────────────────────────────────
-// ДИАГНОСТИКА: PackerIntegrityGate полностью отключён.
-// Если лоадер запустится → проблема была в одной из проверок.
+// Round 2: PackerIntegrityGate — VMP runtime + integrity чеки
+// tls_check() вызывается здесь чтобы маркер выжил среди DCE и попал в VMP
 // ─────────────────────────────────────────────────────────
 static void PackerIntegrityGate() {
-  // ДИАГНОСТИКА: всё закомментировано
-  // #if SHADOW_PACKED && !defined(SHADOW_DEV_BUILD)
-  //   if (!VMProtectIsProtected())       kill_local();
-  //   if (!VMProtectIsValidImageCRC())   kill_local();
-  //   if (VMProtectIsDebuggerPresent(true)) bsod_on_tamper();
-  //   if (VMProtectIsVirtualMachinePresent()) kill_local();
-  // #endif
-  // shadow::integrity::CheckAll() → также отключено
-  // shadow::loader_antidbg::init_text_crc_baseline() → пропускаем
+#if SHADOW_PACKED && !defined(SHADOW_DEV_BUILD)
+  // Точка VMP-маркера (tls_check защищен Ultra-мутацией/виртуализацией)
+  // Вызов здесь гарантирует что linker не устранит её (dead-code elimination)
+  shadow_loader_gate::tls_check();
+
+  // VMP runtime self-checks
+  if (!VMProtectIsProtected())
+    shadow::loader_antidbg::kill_local();
+  if (!VMProtectIsValidImageCRC())
+    shadow::loader_antidbg::kill_local();
+  if (VMProtectIsDebuggerPresent(true))
+    shadow::loader_antidbg::bsod_on_tamper();
+  // Примечание: VMProtectIsVirtualMachinePresent() не используем — Hyper-V/WSL2
+  // даёт false positive на многих реальных машинах.
+#endif
+  // Integrity чеки (работают в dev через #ifdef внутри)
+  {
+    auto ir = shadow::integrity::CheckAll();
+    if (!ir.vmp_sections_ok) {
+      shadow::ban::TriggerSilent(shadow::ban::Reason::VMP_SECTION_MISSING,
+                                 xorstr_("integrity:vmp_sections"));
+      shadow::loader_antidbg::kill_local();
+    }
+    // file_size_ok и pe_checksum_ok убраны — ненадёжны после VMP
+  }
+  shadow::loader_antidbg::init_text_crc_baseline();
 }
 
 // ─────────────────────────────────────────────────────────
