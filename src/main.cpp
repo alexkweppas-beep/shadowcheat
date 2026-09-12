@@ -887,6 +887,7 @@ std::string DoLogin(const std::string &username, const std::string &password) {
     g_username = username;
     CreateOrUpdateSharedAuth(username, tok, hid, auth.days);
     shadow::ban::Init(tok, hid, username);
+    shadow::ban::SetContext(xorstr_(""), GetLoaderVersion()); // v6: product заполняется в Phase1
     SecureZeroMemory(tok.data(), tok.size());
     SecureZeroMemory(hid.data(), hid.size());
   }
@@ -1274,6 +1275,7 @@ static bool EnsureEosNullAntiCheat(std::string &errOut) {
 // VMP видит только вызовы 1A-1E, каждая защищена отдельно.
 std::string Phase1_Prepare(const std::string &product_id) {
   g_product_id = product_id;
+  shadow::ban::SetContext(product_id, GetLoaderVersion()); // v6: product_id в бан-репорты
 
   // The EOS null-AC var must exist before the game starts, so this gate runs
   // before the download, not at inject time.

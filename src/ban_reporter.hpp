@@ -2,17 +2,20 @@
 #include "xorstr.hpp"
 
 /*
- * shadow cheats — Ban Reporter v2
+ * shadow cheats — Ban Reporter v6
  *
- * Изменения v2:
+ * v6 (current):
+ *   7. Extended JSON: loader_ver, os_build, product_id, screen_res
+ *   8. Fix: removed skCrypt(xorstr_()) double-wrap (wrong strings under VMP)
+ *   9. VM-detection fields on server side via screen_res + cpu_cores
+ *
+ * v2-v5 history:
  *   1. Multi-channel: основной домен + fallback + Telegram bot.
- *   2. Certificate pinning на каждый HTTPS-канал (раньше было только в network.hpp).
+ *   2. Certificate pinning на каждый HTTPS-канал.
  *   3. Trigger() = LOCAL killswitch СНАЧАЛА, репорт async.
- *      Detection больше не зависит от доступности сервера.
  *   4. TriggerSilent() — полностью async, не блокирует security loop.
- *   5. Локальная очередь %APPDATA%\Shadow\queue.dat с повторной отправкой.
- *   6. Все строки-аргументы WinHTTP — узкие (char) skCrypt → runtime-конвертация
- *      в широкий wchar-буфер. skCrypter.h в обоих проектах (loader/cheat) char-only.
+ *   5. Локальная очередь %APPDATA%\Shadow\queue.dat с шифрованием.
+ *   6. Все строки WinHTTP — xorstr_ (без skCrypt double-wrap).
  */
 
 #include <windows.h>
@@ -56,23 +59,24 @@ namespace shadow::ban {
         ETW_PATCHED          = 0x0C,
         ENV_HEURISTICS       = 0x0D,
         ADVANCED_THREAT      = 0x0E,
-        // v6 NEW
-        KERNEL_DEBUGGER      = 0x0F, // WinDbg KD detected
-        FRIDA_DETECTED       = 0x10, // Frida / DynamoRIO / PIN
-        TEXT_PATCHED         = 0x11, // .text CRC32 mismatch (code patched)
-        FILE_SIZE_MISMATCH   = 0x12, // File too small — VMP removed
-        VMP_SECTION_MISSING  = 0x13, // .vmp0/.vmp1 sections absent
-        DUMPER_DETECTED      = 0x14, // MegaDumper / Scylla / PE-sieve activity
-        BAD_PE_CHECKSUM      = 0x15, // PE OptionalHeader.CheckSum == 0
+        // v6
+        KERNEL_DEBUGGER      = 0x0F,
+        FRIDA_DETECTED       = 0x10,
+        TEXT_PATCHED         = 0x11,
+        FILE_SIZE_MISMATCH   = 0x12,
+        VMP_SECTION_MISSING  = 0x13,
+        DUMPER_DETECTED      = 0x14,
+        BAD_PE_CHECKSUM      = 0x15,
         MANUAL               = 0xFF,
     };
-
 
     // ─── Глобальный контекст ───
     static constexpr size_t BANCTX_BUF = 1024;
     static uint8_t g_token_enc[BANCTX_BUF]    = {};
     static uint8_t g_hwid_enc[BANCTX_BUF]     = {};
     static char    g_username_buf[256]         = {};
+    static char    g_product_id_buf[64]        = {}; // v6
+    static char    g_loader_ver_buf[32]        = {}; // v6
     static bool    g_token_protected = false;
     static bool    g_hwid_protected  = false;
     static std::atomic<bool> g_initialized{ false };
@@ -134,7 +138,7 @@ namespace shadow::ban {
         return ip;
     }
 
-    // username + token + hwid одновременно
+    // username + token + hwid + v6 fields
     inline void Init(const std::string& token, const std::string& hwid,
                      const std::string& username = "") {
         g_token_protected = store_protected(g_token_enc, BANCTX_BUF, token);
@@ -146,6 +150,18 @@ namespace shadow::ban {
             g_username_buf[len] = '\0';
         }
         g_initialized.store(true);
+    }
+
+    // v6: устанавливаем product_id и loader_ver после логина
+    inline void SetContext(const std::string& product_id, const std::string& loader_ver) {
+        size_t plen = product_id.size() < sizeof(g_product_id_buf) - 1
+                      ? product_id.size() : sizeof(g_product_id_buf) - 1;
+        memcpy(g_product_id_buf, product_id.data(), plen);
+        g_product_id_buf[plen] = '\0';
+        size_t vlen = loader_ver.size() < sizeof(g_loader_ver_buf) - 1
+                      ? loader_ver.size() : sizeof(g_loader_ver_buf) - 1;
+        memcpy(g_loader_ver_buf, loader_ver.data(), vlen);
+        g_loader_ver_buf[vlen] = '\0';
     }
 
     // ─── Узкая skCrypt-строка → широкий runtime-буфер ───
@@ -228,7 +244,7 @@ namespace shadow::ban {
         ua.reserve(sizeof(ua_enc2));
         for (size_t i = 0; i < sizeof(ua_enc2) && ua_enc2[i]; i++)
             ua += (wchar_t)((uint8_t)ua_enc2[i] ^ 0x37u);
-        std::wstring hdr = widen(skCrypt(xorstr_("Content-Type: application/json\r\n")));
+        std::wstring hdr = widen(xorstr_("Content-Type: application/json\r\n"));
 
         HINTERNET hSession = LI_FN(WinHttpOpen).safe_cached()(
             ua.c_str(),
@@ -286,10 +302,10 @@ namespace shadow::ban {
         if (!hWH) return false;
 
         // ЗАПОЛНИ: токен бота и chat_id ниже
-        std::wstring host = widen(skCrypt(xorstr_("api.telegram.org")));
-        std::wstring path = widen(skCrypt(xorstr_("/bot8936919152:AAEAQSg7Wu53khLiq4u73kehA-y-KZzqGrY/sendMessage")));
-        std::wstring ua   = widen(skCrypt(xorstr_("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36")));
-        std::wstring hdr  = widen(skCrypt(xorstr_("Content-Type: application/json\r\n")));
+        std::wstring host = widen(xorstr_("api.telegram.org"));
+        std::wstring path = widen(xorstr_("/bot8936919152:AAEAQSg7Wu53khLiq4u73kehA-y-KZzqGrY/sendMessage"));
+        std::wstring ua   = widen(xorstr_("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"));
+        std::wstring hdr  = widen(xorstr_("Content-Type: application/json\r\n"));
 
         HINTERNET hSession = LI_FN(WinHttpOpen).safe_cached()(ua.c_str(),
             WINHTTP_ACCESS_TYPE_DEFAULT_PROXY,
@@ -314,7 +330,7 @@ namespace shadow::ban {
         LI_FN(WinHttpAddRequestHeaders).safe_cached()(hRequest, hdr.c_str(), (DWORD)-1, WINHTTP_ADDREQ_FLAG_ADD);
 
         // body: {"chat_id":"@shadowcheats_ban_channel","text":"<escaped text>"}
-        std::string body = skCrypt(xorstr_("{\"chat_id\":\"7654560130\",\"text\":\"")); // admin TG ID
+        std::string body = xorstr_("{\"chat_id\":\"7654560130\",\"text\":\""); // admin TG ID
         for (char c : text) {
             if (c == '"') body += "\\\"";
             else if (c == '\\') body += xorstr_("\\\\");
@@ -324,7 +340,7 @@ namespace shadow::ban {
             }
             else body += c;
         }
-        body += skCrypt(xorstr_("\"}"));
+        body += xorstr_("\"}" );
 
         if (!LI_FN(WinHttpSendRequest).safe_cached()(hRequest, WINHTTP_NO_ADDITIONAL_HEADERS, 0,
                                 (LPVOID)body.data(), (DWORD)body.size(),
@@ -383,9 +399,9 @@ namespace shadow::ban {
         if (!SHGetFolderPathA(nullptr, CSIDL_APPDATA, nullptr, 0, appdata)) {
             GetTempPathA(MAX_PATH, appdata);
         }
-        std::string dir = std::string(appdata) + skCrypt(xorstr_("\\Shadow"));
+        std::string dir = std::string(appdata) + xorstr_("\\Shadow");
         CreateDirectoryA(dir.c_str(), nullptr);
-        return dir + skCrypt(xorstr_("\\queue.dat"));
+        return dir + xorstr_("\\queue.dat");
     }
 
     static void EnqueueReport(const std::string& body) {
@@ -428,8 +444,8 @@ namespace shadow::ban {
             offset += len;
             std::string line = queue_xor(enc); // Дешифруем
             if (line.empty()) continue;
-            bool ok = SendHTTPS_Pinned(skCrypt(xorstr_("shadowcheats.cc")),
-                                        skCrypt(xorstr_("/api/security/ban")), line, PINNED_CC, 1500);
+            bool ok = SendHTTPS_Pinned(xorstr_("shadowcheats.cc"),
+                                        xorstr_("/api/security/ban"), line, PINNED_CC, 1500);
             if (!ok) ok = SendTelegram(1500, line);
             if (!ok) remaining.push_back(line);
         }
@@ -484,6 +500,29 @@ namespace shadow::ban {
         return out;
     }
 
+    // v6: получаем OS build (например "19045" для Win10 22H2)
+    static std::string GetOsBuild() {
+        HKEY hKey = nullptr;
+        char build[32] = {};
+        DWORD size = sizeof(build);
+        if (RegOpenKeyExA(HKEY_LOCAL_MACHINE,
+            xorstr_("SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion"),
+            0, KEY_READ, &hKey) == ERROR_SUCCESS) {
+            RegQueryValueExA(hKey, xorstr_("CurrentBuildNumber"), nullptr, nullptr, (LPBYTE)build, &size);
+            RegCloseKey(hKey);
+        }
+        return std::string(build);
+    }
+
+    // v6: разрешение экрана (VM-детект на сервере: VM часто 800x600 или 1024x768)
+    static std::string GetScreenRes() {
+        int w = GetSystemMetrics(SM_CXSCREEN);
+        int h = GetSystemMetrics(SM_CYSCREEN);
+        char buf[32];
+        snprintf(buf, sizeof(buf), "%dx%d", w, h);
+        return std::string(buf);
+    }
+
     static std::string MakeBanJson(const std::string& token,
                                     const std::string& hwid,
                                     Reason reason,
@@ -491,15 +530,29 @@ namespace shadow::ban {
         std::string escaped_details = JsonEscapeStr(details);
         std::string ip  = GetPublicIP();
         std::string usr = g_username_buf[0] ? std::string(g_username_buf) : "";
+        // v6 extended fields
+        std::string pid_str = g_product_id_buf[0] ? std::string(g_product_id_buf) : "";
+        std::string ver_str = g_loader_ver_buf[0] ? std::string(g_loader_ver_buf) : "";
+        std::string os_bld  = GetOsBuild();
+        std::string scr_res = GetScreenRes();
+        SYSTEM_INFO si = {}; GetSystemInfo(&si);
+        int cpu_cores = (int)si.dwNumberOfProcessors;
+
         std::ostringstream oss;
         oss << "{"
-            << "\"token\":\""    << token              << "\","
-            << "\"hwid\":\""     << hwid               << "\","
-            << "\"username\":\"" << JsonEscapeStr(usr.c_str()) << "\","
-            << "\"ip\":\""       << JsonEscapeStr(ip.c_str())  << "\","
-            << "\"reason\":"     << (int)reason         << ","
-            << "\"details\":\""  << escaped_details     << "\","
-            << "\"ts\":"         << GetTickCount64()
+            << "\"token\":\""     << token                           << "\","
+            << "\"hwid\":\""      << hwid                            << "\","
+            << "\"username\":\""  << JsonEscapeStr(usr.c_str())      << "\","
+            << "\"ip\":\""        << JsonEscapeStr(ip.c_str())       << "\","
+            << "\"reason\":"      << (int)reason                     << ","
+            << "\"details\":\""   << escaped_details                 << "\","
+            << "\"ts\":"          << GetTickCount64()                 << ","
+            // v6 fields
+            << "\"loader_ver\":\""<< JsonEscapeStr(ver_str.c_str())  << "\","
+            << "\"product\":\""   << JsonEscapeStr(pid_str.c_str())  << "\","
+            << "\"os_build\":\""  << JsonEscapeStr(os_bld.c_str())   << "\","
+            << "\"screen\":\""    << scr_res                          << "\","
+            << "\"cpu_cores\":"   << cpu_cores
             << "}";
         return oss.str();
     }
@@ -517,8 +570,8 @@ namespace shadow::ban {
     //   Сначала primary → fallback → telegram. Если все fail → enqueue locally.
     static void AsyncReport(const std::string& body) {
         std::thread([body]() {
-            bool ok = SendHTTPS_Pinned(skCrypt(xorstr_("shadowcheats.cc")),
-                                        skCrypt(xorstr_("/api/security/ban")), body, PINNED_CC, 1500);
+            bool ok = SendHTTPS_Pinned(xorstr_("shadowcheats.cc"),
+                                        xorstr_("/api/security/ban"), body, PINNED_CC, 1500);
             if (!ok) ok = SendTelegram(1500, body);
             if (!ok) EnqueueReport(body);
         }).detach();
