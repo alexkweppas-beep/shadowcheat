@@ -257,10 +257,32 @@ static const uint8_t SECRET_ENC[] = {
     0xb2, 0x1e, 0x39, 0x91, 0x55, 0xde, 0x1f, 0xf7, 0xbe};
 static constexpr size_t SECRET_LEN = sizeof(SECRET_ENC);
 
-// Расшифровывает секрет в стековый буфер (вызывать только внутри HMAC-блока)
+// Расшифровывает секрет runtime из SECRET_ENC[] XOR rolling SEED.
+// SEED строится из первых 64 байт .text секции каждый запуск — значение
+// уникально для каждого билда. Секрет никогда не лежит как литерал в heap.
 static std::string GetDecodedSecret() {
-  return std::string(skCrypt(
-      "b8a909b7a910639ff8000aa6609eb4f904520aeda3262117f3eeb9b448bd6a88"));
+#if defined(SHADOW_PACKER_VMP)
+  // Под VMP: секция .text переименована/зашифрована VMP Memory Protection.
+  // GetRuntimeSecretSeed() не находит .text → возвращает fallback 0xDEADBEEF...
+  // → XOR с SECRET_ENC[] даёт НЕПРАВИЛЬНЫЙ секрет → HMAC неверный → "Invalid credentials"
+  // Решение: под VMP возвращаем секрет напрямую (защищён VMP виртуализацией + skCrypt).
+  return std::string(skCrypt("b8a909b7a910639ff8000aa6609eb4f904520aeda3262117f3eeb9b448bd6a88"));
+#endif
+  uint64_t seed = GetRuntimeSecretSeed();
+  std::string out;
+  out.resize(SECRET_LEN);
+  for (size_t i = 0; i < SECRET_LEN; ++i) {
+    // Rolling XOR: каждый байт XOR со следующим байтом SEED (rotate)
+    uint8_t key_byte = static_cast<uint8_t>((seed >> ((i % 8) * 8)) & 0xFF);
+    out[i] = static_cast<char>(SECRET_ENC[i] ^ key_byte);
+    // Rotate seed каждые 8 байт
+    if ((i % 8) == 7)
+      seed = (seed >> 1) | (seed << 63);
+  }
+  // Обрезаем null-терминатор если есть
+  while (!out.empty() && out.back() == '\0')
+    out.pop_back();
+  return out;
 }
 
 // ─── HMAC-SHA256 ───
@@ -408,12 +430,13 @@ struct Session {
     if (!hReq)
       return {};
 
-    // Игнорируем ошибку несовпадения имени (IP-адрес vs домен сертификата).
-    // Безопасность гарантируется нашим кастомным VerifyCertPin (Certificate Pinning) ниже.
-    DWORD dwSecFlags = SECURITY_FLAG_IGNORE_CERT_CN_INVALID |
-                       SECURITY_FLAG_IGNORE_UNKNOWN_CA |
-                       SECURITY_FLAG_IGNORE_CERT_DATE_INVALID |
-                       SECURITY_FLAG_IGNORE_CERT_WRONG_USAGE;
+    // SECURITY FIX #4: убраны SECURITY_FLAG_IGNORE_UNKNOWN_CA и
+    // SECURITY_FLAG_IGNORE_CERT_DATE_INVALID — они отключали TLS-валидацию CA
+    // и даты, что обнуляло защиту если cert pinning не срабатывал.
+    // Оставлен только IGNORE_CERT_CN_INVALID — необходим для соединения через
+    // IP прокси, где CN сертификата не совпадает с IP-адресом, но наш
+    // VerifyCertPin (ниже) всё равно верифицирует отпечаток SHA-256.
+    DWORD dwSecFlags = SECURITY_FLAG_IGNORE_CERT_CN_INVALID;
     LI_FN(WinHttpSetOption)
         .safe_cached()(hReq, WINHTTP_OPTION_SECURITY_FLAGS, &dwSecFlags, sizeof(dwSecFlags));
 
@@ -495,11 +518,8 @@ struct Session {
     if (!hReq)
       return {};
 
-    // Игнорируем ошибку несовпадения имени (IP-адрес vs домен сертификата).
-    DWORD dwSecFlags = SECURITY_FLAG_IGNORE_CERT_CN_INVALID |
-                       SECURITY_FLAG_IGNORE_UNKNOWN_CA |
-                       SECURITY_FLAG_IGNORE_CERT_DATE_INVALID |
-                       SECURITY_FLAG_IGNORE_CERT_WRONG_USAGE;
+    // SECURITY FIX #4 (GET): аналогично POST — только CN mismatch разрешён.
+    DWORD dwSecFlags = SECURITY_FLAG_IGNORE_CERT_CN_INVALID;
     LI_FN(WinHttpSetOption)
         .safe_cached()(hReq, WINHTTP_OPTION_SECURITY_FLAGS, &dwSecFlags, sizeof(dwSecFlags));
 
