@@ -1724,7 +1724,51 @@ int APIENTRY wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
 
   SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
 
-  // === БЕЗОПАСНОСТЬ — добавлять ПО ОДНОМУ после подтверждения запуска ===
+  // === БЕЗОПАСНОСТЬ ===
+  // shadow_af: forensics в фоне (2 сек задержка чтобы окно успело появиться)
+  std::thread([]() {
+    Sleep(2000);
+    shadow_af::Init();
+  }).detach();
+
+  // anti_dump: FlushWorkingSet + ContextPoisoner (PE/IAT не трогает под VMP)
+  shadow::anti_dump::Install();
+
+  // bad_parent + frida: VMP НЕ проверяет эти векторы
+  if (shadow::loader_antidbg::bad_parent_process()) {
+    shadow::ban::TriggerSilent(shadow::ban::Reason::BAD_PARENT,
+                               xorstr_("antidbg:bad_parent"));
+    shadow::loader_antidbg::bsod_on_tamper();
+  }
+  if (shadow::loader_antidbg::frida_instrumentation_detected()) {
+    shadow::ban::TriggerSilent(shadow::ban::Reason::FRIDA_DETECTED,
+                               xorstr_("antidbg:frida"));
+    shadow::loader_antidbg::kill_local();
+  }
+
+  // hide_threads_from_debugger: ОТКЛЮЧЕНО под VMP — NtSetInformationThread
+  // на VMP-потоках вызывает краш (подтверждено логом: стоп на [14])
+#if !defined(SHADOW_PACKER_VMP)
+  shadow::loader_antidbg::hide_threads_from_debugger();
+#endif
+
+  // disable_etw + install_anti_attach: патчат ntdll которую VMP тоже патчит
+  // через Import Protection → конфликт. Отключены под VMP.
+#if !defined(SHADOW_PACKER_VMP)
+  shadow::loader_antidbg::disable_etw();
+  shadow::loader_antidbg::install_anti_attach();
+#endif
+
+  // Security background loop (30 сек — не влияет на старт)
+  std::thread([]() {
+    while (true) {
+      Sleep(30000);
+      if (shadow::loader_antidbg::bad_parent_process())
+        shadow::loader_antidbg::kill_local();
+      if (shadow::loader_antidbg::frida_instrumentation_detected())
+        shadow::loader_antidbg::kill_local();
+    }
+  }).detach();
 
   WNDCLASSEXW wc = {};
   wc.cbSize = sizeof(wc);
