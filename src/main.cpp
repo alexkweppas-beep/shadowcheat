@@ -60,43 +60,19 @@
 
 
 // ─────────────────────────────────────────────────────────
-// Рантайм-гейт целостности пакера: анпакнутый/патченый лоадер умирает до
-// любой работы. Активен только в продакшн-билде с реальным VMP SDK и БЕЗ
-// SHADOW_DEV_BUILD (dev-билд пропускает гейт, чтобы сырой бинарь запускался).
+// ДИАГНОСТИКА: PackerIntegrityGate полностью отключён.
+// Если лоадер запустится → проблема была в одной из проверок.
 // ─────────────────────────────────────────────────────────
 static void PackerIntegrityGate() {
-#if SHADOW_PACKED && !defined(SHADOW_DEV_BUILD)
-  // Базовая проверка VMP runtime
-  if (!VMProtectIsProtected())
-    shadow::loader_antidbg::kill_local();
-  if (!VMProtectIsValidImageCRC())
-    shadow::loader_antidbg::kill_local();
-  if (VMProtectIsDebuggerPresent(true))
-    shadow::loader_antidbg::bsod_on_tamper();
-  if (VMProtectIsVirtualMachinePresent())
-    shadow::loader_antidbg::kill_local();
-#endif
-  // Fix #21: проверки целостности файла (работают и в dev через #ifdef внутри)
-  {
-    auto ir = shadow::integrity::CheckAll();
-    if (!ir.file_size_ok) {
-      shadow::ban::TriggerSilent(shadow::ban::Reason::FILE_SIZE_MISMATCH,
-                                 xorstr_("integrity:file_size"));
-      shadow::loader_antidbg::kill_local();
-    }
-    if (!ir.vmp_sections_ok) {
-      shadow::ban::TriggerSilent(shadow::ban::Reason::VMP_SECTION_MISSING,
-                                 xorstr_("integrity:vmp_sections"));
-      shadow::loader_antidbg::kill_local();
-    }
-    if (!ir.pe_checksum_ok) {
-      shadow::ban::TriggerSilent(shadow::ban::Reason::BAD_PE_CHECKSUM,
-                                 xorstr_("integrity:pe_checksum"));
-      shadow::loader_antidbg::kill_local();
-    }
-  }
-  // Fix #23: установить baseline CRC .text (для последующих сравнений)
-  shadow::loader_antidbg::init_text_crc_baseline();
+  // ДИАГНОСТИКА: всё закомментировано
+  // #if SHADOW_PACKED && !defined(SHADOW_DEV_BUILD)
+  //   if (!VMProtectIsProtected())       kill_local();
+  //   if (!VMProtectIsValidImageCRC())   kill_local();
+  //   if (VMProtectIsDebuggerPresent(true)) bsod_on_tamper();
+  //   if (VMProtectIsVirtualMachinePresent()) kill_local();
+  // #endif
+  // shadow::integrity::CheckAll() → также отключено
+  // shadow::loader_antidbg::init_text_crc_baseline() → пропускаем
 }
 
 // ─────────────────────────────────────────────────────────
@@ -120,27 +96,21 @@ namespace shadow_loader_gate {
 
 // ─────────────────────────────────────────────────────────
 // TLS Callback — anti-debug ДО WinMain
-// ВАЖНО: нельзя вызывать VMP SDK функции (в т.ч. VMProtectIsValidImageCRC)
-// и нельзя трогать PE заголовок — VMP runtime ещё не инициализировался
-// и VMP обязательно читает PE заголовок после нашего TLS.
-// Он только для чистых anti-debug проверок через WinAPI/NTAPI (без VMP SDK).
-// __declspec(noinline): TLS callback должен быть отдельной функцией.
+// ДИАГНОСТИКА: все проверки временно отключены чтобы изолировать
+// причину краша. Если лоадер запустится → одна из проверок
+// даёт ложное срабатывание под VMP.
 // ─────────────────────────────────────────────────────────
 __declspec(noinline) static void NTAPI ShadowLoaderTls(PVOID, DWORD dwReason, PVOID) {
   if (dwReason != DLL_PROCESS_ATTACH)
     return;
 
-  // Только чистые WinAPI проверки — без VMProtect SDK и без трогания PE
-  if (shadow::loader_antidbg::tls_detect_ntdll_hooks())
-    shadow::loader_antidbg::kill_local();
-  if (shadow::loader_antidbg::is_being_debugged(false))
-    shadow::loader_antidbg::bsod_on_tamper();
-  if (shadow::loader_antidbg::close_handle_exception_trick())
-    shadow::loader_antidbg::bsod_on_tamper();
-
-  // Замечание: EraseOwnPeHeader и ScrambleSectionNames здесь УБРАНЫ.
-  // VMP читает PE заголовок в своём TLS callback (после нашего).
-  // Затирание делается в wWinMain после PackerIntegrityGate().
+  // ДИАГНОСТИКА: временно отключено — изолируем VMP-конфликт
+  // if (shadow::loader_antidbg::tls_detect_ntdll_hooks())
+  //   shadow::loader_antidbg::kill_local();
+  // if (shadow::loader_antidbg::is_being_debugged(false))
+  //   shadow::loader_antidbg::bsod_on_tamper();
+  // if (shadow::loader_antidbg::close_handle_exception_trick())
+  //   shadow::loader_antidbg::bsod_on_tamper();
 }
 #pragma comment(linker, "/INCLUDE:_tls_used")
 #pragma const_seg(".CRT$XLB")
