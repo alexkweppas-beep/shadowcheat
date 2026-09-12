@@ -63,17 +63,28 @@
 namespace shadow_loader_gate { __declspec(noinline) static void tls_check(); }
 
 // ─────────────────────────────────────────────────────────
-// PackerIntegrityGate — VMP runtime + integrity чеки
-// ДИАГНОСТИКА: отключён — init_text_crc_baseline() читает .text через VMP
-// Memory Protection → .text зашифрован → ACCESS_VIOLATION или мусор.
-// Включать ТОЛЬКО после тестирования без Memory Protection или с отдельным
-// baseline-механизмом который не читает raw .text напрямую.
+// PackerIntegrityGate — VMP SDK integrity checks
+// Использует VMProtect SDK (не ручной CRC .text который несовместим
+// с VMP Memory Protection — .text зашифрован на диске и в памяти).
+// Макрос: SHADOW_PACKER (определён в vcxproj), не SHADOW_PACKED.
 // ─────────────────────────────────────────────────────────
 static void PackerIntegrityGate() {
-  // ДИАГНОСТИКА: всё отключено
-  // tls_check маркер выживает за счёт forward declaration выше —
-  // linker не устранит его пока есть хоть один перевод единицы с ним.
-  (void)0;
+#if defined(SHADOW_PACKER) && !defined(SHADOW_DEV_BUILD)
+  // VMP runtime self-check: если VMP снят с бинаря → убиваем
+  if (!VMProtectIsProtected())
+    shadow::loader_antidbg::kill_local();
+
+  // VMP CRC: VMP сам проверяет целостность своих секций
+  // (безопасно — VMP знает что зашифровано, читает правильно)
+  if (!VMProtectIsValidImageCRC())
+    shadow::loader_antidbg::kill_local();
+
+  // НЕ используем:
+  // - VMProtectIsDebuggerPresent(true) → kernel-mode, false positive
+  // - VMProtectIsVirtualMachinePresent() → Hyper-V/WSL2 false positive
+  // - init_text_crc_baseline() → читает .text напрямую → crash под Memory Protection
+  // - CheckVmpSections() → дублирует VMProtectIsProtected
+#endif
 }
 
 // ─────────────────────────────────────────────────────────
