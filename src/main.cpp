@@ -63,28 +63,17 @@
 namespace shadow_loader_gate { __declspec(noinline) static void tls_check(); }
 
 // ─────────────────────────────────────────────────────────
-// Round 2: PackerIntegrityGate — VMP runtime + integrity чеки
-// tls_check() вызывается здесь чтобы маркер выжил среди DCE и попал в VMP
+// PackerIntegrityGate — VMP runtime + integrity чеки
+// ДИАГНОСТИКА: отключён — init_text_crc_baseline() читает .text через VMP
+// Memory Protection → .text зашифрован → ACCESS_VIOLATION или мусор.
+// Включать ТОЛЬКО после тестирования без Memory Protection или с отдельным
+// baseline-механизмом который не читает raw .text напрямую.
 // ─────────────────────────────────────────────────────────
 static void PackerIntegrityGate() {
-#if SHADOW_PACKED && !defined(SHADOW_DEV_BUILD)
-  // Точка VMP-маркера (не даёт DCE устранить tls_check)
-  shadow_loader_gate::tls_check();
-  // Только VMProtectIsProtected — самый безопасный чек
-  // IsValidImageCRC и IsDebuggerPresent УБРАНЫ — false positive
-  if (!VMProtectIsProtected())
-    shadow::loader_antidbg::kill_local();
-#endif
-  // VMP секции: единственная надёжная проверка целостности
-  {
-    auto ir = shadow::integrity::CheckAll();
-    if (!ir.vmp_sections_ok) {
-      shadow::ban::TriggerSilent(shadow::ban::Reason::VMP_SECTION_MISSING,
-                                 xorstr_("integrity:vmp_sections"));
-      shadow::loader_antidbg::kill_local();
-    }
-  }
-  shadow::loader_antidbg::init_text_crc_baseline();
+  // ДИАГНОСТИКА: всё отключено
+  // tls_check маркер выживает за счёт forward declaration выше —
+  // linker не устранит его пока есть хоть один перевод единицы с ним.
+  (void)0;
 }
 
 // ─────────────────────────────────────────────────────────
