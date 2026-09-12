@@ -1,4 +1,4 @@
-﻿#pragma once
+#pragma once
 #include "xorstr.hpp"
 
 /*
@@ -93,7 +93,7 @@ namespace HWID {
     static std::string GetDiskSerial() {
         DWORD serial = 0;
         char vol_name[MAX_PATH] = {};
-        GetVolumeInformationA(skCrypt(xorstr_("C:\\")), vol_name, MAX_PATH, &serial, nullptr, nullptr, nullptr, 0);
+        GetVolumeInformationA(xorstr_("C:\\"), vol_name, MAX_PATH, &serial, nullptr, nullptr, nullptr, 0);
         return std::to_string(serial) + std::string(vol_name);
     }
 
@@ -103,9 +103,9 @@ namespace HWID {
         char guid[64] = {};
         DWORD size = sizeof(guid);
         if (RegOpenKeyExA(HKEY_LOCAL_MACHINE,
-                          skCrypt(xorstr_("SOFTWARE\\Microsoft\\Cryptography")),
+                          xorstr_("SOFTWARE\\Microsoft\\Cryptography"),
                           0, KEY_READ | KEY_WOW64_64KEY, &hKey) == ERROR_SUCCESS) {
-            RegQueryValueExA(hKey, skCrypt(xorstr_("MachineGuid")), nullptr, nullptr, (LPBYTE)guid, &size);
+            RegQueryValueExA(hKey, xorstr_("MachineGuid"), nullptr, nullptr, (LPBYTE)guid, &size);
             RegCloseKey(hKey);
         }
         return std::string(guid);
@@ -147,13 +147,13 @@ namespace HWID {
         DWORD size = 64;
 
         if (RegOpenKeyExA(HKEY_LOCAL_MACHINE,
-                          skCrypt(xorstr_("HARDWARE\\DESCRIPTION\\System\\BIOS")),
+                          xorstr_("HARDWARE\\DESCRIPTION\\System\\BIOS"),
                           0, KEY_READ, &hKey) == ERROR_SUCCESS) {
-            RegQueryValueExA(hKey, skCrypt(xorstr_("BIOSVersion")), nullptr, nullptr, (LPBYTE)bios_ver, &size);
+            RegQueryValueExA(hKey, xorstr_("BIOSVersion"), nullptr, nullptr, (LPBYTE)bios_ver, &size);
             size = 64;
-            RegQueryValueExA(hKey, skCrypt(xorstr_("BIOSReleaseDate")), nullptr, nullptr, (LPBYTE)bios_date, &size);
+            RegQueryValueExA(hKey, xorstr_("BIOSReleaseDate"), nullptr, nullptr, (LPBYTE)bios_date, &size);
             size = 64;
-            RegQueryValueExA(hKey, skCrypt(xorstr_("SystemManufacturer")), nullptr, nullptr, (LPBYTE)sys_manuf, &size);
+            RegQueryValueExA(hKey, xorstr_("SystemManufacturer"), nullptr, nullptr, (LPBYTE)sys_manuf, &size);
             RegCloseKey(hKey);
         }
         return std::string(bios_ver) + xorstr_("|") + std::string(bios_date) + xorstr_("|") + std::string(sys_manuf);
@@ -239,10 +239,10 @@ namespace HWID {
     inline bool DetectSpoofer() {
         // Метод 1: Win32 API
         DWORD api_serial = 0;
-        GetVolumeInformationA(skCrypt(xorstr_("C:\\")), nullptr, 0, &api_serial, nullptr, nullptr, nullptr, 0);
+        GetVolumeInformationA(xorstr_("C:\\"), nullptr, 0, &api_serial, nullptr, nullptr, nullptr, 0);
 
         // Метод 2: Напрямую через NT API (труднее перехватить спуферу)
-        HANDLE hFile = CreateFileA(skCrypt(xorstr_("\\\\.\\C:")), GENERIC_READ,
+        HANDLE hFile = CreateFileA(xorstr_("\\\\.\\C:"), GENERIC_READ,
                                    FILE_SHARE_READ | FILE_SHARE_WRITE,
                                    nullptr, OPEN_EXISTING, 0, nullptr);
         if (hFile == INVALID_HANDLE_VALUE) return false;
