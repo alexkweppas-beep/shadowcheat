@@ -1720,10 +1720,10 @@ int APIENTRY wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
   // VMP runtime уже полностью инициализирован к этому моменту.
   PackerIntegrityGate();
 
-  // Anti-dump: затираем PE заголовок и скремблируем секции ЗДЕСЬ,
-  // после того как VMP уже выполнил свои проверки (VMProtectIsValidImageCRC и т.д.).
-  shadow::anti_dump::EraseOwnPeHeader();
-  shadow::anti_dump::ScrambleSectionNames();
+  // ВАЖНО: EraseOwnPeHeader/ScrambleSectionNames здесь УБРАНЫ.
+  // VMP VM-интерпретатор обращается к PE заголовку ВСЮ жизнь процесса.
+  // Стирание заголовка = краш внутри VMP runtime.
+  // VMP "Защита памяти" уже защищает от дампа лучше нашей ручной затирки.
 
   // SECURITY FIX #10: Single-instance Mutex (имя обфусцировано)
   // Не даём запустить 2 копии лоадера — это ломает IPC и SharedMemory
