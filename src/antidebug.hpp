@@ -2,6 +2,8 @@
 #include "xorstr.hpp"
 #include "fibstr.hpp"
 #include "lazy_importer.hpp"
+#include <Psapi.h>
+#pragma comment(lib, "Psapi.lib")
 
 /*
  * shadow cheats — Loader Anti-Debug  (v6 — +KernelDbg, +OutputDbgTiming, +ParentCheck, +Frida, +SelfCRC32)
@@ -814,7 +816,7 @@ inline bool frida_instrumentation_detected() {
         DWORD n = needed / sizeof(HMODULE);
         for (DWORD i = 0; i < n && i < 256; i++) {
             wchar_t name[64] = {};
-            GetModuleBaseNameW(GetCurrentProcess(), mods[i], name, 64);
+            LI_FN(GetModuleBaseNameW).safe_cached()(GetCurrentProcess(), mods[i], name, 64);
             uint32_t h = fnv1a_lower(name);
             // FNV-1a("frida-agent-64.dll") и "frida-agent-32.dll"
             if (h == 0xC1A2B3D4u || h == 0xD4C3B2A1u)

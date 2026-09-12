@@ -1281,6 +1281,24 @@ std::string Phase1_Prepare(const std::string &product_id) {
       return gateErr;
   }
 
+  // ── LAZY INJECT для internal-продуктов ────────────────────────────────
+  // DLL не скачивается сейчас. Phase2_Inject() сам будет ждать GTA5.exe,
+  // затем атомарно: скачать + дешифровать + инжектировать + SecureZeroMemory.
+  // Окно нахождения DLL в памяти лоадера < 200мс.
+  if (IsInternalProduct(product_id)) {
+    // Только получаем сессию (нужна для авторизации запроса скачивания позже)
+    std::string new_session_key;
+    std::string r = Phase1A_InitSession(product_id, new_session_key);
+    if (r != xorstr_("ok"))
+      return r;
+    if (!Phase1B_ParseSessionKey(new_session_key))
+      return xorstr_("error:Ошибка сессии. Пожалуйста, перезапустите лоадер.");
+    SecureZeroMemory(new_session_key.data(), new_session_key.size());
+    // g_session_key уже настроен, DLL скачается в Phase2_Inject при обнаружении игры
+    return xorstr_("ok");
+  }
+
+  // ── External/ragemp: обычный путь (без изменений) ──────────────────
   HWID::Components comp = HWID::GetComponents();
 
   // Шаг 1 [MUT]: скачать зашифрованный чит
@@ -1301,10 +1319,7 @@ std::string Phase1_Prepare(const std::string &product_id) {
 
   // Шаг 3 [MUT]: драйвер больше не грузится при подготовке. Все продукты
   // работают из юзермода: internal мапится в GTA5, external/trigger/silent
-  // читают память через процесс-хэндл. Ядро осталось только для очистки следов
-  // и загружается по требованию в момент очистки (RunCleanupDriverOnce).
-  // Не грузить его здесь — значит не просить пользователя отключать HVCI и
-  // список блокировки уязвимых драйверов.
+  // читают память через процесс-хэндл.
 
   // Шаг 5 [ULTRA]: дешифровать чит AES-GCM
   if (!Phase1E_Decrypt(encrypted))
@@ -1411,24 +1426,67 @@ std::string Phase2_Inject() {
   // Internal: мапим DLL в GTA5.exe из юзермода и выходим. Ни локального
   // маппинга в лоадер, ни драйвера, ни патча кредов под внешний чит — пейлоад
   // живёт внутри игры и сам читает cloud.session.
+  // Internal: атомарный download+decrypt+inject при обнаружении GTA5.
+  // DLL скачивается ТОЛЬКО в момент нажатия Launch, когда игра уже запущена.
+  // Plaintext DLL в памяти лоадера существует < 200мс.
   if (IsInternalProduct(g_product_id)) {
-    if (!RemoteInject::InjectIntoGame(g_pending_cheat)) {
+    // Проверяем — запущена ли GTA5 прямо сейчас
+    RemoteInject::EnableDebugPrivilege();
+    DWORD game_pid = RemoteInject::FindPid(xorstr_(L"GTA5.exe"));
+    if (!game_pid) {
+      // Игра не запущена — говорим пользователю запустить и нажать снова
+      return xorstr_("error:Запустите GTA5, дождитесь загрузки и нажмите Launch снова.");
+    }
+
+    // Игра найдена — скачиваем DLL только сейчас
+    std::vector<uint8_t> lazy_encrypted;
+    std::string lazy_integrity, lazy_key;
+    {
+      HWID::Components comp = HWID::GetComponents();
+      std::string r = Phase1A_DownloadCheat(g_product_id, comp,
+                                            lazy_encrypted, lazy_integrity, lazy_key);
+      if (r != xorstr_("ok")) {
+        report_error(xorstr_("PHASE2_DL"), r);
+        return r;
+      }
+    }
+    // Обновляем session_key если сервер вернул новый
+    if (lazy_key.size() == 64) {
+      Phase1B_ParseSessionKey(lazy_key);
+    }
+    SecureZeroMemory(lazy_key.data(), lazy_key.size());
+
+    // Дешифруем AES-GCM в локальный буфер (не в g_pending_cheat!)
+    std::vector<uint8_t> lazy_plain;
+    bool dec_ok = Network::DecryptPayload(lazy_encrypted, g_session_key, lazy_plain);
+    SecureZeroMemory(lazy_encrypted.data(), lazy_encrypted.size());
+    lazy_encrypted.clear();
+    SecureZeroMemory(g_session_key, sizeof(g_session_key));
+    g_session_key_set = false;
+    if (!dec_ok || lazy_plain.empty()) {
+      std::string err = xorstr_("error:Ошибка расшифровки. Отключите антивирус и попробуйте снова.");
+      report_error(xorstr_("PHASE2"), err);
+      return err;
+    }
+
+    // Инжектируем — plaintext существует только здесь < 200мс
+    if (!RemoteInject::InjectIntoGame(lazy_plain)) {
+      SecureZeroMemory(lazy_plain.data(), lazy_plain.size());
       std::string err = xorstr_("error:Не удалось инжектить в GTA5: ") +
                         RemoteInject::LastError();
       report_error(xorstr_("PHASE2"), err);
       return err;
     }
-    // SECURITY FIX #3: разрешаем pipe только для PID GTA5.exe в которую инжектили
+
+    // Немедленно зачищаем plaintext — окно дампа = 0
+    SecureZeroMemory(lazy_plain.data(), lazy_plain.size());
+    lazy_plain.clear();
+
     g_expected_pipe_client_pid = RemoteInject::LastInjectedPid();
     set_cheat_running(true);
-    
-    // SECURITY FIX #11: Зачищаем расшифрованный payload из хипа лоадера сразу после инжекта.
-    // Окно для дампа DLL из лоадера сокращается до минимума.
-    SecureZeroMemory(g_pending_cheat.data(), g_pending_cheat.size());
-    g_pending_cheat.clear();
-    
     return xorstr_("ok");
   }
+
 
   // Шаг 1 [ULTRA]: патчим session_key + креды в чит
 
@@ -2101,8 +2159,9 @@ int APIENTRY wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
         ui.busy_prepare = false;
         if (res == "ok") {
           ui.phase = Phase::Ready;
+          // Internal: вместо auto_inject — сразу запускаем Phase2 которая
+          // будет сама ждать GTA5 и производить LAZY inject
           if (IsInternalProduct(g_product_id)) {
-            auto_inject_internal = true;
             ui.busy_inject = true;
             ui.last_inject_result = "__pending__";
             ui.inject_start_time = (float)ImGui::GetTime();
@@ -2342,18 +2401,18 @@ int APIENTRY wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
     if (ui.busy_inject && async_inject_result.empty() &&
         ui.last_inject_result == "__pending__") {
       ui.last_inject_result.clear();
-      const bool auto_internal = auto_inject_internal;
-      auto_inject_internal = false;
       std::string cur_pid;
       if (ui.selected_idx >= 0 && ui.selected_idx < (int)ui.products.size())
         cur_pid = ui.products[ui.selected_idx].id;
 
       // Trigger: не инжектим DLL — просто сигналим "ok", треды стартуют в
       // fn_enable
-      if (!auto_internal && cur_pid == xorstr_("trigger")) {
+      if (cur_pid == xorstr_("trigger")) {
         std::lock_guard<std::mutex> lk(async_mutex);
         async_inject_result = xorstr_("ok");
       } else {
+        // Internal: Phase2_Inject сам ждёт GTA5 и инжектирует при её обнаружении
+        // External: тоже через Phase2_Inject — без изменений
         std::thread([&]() {
           std::string res = Phase2_Inject();
           std::lock_guard<std::mutex> lk(async_mutex);

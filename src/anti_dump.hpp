@@ -47,6 +47,7 @@
  */
 
 #include <windows.h>
+#include <Psapi.h>
 #include <cstdint>
 #include <cstring>
 #include <atomic>
