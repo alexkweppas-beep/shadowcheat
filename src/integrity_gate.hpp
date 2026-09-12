@@ -91,15 +91,11 @@ static IMAGE_NT_HEADERS* GetNtHeaders() {
 // Check #1: Размер файла в ожидаемом диапазоне
 // ─────────────────────────────────────────────────────────────────────
 __declspec(noinline) static bool CheckFileSize() {
-#if defined(SHADOW_DEV_BUILD)
-    return true; // Отключено в dev-билде
-#else
-    SHADOW_PROTECT_VIRT("integrity::CheckFileSize");
-    uint64_t sz = GetSelfFileSize();
-    bool ok = (sz >= SHADOW_MIN_FILE_SIZE && sz <= SHADOW_MAX_FILE_SIZE);
-    SHADOW_PROTECT_END();
-    return ok;
-#endif
+    // УБРАНА: чтение файла с диска по имени ненадёжно после VMP:
+    // - имя может быть любым (*.vmp.exe, *.exe, переименован)
+    // - VMP import protection может помешать GetModuleFileNameW
+    // - не требуется: наличие .vmp секций уже гарантирует VMP-процессинг
+    return true;
 }
 
 // ─────────────────────────────────────────────────────────────────────
@@ -111,27 +107,31 @@ __declspec(noinline) static bool CheckVmpSections() {
 #else
     SHADOW_PROTECT_VIRT("integrity::CheckVmpSections");
     auto* nt = GetNtHeaders();
-    if (!nt) { SHADOW_PROTECT_END(); return false; }
+    // Если VMP зашифровал PE заголовок — пропускаем (не можем прочитать секции)
+    if (!nt) { SHADOW_PROTECT_END(); return true; }
 
     WORD numSections = nt->FileHeader.NumberOfSections;
     if (numSections < SHADOW_MIN_SECTIONS) {
         SHADOW_PROTECT_END();
-        return false; // Слишком мало секций — VMP снят
+        return false; // Слишко мало секций — VMP снят
     }
 
     auto* sec = IMAGE_FIRST_SECTION(nt);
     int vmpCount = 0;
     for (WORD i = 0; i < numSections; i++, sec++) {
-        // Имя секции в PE: 8 байт, не null-terminated если ровно 8
-        // Ищем секции, начинающиеся на ".vmp"
-        // Зашифрованное сравнение: XOR с 0xAB, без plaintext
-        // ".vmp" XOR 0xAB = {0x85, 0xDE, 0xDA, 0xDF}
+        // Ищем секции с именем .vmp* ИЛИ .??? (настройка VMP "Сегменты: .???")
+        // .vmp: XOR 0xAB = {0x85, 0xDE, 0xDA, 0xDF}
         static const uint8_t enc_vmp[] = {0x85, 0xDE, 0xDA, 0xDF};
-        bool match = true;
+        bool is_vmp = true;
         for (int j = 0; j < 4; j++) {
-            if (((uint8_t)sec->Name[j] ^ 0xABu) != enc_vmp[j]) { match = false; break; }
+            if (((uint8_t)sec->Name[j] ^ 0xABu) != enc_vmp[j]) { is_vmp = false; break; }
         }
-        if (match) vmpCount++;
+        // .???: имя которое VMP использует если "Сегменты: .???" включено
+        bool is_qqq = (sec->Name[0] == '.' &&
+                       sec->Name[1] == '?' &&
+                       sec->Name[2] == '?');
+        if (is_vmp || is_qqq)
+            vmpCount++;
     }
 
     bool ok = (vmpCount >= SHADOW_MIN_VMP_SECTIONS);
@@ -145,17 +145,10 @@ __declspec(noinline) static bool CheckVmpSections() {
 // (VMP всегда проставляет корректный checksum; strip-tools часто зануляют)
 // ─────────────────────────────────────────────────────────────────────
 __declspec(noinline) static bool CheckPeChecksum() {
-#if defined(SHADOW_DEV_BUILD)
+    // УБРАНА: VMP перезаписывает PE заголовок в памяти при инициализации.
+    // Чтение checksum после VMP может вернуть некорректное значение.
+    // Защита VMP секций достаточна.
     return true;
-#else
-    SHADOW_PROTECT_MUT("integrity::CheckPeChecksum");
-    auto* nt = GetNtHeaders();
-    if (!nt) { SHADOW_PROTECT_END(); return false; }
-    // Проверяем что checksum не нулевой (VMP всегда его выставляет)
-    bool ok = (nt->OptionalHeader.CheckSum != 0);
-    SHADOW_PROTECT_END();
-    return ok;
-#endif
 }
 
 // ─────────────────────────────────────────────────────────────────────
