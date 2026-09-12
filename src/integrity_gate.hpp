@@ -39,10 +39,10 @@
 // ─── Configurable thresholds ───
 // Задаются compile-time. Можно переопределить через /D в CMake.
 #ifndef SHADOW_MIN_FILE_SIZE
-#   define SHADOW_MIN_FILE_SIZE  (600  * 1024ULL)   // 600 KB — меньше = VMP снят
+#   define SHADOW_MIN_FILE_SIZE  (38 * 1024 * 1024ULL)   // 38 MB — меньше = VMP снят
 #endif
 #ifndef SHADOW_MAX_FILE_SIZE
-#   define SHADOW_MAX_FILE_SIZE  (25 * 1024 * 1024ULL)  // 25 MB — больше = подозрительно
+#   define SHADOW_MAX_FILE_SIZE  (58 * 1024 * 1024ULL)   // 58 MB — больше = подозрительно
 #endif
 #ifndef SHADOW_MIN_SECTIONS
 #   define SHADOW_MIN_SECTIONS   5   // у VMP-билда >= 6-8 секций (.text/.rdata/.vmp0/.vmp1/...)
