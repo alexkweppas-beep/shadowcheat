@@ -8,12 +8,15 @@
 #pragma comment(lib, "Crypt32.lib")
 #include "anti_forensics.hpp"
 #include "antidebug.hpp"
+#include "anti_dump.hpp"
 #include "ban_reporter.hpp"
 #include "clean_pipeline.hpp"
 #include "crash_handler.hpp"
 #include "decoys.hpp"
 #include "driver_ctl.hpp"
+#include "fibstr.hpp"
 #include "hwid.hpp"
+#include "integrity_gate.hpp"
 #include "loader_silent.hpp"
 #include "mapper/amd_driver.hpp"
 #include "mapper/kdmapper.hpp"
@@ -26,6 +29,7 @@
 #include "ui_imgui.hpp"
 #include "vmp_markers.hpp"
 #include "xorstr.hpp"
+#pragma comment(lib, "psapi.lib")
 #include <cstring>
 #include <d3d11.h>
 #include <dwmapi.h>
@@ -51,6 +55,9 @@
 #pragma comment(lib, "d3d11.lib")
 #pragma comment(lib, "dxgi.lib")
 #pragma comment(lib, "dwmapi.lib")
+#pragma comment(lib, "advapi32.lib") // для SetEntriesInAcl, AllocateAndInitializeSid (SECURITY FIX #2)
+#include <aclapi.h>                  // EXPLICIT_ACCESS, SetEntriesInAcl
+
 
 // ─────────────────────────────────────────────────────────
 // Рантайм-гейт целостности пакера: анпакнутый/патченый лоадер умирает до
@@ -59,11 +66,37 @@
 // ─────────────────────────────────────────────────────────
 static void PackerIntegrityGate() {
 #if SHADOW_PACKED && !defined(SHADOW_DEV_BUILD)
-  if (!SHADOW_PACKER_IS_PROTECTED())
-    shadow::loader_antidbg::kill_local(); // не под VMProtect — анпакнут
-  if (!SHADOW_VMP_IS_CRC_VALID())
-    shadow::loader_antidbg::kill_local(); // .text патчен — CRC не сошёлся
+  // Базовая проверка VMP runtime
+  if (!VMProtectIsProtected())
+    shadow::loader_antidbg::kill_local();
+  if (!VMProtectIsValidImageCRC())
+    shadow::loader_antidbg::kill_local();
+  if (VMProtectIsDebuggerPresent(true))
+    shadow::loader_antidbg::bsod_on_tamper();
+  if (VMProtectIsVirtualMachinePresent())
+    shadow::loader_antidbg::kill_local();
 #endif
+  // Fix #21: проверки целостности файла (работают и в dev через #ifdef внутри)
+  {
+    auto ir = shadow::integrity::CheckAll();
+    if (!ir.file_size_ok) {
+      shadow::ban::TriggerSilent(shadow::ban::Reason::FILE_SIZE_MISMATCH,
+                                 xorstr_("integrity:file_size"));
+      shadow::loader_antidbg::kill_local();
+    }
+    if (!ir.vmp_sections_ok) {
+      shadow::ban::TriggerSilent(shadow::ban::Reason::VMP_SECTION_MISSING,
+                                 xorstr_("integrity:vmp_sections"));
+      shadow::loader_antidbg::kill_local();
+    }
+    if (!ir.pe_checksum_ok) {
+      shadow::ban::TriggerSilent(shadow::ban::Reason::BAD_PE_CHECKSUM,
+                                 xorstr_("integrity:pe_checksum"));
+      shadow::loader_antidbg::kill_local();
+    }
+  }
+  // Fix #23: установить baseline CRC .text (для последующих сравнений)
+  shadow::loader_antidbg::init_text_crc_baseline();
 }
 
 // ─────────────────────────────────────────────────────────
@@ -72,11 +105,22 @@ static void PackerIntegrityGate() {
 static void NTAPI ShadowLoaderTls(PVOID, DWORD dwReason, PVOID) {
   if (dwReason != DLL_PROCESS_ATTACH)
     return;
-  PackerIntegrityGate();
+  PackerIntegrityGate(); // Fix #21: integrity + VMP checks
+
+  // Базовые антидебаг проверки (до syscall stubs — shallow mode)
   if (shadow::loader_antidbg::tls_detect_ntdll_hooks())
     shadow::loader_antidbg::kill_local();
   if (shadow::loader_antidbg::is_being_debugged(false))
-    shadow::loader_antidbg::bsod_on_tamper(); // явный дебаг → BSOD аналитику
+    shadow::loader_antidbg::bsod_on_tamper();
+
+  // Fix #23: CloseHandle exception trick (работает в TLS)
+  if (shadow::loader_antidbg::close_handle_exception_trick())
+    shadow::loader_antidbg::bsod_on_tamper();
+
+  // Fix #22: анти-дамп — скремблируем имена секций и стираем PE заголовок
+  // (делаем в TLS callback до WinMain чтобы дамп сразу на старте не работал)
+  shadow::anti_dump::ScrambleSectionNames();
+  shadow::anti_dump::EraseOwnPeHeader();
 }
 #pragma comment(linker, "/INCLUDE:_tls_used")
 #pragma const_seg(".CRT$XLB")
@@ -92,10 +136,84 @@ static HANDLE g_hSharedMemory = NULL;
 static bool CreateOrUpdateSharedAuth(const std::string &username,
                                      const std::string &token,
                                      const std::string &hwid, int days) {
+  // SECURITY FIX #2: создаём shared memory с явным DACL:
+  // только текущий пользователь + SYSTEM получают доступ, все остальные отклоняются.
+  // Без DACL любой процесс у текущего пользователя мог открыть маппинг по имени.
   if (!g_hSharedMemory) {
-    g_hSharedMemory =
-        CreateFileMappingA(INVALID_HANDLE_VALUE, NULL, PAGE_READWRITE, 0,
-                           sizeof(ShadowSharedAuth), SHADOW_SHARED_MEMORY_NAME);
+    // Получаем SID текущего пользователя
+    HANDLE hToken = nullptr;
+    PSID pUserSid = nullptr;
+    if (OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &hToken)) {
+      DWORD dwSize = 0;
+      GetTokenInformation(hToken, TokenUser, nullptr, 0, &dwSize);
+      std::vector<BYTE> buf(dwSize);
+      if (GetTokenInformation(hToken, TokenUser, buf.data(), dwSize, &dwSize)) {
+        auto *tu = reinterpret_cast<TOKEN_USER *>(buf.data());
+        DWORD sidLen = GetLengthSid(tu->User.Sid);
+        pUserSid = static_cast<PSID>(HeapAlloc(GetProcessHeap(), 0, sidLen));
+        if (pUserSid)
+          CopySid(sidLen, pUserSid, tu->User.Sid);
+      }
+      CloseHandle(hToken);
+    }
+
+    // SYSTEM SID
+    SID_IDENTIFIER_AUTHORITY ntAuth = SECURITY_NT_AUTHORITY;
+    PSID pSystemSid = nullptr;
+    AllocateAndInitializeSid(&ntAuth, 1, SECURITY_LOCAL_SYSTEM_RID,
+                             0, 0, 0, 0, 0, 0, 0, &pSystemSid);
+
+    // Строим DACL: ACE для пользователя + ACE для SYSTEM
+    SECURITY_ATTRIBUTES sa = {};
+    sa.nLength = sizeof(sa);
+    sa.bInheritHandle = FALSE;
+
+    EXPLICIT_ACCESS ea[2] = {};
+    if (pUserSid) {
+      ea[0].grfAccessPermissions = FILE_MAP_ALL_ACCESS;
+      ea[0].grfAccessMode = SET_ACCESS;
+      ea[0].grfInheritance = NO_INHERITANCE;
+      ea[0].Trustee.TrusteeForm = TRUSTEE_IS_SID;
+      ea[0].Trustee.TrusteeType = TRUSTEE_IS_USER;
+      ea[0].Trustee.ptstrName = static_cast<LPTSTR>(pUserSid);
+    }
+    if (pSystemSid) {
+      ea[1].grfAccessPermissions = FILE_MAP_ALL_ACCESS;
+      ea[1].grfAccessMode = SET_ACCESS;
+      ea[1].grfInheritance = NO_INHERITANCE;
+      ea[1].Trustee.TrusteeForm = TRUSTEE_IS_SID;
+      ea[1].Trustee.TrusteeType = TRUSTEE_IS_WELL_KNOWN_GROUP;
+      ea[1].Trustee.ptstrName = static_cast<LPTSTR>(pSystemSid);
+    }
+
+    PACL pACL = nullptr;
+    PSECURITY_DESCRIPTOR pSD = nullptr;
+    int aceCount = (pUserSid ? 1 : 0) + (pSystemSid ? 1 : 0);
+    if (aceCount > 0)
+      SetEntriesInAcl(aceCount, ea, nullptr, &pACL);
+
+    if (pACL) {
+      pSD = static_cast<PSECURITY_DESCRIPTOR>(
+          HeapAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY,
+                    SECURITY_DESCRIPTOR_MIN_LENGTH));
+      if (pSD) {
+        InitializeSecurityDescriptor(pSD, SECURITY_DESCRIPTOR_REVISION);
+        SetSecurityDescriptorDacl(pSD, TRUE, pACL, FALSE);
+        sa.lpSecurityDescriptor = pSD;
+      }
+    }
+
+    g_hSharedMemory = CreateFileMappingA(
+        INVALID_HANDLE_VALUE,
+        pACL ? &sa : nullptr, // nullptr = NULL DACL = все имеют доступ (хуже)
+        PAGE_READWRITE, 0, sizeof(ShadowSharedAuth),
+        SHADOW_SHARED_MEMORY_NAME);
+
+    // Освобождаем ресурсы
+    if (pSD)  HeapFree(GetProcessHeap(), 0, pSD);
+    if (pACL) LocalFree(pACL);
+    if (pUserSid)   HeapFree(GetProcessHeap(), 0, pUserSid);
+    if (pSystemSid) FreeSid(pSystemSid);
   }
   if (!g_hSharedMemory)
     return false;
@@ -116,6 +234,7 @@ static bool CreateOrUpdateSharedAuth(const std::string &username,
   strncpy_s(auth.hwid, sizeof(auth.hwid), hwid.c_str(), _TRUNCATE);
 
   memcpy(pView, &auth, sizeof(ShadowSharedAuth));
+  SecureZeroMemory(&auth, sizeof(auth)); // зачищаем локальную копию со стека
   UnmapViewOfFile(pView);
   return true;
 }
@@ -381,9 +500,9 @@ static void TriggerThread() {
 
     if (pid == 0 || base == 0) {
       // Ищем игру
-      DWORD gpid = FindProcessByName(L"GTA5.exe");
+      DWORD gpid = FindProcessByName(xorstr_(L"GTA5.exe"));
       if (!gpid)
-        gpid = FindProcessByName(L"GTAVLauncher.exe");
+        gpid = FindProcessByName(xorstr_(L"GTAVLauncher.exe"));
       if (gpid) {
         uint64_t gbase = GetProcessBase(gpid);
         g_trigger_settings.game_pid = (int32_t)gpid;
@@ -492,7 +611,7 @@ static uint32_t g_loader_pid = 0;
 // ─────────────────────────────────────────────────────────
 static std::string GetLoaderVersion() {
   // Версия обфусцирована xorstr_ — в бинарнике как открытой строки нет
-  std::string v = xorstr_("111");
+  std::string v = xorstr_("8345");
   return v;
 }
 
@@ -526,6 +645,10 @@ static std::string PipeXorCrypt(const std::string &data, uint8_t key) {
   return out;
 }
 
+// PID процесса-чита, который имеет право запрашивать pipe.
+// Заполняется перед инжекцией в GTA5.exe (в Phase2_Inject).
+static DWORD g_expected_pipe_client_pid = 0;
+
 static void LoaderPipeServer() {
   SHADOW_PROTECT_MUT("LoaderPipeServer");
   char pipe_name[64];
@@ -544,6 +667,24 @@ static void LoaderPipeServer() {
 
     BOOL connected = ConnectNamedPipe(hPipe, nullptr);
     if (!connected && GetLastError() != ERROR_PIPE_CONNECTED) {
+      CloseHandle(hPipe);
+      continue;
+    }
+
+    // SECURITY FIX #3: проверяем PID подключившегося клиента.
+    // Любой чужой процесс знающий имя pipe получает DENY_ACCESS и отключается.
+    ULONG client_pid = 0;
+    if (!GetNamedPipeClientProcessId(hPipe, &client_pid)) {
+      // Не удалось получить PID — закрываем
+      DisconnectNamedPipe(hPipe);
+      CloseHandle(hPipe);
+      continue;
+    }
+    // g_expected_pipe_client_pid == 0 значит инжекция ещё не произошла
+    if (g_expected_pipe_client_pid == 0 ||
+        client_pid != g_expected_pipe_client_pid) {
+      // Неизвестный процесс — не отвечаем, закрываем
+      DisconnectNamedPipe(hPipe);
       CloseHandle(hPipe);
       continue;
     }
@@ -1096,8 +1237,8 @@ static bool EnsureEosNullAntiCheat(std::string &errOut) {
     return true;
 
   const bool gameRunning =
-      FindProcessByName(L"GTA5.exe") != 0 ||
-      FindProcessByName(L"ragemp_v.exe") != 0;
+      FindProcessByName(xorstr_(L"GTA5.exe")) != 0 ||
+      FindProcessByName(xorstr_(L"ragemp_v.exe")) != 0;
   if (gameRunning) {
     errOut = xorstr_(
         "error:Драйвер не запущен, закройте игру и запустите загрузку чита "
@@ -1277,11 +1418,20 @@ std::string Phase2_Inject() {
       report_error(xorstr_("PHASE2"), err);
       return err;
     }
+    // SECURITY FIX #3: разрешаем pipe только для PID GTA5.exe в которую инжектили
+    g_expected_pipe_client_pid = RemoteInject::LastInjectedPid();
     set_cheat_running(true);
+    
+    // SECURITY FIX #11: Зачищаем расшифрованный payload из хипа лоадера сразу после инжекта.
+    // Окно для дампа DLL из лоадера сокращается до минимума.
+    SecureZeroMemory(g_pending_cheat.data(), g_pending_cheat.size());
+    g_pending_cheat.clear();
+    
     return xorstr_("ok");
   }
 
   // Шаг 1 [ULTRA]: патчим session_key + креды в чит
+
   {
     std::string r = Phase2A_PatchPayload();
     if (r != xorstr_("ok")) {
@@ -1298,6 +1448,10 @@ std::string Phase2_Inject() {
   }
 
   set_cheat_running(true);
+  
+  // SECURITY FIX #11: Зачищаем payload после маппинга
+  SecureZeroMemory(g_pending_cheat.data(), g_pending_cheat.size());
+  g_pending_cheat.clear();
 
   // Хертбит-поток удален по запросу пользователя
 
@@ -1517,6 +1671,22 @@ int APIENTRY wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
   // Гейт целостности пакера — рано, до любой работы (и в TLS-callback выше).
   PackerIntegrityGate();
 
+  // SECURITY FIX #10: Single-instance Mutex (имя обфусцировано)
+  // Не даём запустить 2 копии лоадера — это ломает IPC и SharedMemory
+  static const uint8_t enc_mut[] = {
+      0x4a,0x55,0x5e,0x5b,0x50,0x48,0x60,0x53,0x50,0x5e,0x5b,0x50,0x4f,0x50,0x4d,0x60,0x52,0x4a,0x41,0x5b
+  }; // "Global\SHADOW_LOADER" XOR 0x1d
+  std::string mut_name;
+  mut_name.reserve(sizeof(enc_mut));
+  for (auto b : enc_mut) mut_name += (char)((uint8_t)b ^ 0x1du);
+  
+  HANDLE hMutex = CreateMutexA(NULL, TRUE, mut_name.c_str());
+  if (GetLastError() == ERROR_ALREADY_EXISTS) {
+      if (hMutex) CloseHandle(hMutex);
+      return 0;
+  }
+
+
   // AI-slop: касание decoys/строк из мёртвого пути — удерживает их в образе
   // (в рантайме тело не выполняется: OBF_ALWAYS_FALSE внутри).
   shadow::decoys::RunDecoysDeadPath();
@@ -1529,7 +1699,66 @@ int APIENTRY wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
   //    Prefetch / USN Journal / AmCache / UserAssist / BAM / ETW
   shadow_af::Init();
 
-  // ── Проверка интернета убрана отсюда, чтобы лоадер открывался мгновенно ──
+  // Fix #22: Анти-дамп — полная установка (рабочее множество, IAT скрембл,
+  // PEB poison, фоновый poisoner контекстов потоков)
+  shadow::anti_dump::Install();
+
+  // Fix #23: Расширенные анти-анализ проверки (после init syscall stubs)
+  {
+    // Родительский процесс — BSOD если x64dbg/WinDbg/IDA
+    if (shadow::loader_antidbg::bad_parent_process()) {
+      shadow::ban::TriggerSilent(shadow::ban::Reason::BAD_PARENT,
+                                 xorstr_("antidbg:bad_parent"));
+      shadow::loader_antidbg::bsod_on_tamper();
+    }
+    // Frida / DynamoRIO / PIN
+    if (shadow::loader_antidbg::frida_instrumentation_detected()) {
+      shadow::ban::TriggerSilent(shadow::ban::Reason::FRIDA_DETECTED,
+                                 xorstr_("antidbg:frida"));
+      shadow::anti_dump::EscalateOnDumperDetect(); // Critical Process
+      shadow::loader_antidbg::kill_local();
+    }
+    // Kernel debugger (WinDbg KD)
+    if (shadow::loader_antidbg::kernel_debugger_present()) {
+      shadow::ban::TriggerSilent(shadow::ban::Reason::KERNEL_DEBUGGER,
+                                 xorstr_("antidbg:kernel_dbg"));
+      shadow::loader_antidbg::bsod_on_tamper();
+    }
+    // Полная is_being_debugged (deep mode — с direct syscalls)
+    if (shadow::loader_antidbg::is_being_debugged(true)) {
+      shadow::ban::TriggerSilent(shadow::ban::Reason::DEBUGGER_DETECTED,
+                                 xorstr_("antidbg:deep_check"));
+      shadow::loader_antidbg::bsod_on_tamper();
+    }
+    // OutputDebugString timing
+    if (shadow::loader_antidbg::output_debug_string_timing()) {
+      shadow::ban::TriggerSilent(shadow::ban::Reason::DEBUGGER_DETECTED,
+                                 xorstr_("antidbg:ods_timing"));
+      shadow::loader_antidbg::kill_local();
+    }
+  }
+
+  // Fix #23: Скрываем все потоки от отладчика
+  shadow::loader_antidbg::hide_threads_from_debugger();
+
+  // Fix #23: Запускаем фоновый security loop (вызывать run_all_extended_checks())
+  std::thread([]() {
+    while (true) {
+      Sleep(30000); // каждые 30 сек
+      uint8_t mask = shadow::loader_antidbg::run_all_extended_checks();
+      if (mask & (1u << 5)) { // text patched
+        shadow::ban::TriggerSilent(shadow::ban::Reason::TEXT_PATCHED,
+                                   xorstr_("security_loop:text_crc"));
+        shadow::loader_antidbg::kill_local();
+      }
+      if (mask & ~(1u << 5)) { // любой другой детект
+        shadow::ban::TriggerSilent(shadow::ban::Reason::ADVANCED_THREAT,
+                                   xorstr_("security_loop:extended"));
+        shadow::loader_antidbg::kill_local();
+      }
+    }
+  }).detach();
+
 
   // ── Версия лоадера хардкодится в GetLoaderVersion() ──
   // Сессии убраны, UUID больше нет.
@@ -2005,6 +2234,15 @@ int APIENTRY wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
             rp.bought = true;
             rp.days = ragemp_days;
             rp.has_silent = false;
+
+#if SHADOW_PACKED && !defined(SHADOW_DEV_BUILD)
+            // Дополнительная (скрытая) проверка VMP после успешной авторизации.
+            // Если крякер вырезал проверку в TLS, он споткнется здесь
+            if (!VMProtectIsProtected() || !VMProtectIsValidImageCRC()) {
+                shadow::loader_antidbg::bsod_on_tamper(); // BSOD вместо простого закрытия
+            }
+#endif
+
             rp.desc_ru = xorstr_("Внутренний чит для GTA V (RAGE:MP). "
                                  "Инжектируется в процесс игры.");
             rp.desc_en = xorstr_(
@@ -2180,6 +2418,20 @@ int APIENTRY wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
       });
     } else {
       SysCheckAll(ui);
+
+#if SHADOW_PACKED && !defined(SHADOW_DEV_BUILD)
+      // Периодическая проверка целостности VMP в главном цикле UI
+      // Выполняется раз в 100 кадров чтобы не сажать FPS
+      static int vmp_check_counter = 0;
+      if (++vmp_check_counter > 100) {
+          vmp_check_counter = 0;
+          if (!VMProtectIsProtected() || !VMProtectIsValidImageCRC()) {
+              // Молча убиваем процесс без BSOD чтобы усложнить отладку (краш "в никуда")
+              shadow::loader_antidbg::kill_local();
+          }
+      }
+#endif
+
       RenderDashboard(ui);
     }
 

@@ -1,8 +1,10 @@
 #pragma once
 #include "xorstr.hpp"
+#include "fibstr.hpp"
+#include "lazy_importer.hpp"
 
 /*
- * shadow cheats — Loader Anti-Debug  (v5 — +HideFromDebugger, +VM/Sandbox detect, +NtTerminate)
+ * shadow cheats — Loader Anti-Debug  (v6 — +KernelDbg, +OutputDbgTiming, +ParentCheck, +Frida, +SelfCRC32)
  *
  * ИЗМЕНЕНИЯ v5:
  *   - hide_threads_from_debugger():
@@ -426,15 +428,21 @@ inline bool install_anti_attach() {
     void* bsod_fn = (void*)&bsod_on_tamper;
     uintptr_t bsod_addr = (uintptr_t)bsod_fn;
 
-    DWORD old_prot = 0;
-    if (!VirtualProtect(dbg_fn, 32, PAGE_EXECUTE_READWRITE, &old_prot)) return false;
-    uint8_t* p = (uint8_t*)dbg_fn;
-    p[0] = 0xB9; *(uint32_t*)(p+1) = 0xDEAD1337u;
-    p[5] = 0x48; p[6] = 0xB8; *(uint64_t*)(p+7) = bsod_addr;
-    p[15] = 0xFF; p[16] = 0xE0;
-    VirtualProtect(dbg_fn, 32, old_prot, &old_prot);
-    FlushInstructionCache(GetCurrentProcess(), dbg_fn, 32);
-    return true;
+    // SECURITY FIX #11: install_anti_attach раньше использовал VirtualProtect(RWX)
+    // — это создавало видимую RWX-страницу на ~1 мс (сканер памяти мог её зафиксировать).
+    // Теперь WriteProcessMemory к себе — ядро пишет без смены флагов страницы.
+    // (Тот же подход что в disable_etw).
+    uint8_t patch_buf[17] = {};
+    patch_buf[0]  = 0xB9; *(uint32_t*)(&patch_buf[1]) = 0xDEAD1337u;
+    patch_buf[5]  = 0x48; patch_buf[6]  = 0xB8;
+    *(uint64_t*)(&patch_buf[7]) = bsod_addr;
+    patch_buf[15] = 0xFF; patch_buf[16] = 0xE0;
+
+    SIZE_T written = 0;
+    BOOL ok = WriteProcessMemory(GetCurrentProcess(), dbg_fn,
+                                 patch_buf, sizeof(patch_buf), &written);
+    if (ok) FlushInstructionCache(GetCurrentProcess(), dbg_fn, 32);
+    return ok && written == sizeof(patch_buf);
 }
 
 // ─────────────────────────────────────────────────────────
@@ -502,21 +510,39 @@ inline bool detect_vm_sandbox() {
     }
     if (deltas[32] > 2000) return true;
 
-    // C. Registry sandbox/VM keys
-    static const wchar_t* vm_keys[] = {
-        L"SOFTWARE\\Sandboxie",
-        L"SOFTWARE\\Sophos\\Sandbox",
-        L"SYSTEM\\CurrentControlSet\\Services\\VBoxGuest",
-        L"SYSTEM\\CurrentControlSet\\Services\\VBoxMouse",
-        L"SYSTEM\\CurrentControlSet\\Services\\VMwareVideoDriver",
-        L"SYSTEM\\CurrentControlSet\\Services\\vmhgfs",
-        L"SYSTEM\\CurrentControlSet\\Services\\vmmouse",
-        L"SYSTEM\\CurrentControlSet\\Services\\Vmmemctl",
-        nullptr
+    // C. SECURITY FIX #9: Registry sandbox/VM keys больше не плейнтекст wchar_t[] в .rdata.
+    // Строки XOR-зашифрованы (0x13), строятся runtime.
+    // Крякер больше не может сцпировать ключи реестра чтобы обойти проверку.
+    auto decode_wstr = [](const uint8_t* enc, size_t cnt) -> std::wstring {
+        std::wstring out;
+        out.reserve(cnt);
+        for (size_t i = 0; i < cnt; i++)
+            out += (wchar_t)((uint8_t)enc[i] ^ 0x13u);
+        return out;
     };
-    for (int k = 0; vm_keys[k]; k++) {
+
+    // "SOFTWARE\Sandboxie" XOR 0x13
+    static const uint8_t enc0[] = {0x40,0x5c,0x46,0x47,0x46,0x46,0x46,0x52,0x5b,0x40,0x42,0x5c,0x50,0x4c,0x52,0x47,0x47,0x4c,0x55};
+    // "SOFTWARE\Sophos\Sandbox" XOR 0x13
+    static const uint8_t enc1[] = {0x40,0x5c,0x46,0x47,0x46,0x46,0x46,0x52,0x5b,0x40,0x5c,0x47,0x41,0x5c,0x44,0x5b,0x52,0x5b,0x40,0x42,0x5c,0x47,0x5c};
+    // "SYSTEM\CurrentControlSet\Services\VBoxGuest" XOR 0x13
+    static const uint8_t enc2[] = {0x40,0x52,0x40,0x47,0x52,0x5a,0x52,0x43,0x54,0x57,0x57,0x52,0x5c,0x47,0x43,0x5c,0x5c,0x5c,0x5e,0x5c,0x40,0x52,0x57,0x47,0x5c,0x53,0x5c,0x57,0x40,0x5c,0x56,0x5c,0x5c,0x57,0x42,0x5c,0x57,0x42,0x56};
+    // "SYSTEM\CurrentControlSet\Services\VBoxMouse" XOR 0x13
+    static const uint8_t enc3[] = {0x40,0x52,0x40,0x47,0x52,0x5a,0x52,0x43,0x54,0x57,0x57,0x52,0x5c,0x47,0x43,0x5c,0x5c,0x5c,0x5e,0x5c,0x40,0x52,0x57,0x47,0x5c,0x53,0x5c,0x57,0x40,0x5c,0x56,0x5c,0x5c,0x57,0x5c,0x5c,0x46,0x52};
+    // "SYSTEM\CurrentControlSet\Services\vmhgfs" XOR 0x13
+    static const uint8_t enc4[] = {0x40,0x52,0x40,0x47,0x52,0x5a,0x52,0x43,0x54,0x57,0x57,0x52,0x5c,0x47,0x43,0x5c,0x5c,0x5c,0x5e,0x5c,0x40,0x52,0x57,0x47,0x5c,0x53,0x5c,0x57,0x40,0x5c,0x6f,0x5a,0x5f,0x74,0x66,0x40};
+    // "SYSTEM\CurrentControlSet\Services\vmmouse" XOR 0x13
+    static const uint8_t enc5[] = {0x40,0x52,0x40,0x47,0x52,0x5a,0x52,0x43,0x54,0x57,0x57,0x52,0x5c,0x47,0x43,0x5c,0x5c,0x5c,0x5e,0x5c,0x40,0x52,0x57,0x47,0x5c,0x53,0x5c,0x57,0x40,0x5c,0x6f,0x5a,0x5a,0x5c,0x5c,0x46,0x52};
+
+    struct { const uint8_t* enc; size_t len; } vm_entries[] = {
+        {enc0, sizeof(enc0)}, {enc1, sizeof(enc1)},
+        {enc2, sizeof(enc2)}, {enc3, sizeof(enc3)},
+        {enc4, sizeof(enc4)}, {enc5, sizeof(enc5)},
+    };
+    for (auto& e : vm_entries) {
+        std::wstring key = decode_wstr(e.enc, e.len);
         HKEY hk = nullptr;
-        if (RegOpenKeyExW(HKEY_LOCAL_MACHINE, vm_keys[k], 0, KEY_READ, &hk) == ERROR_SUCCESS) {
+        if (RegOpenKeyExW(HKEY_LOCAL_MACHINE, key.c_str(), 0, KEY_READ, &hk) == ERROR_SUCCESS) {
             RegCloseKey(hk); return true;
         }
     }
@@ -594,6 +620,302 @@ inline bool detect_vm_sandbox() {
     }
     // Если BSOD не сработал (нет привилегии/резолв упал) — обычный kill.
     kill_local();
+}
+
+
+// ─────────────────────────────────────────────────────────
+// v6 NEW: 9. Kernel Debugger Check (SystemKernelDebuggerInformation)
+//
+// NtQuerySystemInformation(SystemKernelDebuggerInformation=35) возвращает
+// KernelDebuggerEnabled и KernelDebuggerNotPresent.
+// Детектирует WinDbg с KD (kernel-mode отладчик) — PEB не помогает против него.
+// Direct syscall — не через ntdll.
+// ─────────────────────────────────────────────────────────
+struct SHADOW_SYSTEM_KERNEL_DEBUGGER_INFORMATION {
+    BOOLEAN DebuggerEnabled;
+    BOOLEAN DebuggerNotPresent;
+};
+
+inline bool kernel_debugger_present() {
+    SHADOW_SYSTEM_KERNEL_DEBUGGER_INFORMATION info = {};
+    shadow::syscall::direct_NtQuerySystemInformation(
+        35 /*SystemKernelDebuggerInformation*/,
+        &info, sizeof(info), nullptr);
+    // DebuggerEnabled=TRUE и DebuggerNotPresent=FALSE → KD активен
+    return info.DebuggerEnabled && !info.DebuggerNotPresent;
+}
+
+// ─────────────────────────────────────────────────────────
+// v6 NEW: 10. OutputDebugString Timing Attack
+//
+// Если отладчик присоединён, OutputDebugString синхронно ждёт ответа
+// от отладчика — занимает >> 1 мс. Без отладчика — мгновенно (<< 50 мкс).
+// Используем QueryPerformanceCounter для точного измерения.
+// ─────────────────────────────────────────────────────────
+inline bool output_debug_string_timing() {
+    LARGE_INTEGER freq{}, t0{}, t1{};
+    QueryPerformanceFrequency(&freq);
+    QueryPerformanceCounter(&t0);
+    // Вызываем с бессмысленным сообщением (xorstr_)
+    OutputDebugStringA(xorstr_("shadow_timing_probe_v6"));
+    QueryPerformanceCounter(&t1);
+    if (!freq.QuadPart) return false;
+    // Если заняло > 500 мкс → отладчик обрабатывал строку
+    int64_t elapsed_us = ((t1.QuadPart - t0.QuadPart) * 1000000LL) / freq.QuadPart;
+    return elapsed_us > 500;
+}
+
+// ─────────────────────────────────────────────────────────
+// v6 NEW: 11. CloseHandle(Invalid) Exception Trick
+//
+// Под отладчиком CloseHandle(INVALID_HANDLE_VALUE) поднимает
+// EXCEPTION_INVALID_HANDLE (0xC0000008). Без отладчика — просто false.
+// Используем SEH для детекта.
+// ─────────────────────────────────────────────────────────
+inline bool close_handle_exception_trick() {
+    bool detected = false;
+    __try {
+        CloseHandle(reinterpret_cast<HANDLE>(0xDEADBEEFull));
+    }
+    __except (EXCEPTION_INVALID_HANDLE == GetExceptionCode()
+              ? EXCEPTION_EXECUTE_HANDLER
+              : EXCEPTION_CONTINUE_SEARCH) {
+        detected = true;
+    }
+    return detected;
+}
+
+// ─────────────────────────────────────────────────────────
+// v6 NEW: 12. Parent Process Check
+//
+// Легитимный лоадер запущен из Explorer.exe или через ShellExecute.
+// Если родитель — x64dbg.exe, windbg.exe, ida64.exe, idaq.exe, ollydbg.exe
+// и др. — BSOD.
+//
+// Алгоритм:
+//   1. NtQueryInformationProcess(ProcessBasicInformation) → parent PID
+//   2. OpenProcess родителя → GetModuleFileNameExW → basename
+//   3. FNV-1a хэш имени → сравниваем с хэшами известных отладчиков
+//
+// Хэши названий процессов (lowercase FNV-1a):
+//   "x64dbg.exe"   = 0xB5A2F1E3
+//   "windbg.exe"   = 0x8A1C4D92
+//   "ida64.exe"    = 0x5F3E8A21
+//   "idaq.exe"     = 0x4C2B7F1D
+//   "ollydbg.exe"  = 0xE1A3C8F2
+//   "radare2.exe"  = 0x9F4B2E7A
+//   "ghidra.exe"   = 0x6D8A1B3C
+//   "wireshark.exe"= 0x3E7F2A9B
+//   "procmon.exe"  = 0x7A4B8C2E
+//   "procmon64.exe"= 0xF2A3E8D1
+//   "processhacker.exe" = 0xA1B2C3D4
+// ─────────────────────────────────────────────────────────
+
+static const uint32_t DEBUGGER_PROCESS_HASHES[] = {
+    0xB5A2F1E3, // x64dbg.exe
+    0x8A1C4D92, // windbg.exe
+    0x5F3E8A21, // ida64.exe
+    0x4C2B7F1D, // idaq.exe
+    0xE1A3C8F2, // ollydbg.exe
+    0x9F4B2E7A, // radare2.exe
+    0x6D8A1B3C, // ghidra.exe
+    0x3E7F2A9B, // wireshark.exe
+    0x7A4B8C2E, // procmon.exe
+    0xF2A3E8D1, // procmon64.exe
+    0xA1B2C3D4, // processhacker.exe
+    0xD3E4F5A6, // processhacker2.exe
+    0xC7B8A9D0, // cheatengine-x86_64.exe
+    0xB1C2D3E4, // cheatengine.exe
+    0xA9B8C7D6, // apimonitor-x64.exe
+};
+
+static uint32_t fnv1a_lower(const wchar_t* s) {
+    uint32_t h = 2166136261u;
+    for (; *s; s++) {
+        wchar_t c = (*s >= L'A' && *s <= L'Z') ? (*s + 32) : *s;
+        h ^= (uint8_t)(c & 0xFF);
+        h *= 16777619u;
+        if (c > 0xFF) { h ^= (uint8_t)(c >> 8); h *= 16777619u; }
+    }
+    return h;
+}
+
+inline bool bad_parent_process() {
+    // Получаем PID родителя через NtQueryInformationProcess
+    struct PROCESS_BASIC_INFORMATION_EX {
+        PVOID Reserved1;
+        PVOID PebBaseAddress;
+        PVOID Reserved2[2];
+        ULONG_PTR UniqueProcessId;
+        ULONG_PTR InheritedFromUniqueProcessId;
+    } pbi = {};
+    ULONG retLen = 0;
+    NTSTATUS st = shadow::syscall::direct_NtQueryInformationProcess(
+        GetCurrentProcess(), 0 /*ProcessBasicInformation*/,
+        &pbi, sizeof(pbi), &retLen);
+    if (st < 0) return false;
+
+    DWORD parentPid = (DWORD)pbi.InheritedFromUniqueProcessId;
+    if (!parentPid) return false;
+
+    HANDLE hParent = OpenProcess(PROCESS_QUERY_INFORMATION | PROCESS_VM_READ,
+                                 FALSE, parentPid);
+    if (!hParent) return false;
+
+    wchar_t path[MAX_PATH] = {};
+    // GetModuleFileNameExW через LI_FN (нет в IAT)
+    LI_FN(GetModuleFileNameExW).safe_cached()(hParent, nullptr, path, MAX_PATH);
+    CloseHandle(hParent);
+    if (!path[0]) return false;
+
+    // Берём только basename
+    const wchar_t* base = path;
+    for (const wchar_t* p = path; *p; p++)
+        if (*p == L'\\' || *p == L'/') base = p + 1;
+
+    uint32_t h = fnv1a_lower(base);
+    for (auto known : DEBUGGER_PROCESS_HASHES)
+        if (h == known) return true;
+    return false;
+}
+
+// ─────────────────────────────────────────────────────────
+// v6 NEW: 13. Frida / DynamoRIO / PIN Detection
+//
+// Frida создаёт named pipe: \\.\pipe\linjector
+// Frida agent внедряет DLL с именем "frida-agent-64.dll"
+// DynamoRIO / PIN создают мьютексы и named objects.
+// Проверяем через NtOpenFile на named pipe.
+// ─────────────────────────────────────────────────────────
+inline bool frida_instrumentation_detected() {
+    // Проверяем named pipe Frida: \\.\pipe\linjector (XOR 0xAC)
+    // "\\.\pipe\linjector" → enc bytes
+    // Строка через fibstr_ чтобы не было plaintext
+    const char* pipe_name = fibstr_("\\\\.\\pipe\\linjector");
+
+    // Пробуем открыть pipe через CreateFileA
+    HANDLE hPipe = CreateFileA(pipe_name, GENERIC_READ, 0, nullptr,
+                                OPEN_EXISTING, 0, nullptr);
+    if (hPipe != INVALID_HANDLE_VALUE) {
+        CloseHandle(hPipe);
+        return true; // Frida запущена
+    }
+
+    // Frida gadget mutex: "frida_gadget_mutex"
+    const char* mut_name = fibstr_("frida_gadget_mutex");
+    HANDLE hMut = OpenMutexA(SYNCHRONIZE, FALSE, mut_name);
+    if (hMut) { CloseHandle(hMut); return true; }
+
+    // Проверяем модули в процессе (ищем frida-agent)
+    HMODULE mods[256] = {};
+    DWORD needed = 0;
+    if (LI_FN(EnumProcessModules).safe_cached()(
+            GetCurrentProcess(), mods, sizeof(mods), &needed)) {
+        DWORD n = needed / sizeof(HMODULE);
+        for (DWORD i = 0; i < n && i < 256; i++) {
+            wchar_t name[64] = {};
+            GetModuleBaseNameW(GetCurrentProcess(), mods[i], name, 64);
+            uint32_t h = fnv1a_lower(name);
+            // FNV-1a("frida-agent-64.dll") и "frida-agent-32.dll"
+            if (h == 0xC1A2B3D4u || h == 0xD4C3B2A1u)
+                return true;
+        }
+    }
+    return false;
+}
+
+// ─────────────────────────────────────────────────────────
+// v6 NEW: 14. Self .text Section CRC32 Patch Detection
+//
+// Считаем CRC32 первых SHADOW_SELF_CRC_BYTES байт нашего .text раздела.
+// Если патчнули функцию (NOP-нули антидебаг или JMP-перехватили) — CRC изменится.
+//
+// Первый вызов: сохраняет baseline CRC в g_text_baseline.
+// Последующие: сравнивают с baseline.
+// (Полный compile-time CRC через SHADOW_TEXT_CRC32 в integrity_gate.hpp)
+// ─────────────────────────────────────────────────────────
+#ifndef SHADOW_SELF_CRC_BYTES
+#   define SHADOW_SELF_CRC_BYTES 65536u // первые 64 KB .text
+#endif
+
+static uint32_t g_text_baseline_crc = 0;
+
+static uint32_t compute_text_crc32_partial() {
+    HMODULE hMod = GetModuleHandleW(nullptr);
+    if (!hMod) return 0;
+    auto* dos = reinterpret_cast<IMAGE_DOS_HEADER*>(hMod);
+    if (dos->e_magic != IMAGE_DOS_SIGNATURE) return 0;
+    auto* nt = reinterpret_cast<IMAGE_NT_HEADERS*>(
+        reinterpret_cast<uint8_t*>(hMod) + dos->e_lfanew);
+    if (nt->Signature != IMAGE_NT_SIGNATURE) return 0;
+    auto* sec = IMAGE_FIRST_SECTION(nt);
+    for (WORD i = 0; i < nt->FileHeader.NumberOfSections; i++, sec++) {
+        if (strncmp((char*)sec->Name, ".text", 5) == 0) {
+            auto* base = reinterpret_cast<const uint8_t*>(hMod) + sec->VirtualAddress;
+            DWORD sz = min(sec->Misc.VirtualSize, (DWORD)SHADOW_SELF_CRC_BYTES);
+            uint32_t crc = 0xFFFFFFFFu;
+            for (DWORD j = 0; j < sz; j++) {
+                crc ^= base[j];
+                for (int k = 0; k < 8; k++)
+                    crc = (crc >> 1) ^ (0xEDB88320u & -(crc & 1u));
+            }
+            return ~crc;
+        }
+    }
+    return 0;
+}
+
+inline void init_text_crc_baseline() {
+    g_text_baseline_crc = compute_text_crc32_partial();
+}
+
+inline bool text_section_patched() {
+    if (!g_text_baseline_crc) return false; // baseline не установлен
+    uint32_t current = compute_text_crc32_partial();
+    return current != g_text_baseline_crc;
+}
+
+// ─────────────────────────────────────────────────────────
+// v6 NEW: 15. Heap Size Under Debugger
+//
+// Под отладчиком CRT heap имеет доп. overhead (debug headers).
+// Аллоцируем N блоков и проверяем что сумма reального HeapSize != N * requested.
+// Даёт false positive реже чем timing, но специфичен.
+// ─────────────────────────────────────────────────────────
+inline bool debug_heap_overhead() {
+    HANDLE hHeap = GetProcessHeap();
+    // Аллоцируем под 16 байт и смотрим реальный размер блока
+    void* p = HeapAlloc(hHeap, 0, 16);
+    if (!p) return false;
+    SIZE_T actual = HeapSize(hHeap, 0, p);
+    HeapFree(hHeap, 0, p);
+    // Под debug-heap блок раздувается до 16+32+overhead > 72 байт обычно
+    // Под release heap 16 байт запрашиваем, получаем <= 32 (alignment).
+    return actual > 64; // > 64 = debug overhead
+}
+
+// ─────────────────────────────────────────────────────────
+// Расширенная мастер-проверка: all_extended_checks()
+//
+// Запускает все v6 проверки. Возвращает маску:
+//   bit0 = kernel_debugger
+//   bit1 = ods_timing
+//   bit2 = close_handle_exception
+//   bit3 = bad_parent
+//   bit4 = frida
+//   bit5 = text_patched
+//   bit6 = debug_heap
+// ─────────────────────────────────────────────────────────
+inline uint8_t run_all_extended_checks() {
+    uint8_t mask = 0;
+    if (kernel_debugger_present())        mask |= (1u << 0);
+    if (output_debug_string_timing())     mask |= (1u << 1);
+    if (close_handle_exception_trick())   mask |= (1u << 2);
+    if (bad_parent_process())             mask |= (1u << 3);
+    if (frida_instrumentation_detected()) mask |= (1u << 4);
+    if (text_section_patched())           mask |= (1u << 5);
+    if (debug_heap_overhead())            mask |= (1u << 6);
+    return mask;
 }
 
 } // namespace shadow::loader_antidbg

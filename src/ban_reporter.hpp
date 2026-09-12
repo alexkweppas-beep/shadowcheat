@@ -56,8 +56,17 @@ namespace shadow::ban {
         ETW_PATCHED          = 0x0C,
         ENV_HEURISTICS       = 0x0D,
         ADVANCED_THREAT      = 0x0E,
+        // v6 NEW
+        KERNEL_DEBUGGER      = 0x0F, // WinDbg KD detected
+        FRIDA_DETECTED       = 0x10, // Frida / DynamoRIO / PIN
+        TEXT_PATCHED         = 0x11, // .text CRC32 mismatch (code patched)
+        FILE_SIZE_MISMATCH   = 0x12, // File too small — VMP removed
+        VMP_SECTION_MISSING  = 0x13, // .vmp0/.vmp1 sections absent
+        DUMPER_DETECTED      = 0x14, // MegaDumper / Scylla / PE-sieve activity
+        BAD_PE_CHECKSUM      = 0x15, // PE OptionalHeader.CheckSum == 0
         MANUAL               = 0xFF,
     };
+
 
     // ─── Глобальный контекст ───
     static constexpr size_t BANCTX_BUF = 1024;
