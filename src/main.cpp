@@ -1772,45 +1772,27 @@ int APIENTRY wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
 
   dbg_log("[7] anti_dump::Install OK");
 
-  // Round 1: Anti-debug проверки
+  // Анти-дебаг проверки:
+  // ПОД VMP с "Отладчик: User+Kernel" + "Инструменты: Да" УБРАНЫ:
+  //   - is_being_debugged()    → VMP уже делает ето (User-mode)
+  //   - kernel_debugger_present() → VMP уже делает это (Kernel-mode)
+  //   - output_debug_string_timing() → ложные позитивы под VMP VM
+  // ОСТАЛИСЬ: bad_parent и frida — это VMP НЕ проверяет
   dbg_log("[8] Before bad_parent_process");
-  {
-    if (shadow::loader_antidbg::bad_parent_process()) {
-      dbg_log("[!!] bad_parent_process DETECTED");
-      shadow::ban::TriggerSilent(shadow::ban::Reason::BAD_PARENT,
-                                 xorstr_("antidbg:bad_parent"));
-      shadow::loader_antidbg::bsod_on_tamper();
-    }
-    dbg_log("[9] Before frida_instrumentation_detected");
-    if (shadow::loader_antidbg::frida_instrumentation_detected()) {
-      dbg_log("[!!] frida DETECTED");
-      shadow::ban::TriggerSilent(shadow::ban::Reason::FRIDA_DETECTED,
-                                 xorstr_("antidbg:frida"));
-      shadow::loader_antidbg::kill_local();
-    }
-    dbg_log("[10] Before kernel_debugger_present");
-    if (shadow::loader_antidbg::kernel_debugger_present()) {
-      dbg_log("[!!] kernel_debugger DETECTED");
-      shadow::ban::TriggerSilent(shadow::ban::Reason::KERNEL_DEBUGGER,
-                                 xorstr_("antidbg:kernel_dbg"));
-      shadow::loader_antidbg::bsod_on_tamper();
-    }
-    dbg_log("[11] Before is_being_debugged");
-    if (shadow::loader_antidbg::is_being_debugged(true)) {
-      dbg_log("[!!] is_being_debugged DETECTED");
-      shadow::ban::TriggerSilent(shadow::ban::Reason::DEBUGGER_DETECTED,
-                                 xorstr_("antidbg:deep_check"));
-      shadow::loader_antidbg::bsod_on_tamper();
-    }
-    dbg_log("[12] Before output_debug_string_timing");
-    if (shadow::loader_antidbg::output_debug_string_timing()) {
-      dbg_log("[!!] output_debug_string_timing DETECTED");
-      shadow::ban::TriggerSilent(shadow::ban::Reason::DEBUGGER_DETECTED,
-                                 xorstr_("antidbg:ods_timing"));
-      shadow::loader_antidbg::kill_local();
-    }
+  if (shadow::loader_antidbg::bad_parent_process()) {
+    dbg_log("[!!] bad_parent_process DETECTED");
+    shadow::ban::TriggerSilent(shadow::ban::Reason::BAD_PARENT,
+                               xorstr_("antidbg:bad_parent"));
+    shadow::loader_antidbg::bsod_on_tamper();
   }
-  dbg_log("[13] All anti-debug checks passed");
+  dbg_log("[9] Before frida_instrumentation_detected");
+  if (shadow::loader_antidbg::frida_instrumentation_detected()) {
+    dbg_log("[!!] frida DETECTED");
+    shadow::ban::TriggerSilent(shadow::ban::Reason::FRIDA_DETECTED,
+                               xorstr_("antidbg:frida"));
+    shadow::loader_antidbg::kill_local();
+  }
+  dbg_log("[10] All checks passed");
 
   dbg_log("[14] Before hide_threads_from_debugger");
   shadow::loader_antidbg::hide_threads_from_debugger();
