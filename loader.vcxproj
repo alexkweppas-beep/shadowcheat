@@ -62,11 +62,13 @@
       <GenerateDebugInformation>false</GenerateDebugInformation>
       <!-- LTCG: whole-program link-time codegen — дополнительная обфускация CFG -->
       <LinkTimeCodeGeneration>UseLinkTimeCodeGeneration</LinkTimeCodeGeneration>
-      <!-- /guard:cf-: отключаем CFG check в линкере (у нас нет легитимных indirect calls) -->
+      <!-- ControlFlowGuard=false = /GUARD:NO в линкере (правильный способ, не /guard:cf-) -->
+      <EnableUAC>false</EnableUAC>
       <!-- /MERGE: сливаем секции чтобы дизассемблер не мог легко восстановить границы функций -->
-      <AdditionalOptions>/guard:cf- /MERGE:.rdata=.text %(AdditionalOptions)</AdditionalOptions>
+      <AdditionalOptions>/GUARD:NO /MERGE:.rdata=.text %(AdditionalOptions)</AdditionalOptions>
       <AdditionalDependencies>d3d11.lib;dxgi.lib;dwmapi.lib;crypt32.lib;advapi32.lib;gdi32.lib;ole32.lib;shell32.lib;shlwapi.lib;user32.lib;version.lib;%(AdditionalDependencies)VMProtectSDK64.lib;</AdditionalDependencies>
     </Link>
+
   </ItemDefinitionGroup>
   <ItemGroup>
     <ClCompile Include="src\main.cpp" />
