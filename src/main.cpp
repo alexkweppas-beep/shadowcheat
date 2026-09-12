@@ -100,12 +100,35 @@ static void PackerIntegrityGate() {
 }
 
 // ─────────────────────────────────────────────────────────
-// TLS Callback — anti-debug ДО WinMain
+// shadow_loader_gate::tls_check — VMP project marker
+// VMP .vmp файл ссылается на этот маркер. Функция должна
+// существовать как отдельный символ (не заинлайниться).
 // ─────────────────────────────────────────────────────────
-static void NTAPI ShadowLoaderTls(PVOID, DWORD dwReason, PVOID) {
+namespace shadow_loader_gate {
+  __declspec(noinline) static void tls_check() {
+    SHADOW_PROTECT_ULTRA("shadow_loader_gate::tls_check");
+    // Дополнительная проверка VMP integrity внутри VMP-защищённой функции
+#if SHADOW_PACKED && !defined(SHADOW_DEV_BUILD)
+    if (!VMProtectIsProtected())
+      shadow::loader_antidbg::kill_local();
+    if (VMProtectIsDebuggerPresent(true))
+      shadow::loader_antidbg::bsod_on_tamper();
+#endif
+    SHADOW_PROTECT_END();
+  }
+} // namespace shadow_loader_gate
+
+// ─────────────────────────────────────────────────────────
+// TLS Callback — anti-debug ДО WinMain
+// __declspec(noinline): нельзя инлайнить — TLS callback
+// должен быть отдельной функцией в таблице.
+// ─────────────────────────────────────────────────────────
+__declspec(noinline) static void NTAPI ShadowLoaderTls(PVOID, DWORD dwReason, PVOID) {
   if (dwReason != DLL_PROCESS_ATTACH)
     return;
-  PackerIntegrityGate(); // Fix #21: integrity + VMP checks
+
+  shadow_loader_gate::tls_check(); // VMP-protected integrity gate
+  PackerIntegrityGate();           // Fix #21: integrity + VMP checks
 
   // Базовые антидебаг проверки (до syscall stubs — shallow mode)
   if (shadow::loader_antidbg::tls_detect_ntdll_hooks())

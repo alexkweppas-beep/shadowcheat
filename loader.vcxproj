@@ -42,8 +42,8 @@
       <!-- /EHa: async SEH (как в DLL) — позволяет __try/__except внутри C++ функций -->
       <!-- /GS-: отключаем stack canary — они ссылаются на символы, помогают IDA -->
       <!-- /Oi: intrinsics — меньше CRT вызовов в IAT -->
-      <!-- /Ob2: aggressive inlining — меньше узнаваемых frame-ов в стеке -->
-      <AdditionalOptions>/utf-8 /Zc:char8_t- /EHa /GS- /Oi /Ob2 %(AdditionalOptions)</AdditionalOptions>
+      <!-- /Ob2 УБРАН: aggressive inlining удаляет TLS callback и VMP-маркеры (лоадер не запускался) -->
+      <AdditionalOptions>/utf-8 /Zc:char8_t- /EHa /GS- /Oi %(AdditionalOptions)</AdditionalOptions>
       <FunctionLevelLinking>true</FunctionLevelLinking>
       <IntrinsicFunctions>true</IntrinsicFunctions>
       <SDLCheck>false</SDLCheck>
@@ -60,12 +60,10 @@
       <OptimizeReferences>true</OptimizeReferences>
       <!-- false: не генерировать PDB — реверсеры получали имена всех функций из него -->
       <GenerateDebugInformation>false</GenerateDebugInformation>
-      <!-- LTCG: whole-program link-time codegen — дополнительная обфускация CFG -->
+      <!-- LTCG: whole-program link-time codegen -->
       <LinkTimeCodeGeneration>UseLinkTimeCodeGeneration</LinkTimeCodeGeneration>
-      <!-- ControlFlowGuard=false = /GUARD:NO в линкере (правильный способ, не /guard:cf-) -->
-      <EnableUAC>false</EnableUAC>
-      <!-- /MERGE: сливаем секции чтобы дизассемблер не мог легко восстановить границы функций -->
-      <AdditionalOptions>/GUARD:NO /MERGE:.rdata=.text %(AdditionalOptions)</AdditionalOptions>
+      <!-- /GUARD:NO УБРАН: конфликтует с VMP CFG (лоадер не запускался после VMP) -->
+      <!-- /MERGE:.rdata=.text УБРАН: ломает TLS callbacks (.CRT$XLB в .rdata) -->
       <AdditionalDependencies>d3d11.lib;dxgi.lib;dwmapi.lib;crypt32.lib;advapi32.lib;gdi32.lib;ole32.lib;shell32.lib;shlwapi.lib;user32.lib;version.lib;%(AdditionalDependencies)VMProtectSDK64.lib;</AdditionalDependencies>
     </Link>
 
