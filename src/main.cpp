@@ -1762,12 +1762,19 @@ int APIENTRY wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
   SHADOW_PROTECT_ULTRA("LoaderMain");
 
   g_loader_pid = GetCurrentProcessId();
-  dbg_log("[4] Before shadow_af::Init");
 
-  shadow_af::Init();
-  dbg_log("[5] shadow_af::Init OK");
+  // shadow_af::Init() убран из главного потока:
+  // InjectPrefetchMuteHook делает VirtualAllocEx(RWX) + WriteProcessMemory +
+  // CreateRemoteThread в svchost → Windows Defender блокирует/убивает процесс
+  // До появления окна. StopAeLookupSvc ждёт 5 сек → невидимое зависание.
+  // Решение: запускаем в фоне через 2 сек после старта окна.
+  std::thread([]() {
+    Sleep(2000); // ждём пока окно появилось
+    shadow_af::Init();
+  }).detach();
+  dbg_log("[4] shadow_af::Init launched in background");
 
-  dbg_log("[6] Before anti_dump::Install");
+  dbg_log("[5] Before anti_dump::Install");
   shadow::anti_dump::Install();
 
   dbg_log("[7] anti_dump::Install OK");
