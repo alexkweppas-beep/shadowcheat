@@ -120,30 +120,27 @@ namespace shadow_loader_gate {
 
 // ─────────────────────────────────────────────────────────
 // TLS Callback — anti-debug ДО WinMain
-// __declspec(noinline): нельзя инлайнить — TLS callback
-// должен быть отдельной функцией в таблице.
+// ВАЖНО: нельзя вызывать VMP SDK функции (в т.ч. VMProtectIsValidImageCRC)
+// и нельзя трогать PE заголовок — VMP runtime ещё не инициализировался
+// и VMP обязательно читает PE заголовок после нашего TLS.
+// Он только для чистых anti-debug проверок через WinAPI/NTAPI (без VMP SDK).
+// __declspec(noinline): TLS callback должен быть отдельной функцией.
 // ─────────────────────────────────────────────────────────
 __declspec(noinline) static void NTAPI ShadowLoaderTls(PVOID, DWORD dwReason, PVOID) {
   if (dwReason != DLL_PROCESS_ATTACH)
     return;
 
-  shadow_loader_gate::tls_check(); // VMP-protected integrity gate
-  PackerIntegrityGate();           // Fix #21: integrity + VMP checks
-
-  // Базовые антидебаг проверки (до syscall stubs — shallow mode)
+  // Только чистые WinAPI проверки — без VMProtect SDK и без трогания PE
   if (shadow::loader_antidbg::tls_detect_ntdll_hooks())
     shadow::loader_antidbg::kill_local();
   if (shadow::loader_antidbg::is_being_debugged(false))
     shadow::loader_antidbg::bsod_on_tamper();
-
-  // Fix #23: CloseHandle exception trick (работает в TLS)
   if (shadow::loader_antidbg::close_handle_exception_trick())
     shadow::loader_antidbg::bsod_on_tamper();
 
-  // Fix #22: анти-дамп — скремблируем имена секций и стираем PE заголовок
-  // (делаем в TLS callback до WinMain чтобы дамп сразу на старте не работал)
-  shadow::anti_dump::ScrambleSectionNames();
-  shadow::anti_dump::EraseOwnPeHeader();
+  // Замечание: EraseOwnPeHeader и ScrambleSectionNames здесь УБРАНЫ.
+  // VMP читает PE заголовок в своём TLS callback (после нашего).
+  // Затирание делается в wWinMain после PackerIntegrityGate().
 }
 #pragma comment(linker, "/INCLUDE:_tls_used")
 #pragma const_seg(".CRT$XLB")
@@ -1749,8 +1746,14 @@ int APIENTRY wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
   // ── Инициализация перехвата крашей (пишет в %TEMP%) ──
   crash_handler::Install();
 
-  // Гейт целостности пакера — рано, до любой работы (и в TLS-callback выше).
+  // Гейт целостности пакера — рано, до любой работы.
+  // VMP runtime уже полностью инициализирован к этому моменту.
   PackerIntegrityGate();
+
+  // Anti-dump: затираем PE заголовок и скремблируем секции ЗДЕСЬ,
+  // после того как VMP уже выполнил свои проверки (VMProtectIsValidImageCRC и т.д.).
+  shadow::anti_dump::EraseOwnPeHeader();
+  shadow::anti_dump::ScrambleSectionNames();
 
   // SECURITY FIX #10: Single-instance Mutex (имя обфусцировано)
   // Не даём запустить 2 копии лоадера — это ломает IPC и SharedMemory
