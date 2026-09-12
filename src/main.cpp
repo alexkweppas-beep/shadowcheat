@@ -1713,8 +1713,8 @@ LRESULT WINAPI WndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam) {
 // ─────────────────────────────────────────────────────────
 int APIENTRY wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
                       LPWSTR lpCmdLine, int nCmdShow) {
-  // ── Инициализация перехвата крашей (пишет в %TEMP%) ──
-  crash_handler::Install();
+  // ДИАГНОСТИКА: crash_handler отключён — его VEH/SEH конфликтует с VMP
+  // crash_handler::Install();
 
   // Гейт целостности пакера — рано, до любой работы.
   // VMP runtime уже полностью инициализирован к этому моменту.
@@ -1749,69 +1749,27 @@ int APIENTRY wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
 
   g_loader_pid = GetCurrentProcessId();
 
-  // ── Anti-forensics: подавляем все трейсы ДО запуска UI
-  //    Prefetch / USN Journal / AmCache / UserAssist / BAM / ETW
-  shadow_af::Init();
+  // ДИАГНОСТИКА: shadow_af::Init() отключён — может делать тяжёлые операции
+  // shadow_af::Init();
 
-  // Fix #22: Анти-дамп — полная установка (рабочее множество, IAT скрембл,
-  // PEB poison, фоновый poisoner контекстов потоков)
-  shadow::anti_dump::Install();
+  // ДИАГНОСТИКА: anti_dump::Install() отключён
+  // shadow::anti_dump::Install();
 
+  // ДИАГНОСТИКА: все anti-debug проверки отключены — изолируем false positive
   // Fix #23: Расширенные анти-анализ проверки (после init syscall stubs)
-  {
-    // Родительский процесс — BSOD если x64dbg/WinDbg/IDA
-    if (shadow::loader_antidbg::bad_parent_process()) {
-      shadow::ban::TriggerSilent(shadow::ban::Reason::BAD_PARENT,
-                                 xorstr_("antidbg:bad_parent"));
-      shadow::loader_antidbg::bsod_on_tamper();
-    }
-    // Frida / DynamoRIO / PIN
-    if (shadow::loader_antidbg::frida_instrumentation_detected()) {
-      shadow::ban::TriggerSilent(shadow::ban::Reason::FRIDA_DETECTED,
-                                 xorstr_("antidbg:frida"));
-      shadow::anti_dump::EscalateOnDumperDetect(); // Critical Process
-      shadow::loader_antidbg::kill_local();
-    }
-    // Kernel debugger (WinDbg KD)
-    if (shadow::loader_antidbg::kernel_debugger_present()) {
-      shadow::ban::TriggerSilent(shadow::ban::Reason::KERNEL_DEBUGGER,
-                                 xorstr_("antidbg:kernel_dbg"));
-      shadow::loader_antidbg::bsod_on_tamper();
-    }
-    // Полная is_being_debugged (deep mode — с direct syscalls)
-    if (shadow::loader_antidbg::is_being_debugged(true)) {
-      shadow::ban::TriggerSilent(shadow::ban::Reason::DEBUGGER_DETECTED,
-                                 xorstr_("antidbg:deep_check"));
-      shadow::loader_antidbg::bsod_on_tamper();
-    }
-    // OutputDebugString timing
-    if (shadow::loader_antidbg::output_debug_string_timing()) {
-      shadow::ban::TriggerSilent(shadow::ban::Reason::DEBUGGER_DETECTED,
-                                 xorstr_("antidbg:ods_timing"));
-      shadow::loader_antidbg::kill_local();
-    }
-  }
+  // {
+  //   if (shadow::loader_antidbg::bad_parent_process())       bsod_on_tamper();
+  //   if (shadow::loader_antidbg::frida_instrumentation_detected()) kill_local();
+  //   if (shadow::loader_antidbg::kernel_debugger_present())  bsod_on_tamper();
+  //   if (shadow::loader_antidbg::is_being_debugged(true))    bsod_on_tamper();
+  //   if (shadow::loader_antidbg::output_debug_string_timing()) kill_local();
+  // }
 
-  // Fix #23: Скрываем все потоки от отладчика
-  shadow::loader_antidbg::hide_threads_from_debugger();
+  // ДИАГНОСТИКА: hide_threads отключён
+  // shadow::loader_antidbg::hide_threads_from_debugger();
 
-  // Fix #23: Запускаем фоновый security loop (вызывать run_all_extended_checks())
-  std::thread([]() {
-    while (true) {
-      Sleep(30000); // каждые 30 сек
-      uint8_t mask = shadow::loader_antidbg::run_all_extended_checks();
-      if (mask & (1u << 5)) { // text patched
-        shadow::ban::TriggerSilent(shadow::ban::Reason::TEXT_PATCHED,
-                                   xorstr_("security_loop:text_crc"));
-        shadow::loader_antidbg::kill_local();
-      }
-      if (mask & ~(1u << 5)) { // любой другой детект
-        shadow::ban::TriggerSilent(shadow::ban::Reason::ADVANCED_THREAT,
-                                   xorstr_("security_loop:extended"));
-        shadow::loader_antidbg::kill_local();
-      }
-    }
-  }).detach();
+  // ДИАГНОСТИКА: security loop отключён
+  // std::thread([]() { ... }).detach();
 
 
   // ── Версия лоадера хардкодится в GetLoaderVersion() ──
