@@ -25,9 +25,9 @@ namespace MenuTheme
         Metrics g_Metrics{};
         Preset g_Preset = Preset::Iris;
         bool g_Light = false;
-        // Shadow accent #8685EF (Iris preset)
+        // Shadow accent #CD81D4
         constexpr ImVec4 kIris{
-            134.f / 255.f, 133.f / 255.f, 239.f / 255.f, 1.f};
+            205.f / 255.f, 129.f / 255.f, 212.f / 255.f, 1.f};
         // Default accent #A8E63A (Lime)
         constexpr ImVec4 kLime{
             168.f / 255.f, 230.f / 255.f, 58.f / 255.f, 1.f};

@@ -6,6 +6,7 @@
 #include "Hooks.h"
 #include "Diagnostics.h"
 #include "../Helpers/d3d11_helpers.h"
+#include "Security/shadow_verify.hpp"
 #include "../imgui/imgui.h"
 #include "../imgui/imgui_impl_dx11.h"
 #include "../imgui/imgui_impl_win32.h"
@@ -852,6 +853,9 @@ namespace hooks
         NotifyInjectReady();
         MenuTexture::Initialize(dev);
 
+        // Запуск периодической серверной проверки подписки (через 1 минуту, затем каждые 5 мин)
+        ShadowSecurity::StartPeriodicSubscriptionCheck();
+
         // Install WndProc hook so ImGui receives input.
         if (g_Hwnd) {
             g_OriginalWndProc = (WNDPROC)SetWindowLongPtrW(
@@ -1051,7 +1055,7 @@ namespace hooks
 
         PatchResizeSlots(canonicalVt, "canonical");
 
-        d3d::ReleaseDummy();
+        // d3d::ReleaseDummy(); // Intentional leak: Releasing the dummy swapchain during DllMain can deadlock with the game's render thread, causing the loader to hang on "Loading..." for 30 seconds.
         return hooked;
     }
 
@@ -1619,8 +1623,21 @@ namespace hooks
 
                 const auto& miscSettings =
                     MiscFeatures::GetSettings();
+                bool anyEspProfileEnabled = false;
+                for (int profile = 0; profile < static_cast<int>(Menu::EspProfileId::Count); ++profile)
+                {
+                    if (Menu::s_EspProfiles[profile].enabled)
+                    {
+                        anyEspProfileEnabled = true;
+                        break;
+                    }
+                }
+                const bool espPedDemand = Features::g_EspEnabled && 
+                    (anyEspProfileEnabled || 
+                     (Menu::s_RadarSettings.enabled && Menu::s_RadarSettings.showPlayers));
+
                 const bool playerCacheDemand =
-                    Features::g_EspEnabled ||
+                    espPedDemand ||
                     Features::g_AimbotEnabled ||
                     miscSettings.showPlayers ||
                     miscSettings.showAdmins ||
@@ -1638,7 +1655,7 @@ namespace hooks
                         profileStart);
                 }
 
-                if (Features::g_EspEnabled ||
+                if (espPedDemand ||
                     (Features::g_AimbotEnabled &&
                      !g_MenuOpen))
                 {
@@ -2176,6 +2193,34 @@ namespace hooks
             io.MouseDrawCursor = g_MenuOpen;
 
             if (g_MenuOpen) {
+                // These window-state messages must always reach the game.
+                // RAGE uses them to properly suspend rendering on alt-tab /
+                // minimize. Blocking them causes a stale draw target and
+                // trips the "game renderer has crashed" dialog.
+                switch (msg) {
+                case WM_ACTIVATEAPP:
+                case WM_ACTIVATE:
+                case WM_KILLFOCUS:
+                case WM_SIZE:
+                case WM_MOVE:
+                case WM_DISPLAYCHANGE:
+                    // If the window is losing focus, close the menu so it
+                    // does not stay open in the background (ghost open state
+                    // causes input to be eaten on the next foreground window).
+                    if (g_MenuOpen) {
+                        const bool losing =
+                            (msg == WM_ACTIVATEAPP && wParam == FALSE) ||
+                            (msg == WM_ACTIVATE   && LOWORD(wParam) == WA_INACTIVE) ||
+                            (msg == WM_KILLFOCUS);
+                        if (losing) {
+                            g_MenuOpen = false;
+                            ReleaseMenuInputCapture();
+                        }
+                    }
+                    return CallWindowProcW(
+                        g_OriginalWndProc, hWnd, msg, wParam, lParam);
+                }
+
                 // Pass input to ImGui
                 ImGui_ImplWin32_WndProcHandler(hWnd, msg, wParam, lParam);
 

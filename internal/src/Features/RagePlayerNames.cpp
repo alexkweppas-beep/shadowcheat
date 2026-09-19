@@ -46,6 +46,7 @@ namespace
         bool nametagDisabled{};
         bool dead{};
         bool knock{};
+        bool inGreenZone{};
         float hp{-1.f};
         float hpSync{-1.f};
         float hpRaw{-1.f};
@@ -91,6 +92,7 @@ namespace
         bool needsVisibility{};
         bool includeNonPlayers{};
         bool familyLookup{};
+        bool greenZoneLookup{};
         // Which server's identity layout the built script is asking for. A
         // reconnect can land on a different one, and the script has to be
         // rebuilt when it does.
@@ -192,6 +194,7 @@ namespace
         }
         adminKey[write] = 0;
         bool familyLookupDemand = false;
+        bool greenZoneDemand = false;
         for (int index = 0;
              index < static_cast<int>(
                  Menu::EspProfileId::Count);
@@ -202,6 +205,9 @@ namespace
             familyLookupDemand |=
                 profile.enabled &&
                 profile.familyTag;
+            greenZoneDemand |=
+                profile.enabled &&
+                profile.greenZoneTag;
         }
 
         // Where names, factions and the admin flag live differs per server, and
@@ -231,21 +237,21 @@ namespace
             g_ScriptKey.needsVisibility == needsVisibility &&
             g_ScriptKey.includeNonPlayers == includeNonPlayers &&
             g_ScriptKey.familyLookup == familyLookupDemand &&
+            g_ScriptKey.greenZoneLookup == greenZoneDemand &&
             g_ScriptKey.identity == identity &&
             lstrcmpA(g_ScriptKey.adminKey, adminKey) == 0 &&
             g_SnapshotScript[0] != 0)
             return true;
 
+        SHADOW_PROTECT_MUT("Names.Snapshot");
         static const char* s_Format = nullptr;
         if (!s_Format)
-        {
-            SHADOW_PROTECT_ULTRA("Names.Snapshot");
             s_Format = SHADOW_DECRYPT_STRING_A(
             "const rows=[],seen={};"
             "const adminKey='%s';"
             "const adminVars=[%s];"
             "const ident=%d,famSrc=%d,rpHp=%d;"
-            "const needVis=%d,includeNonPlayers=%d,familyLookup=%d;"
+            "const needVis=%d,includeNonPlayers=%d,familyLookup=%d,greenZoneAny=%d;"
             "const root=(typeof globalThis!=='undefined'&&globalThis)||(typeof global!=='undefined'&&global)||(typeof window!=='undefined'&&window)||{};"
             "const ctx=root.__ctx__;"
             "const rage=(ctx&&ctx.mp)||(root.mp)||(typeof window!=='undefined'&&window.mp)||(typeof globalThis!=='undefined'&&globalThis.mp)||(typeof mp!=='undefined'?mp:null);"
@@ -293,6 +299,35 @@ namespace
             // appeared to change nothing. Stamped with the schema it was filled
             // under, and dropped when that no longer matches.
             "if(cache.rev!==4){cache.rev=4;cache.ident={};}"
+            "if(!root.__bfParsedGZ) root.__bfParsedGZ=[];"
+            "try{"
+            "var LZString=root.__bfLZ;"
+            "if(!LZString){"
+            "LZString=function(){var r=String.fromCharCode,o='ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/=',n='ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+-$',e={};function t(r,o){if(!e[r]){e[r]={};for(var n=0;n<r.length;n++)e[r][r.charAt(n)]=n}return e[r][o]}var i={decompressFromBase64:function(r){return null==r?'':''==r?null:i._decompress(r.length,32,function(n){return t(o,r.charAt(n))})},_decompress:function(o,n,e){var t,i,s,u,a,p,c,l=[],f=4,h=4,d=3,m='',v=[],g={val:e(0),position:n,index:1};for(t=0;t<3;t+=1)l[t]=t;for(s=0,a=Math.pow(2,2),p=1;p!=a;)u=g.val&g.position,g.position>>=1,0==g.position&&(g.position=n,g.val=e(g.index++)),s|=(u>0?1:0)*p,p<<=1;switch(s){case 0:for(s=0,a=Math.pow(2,8),p=1;p!=a;)u=g.val&g.position,g.position>>=1,0==g.position&&(g.position=n,g.val=e(g.index++)),s|=(u>0?1:0)*p,p<<=1;c=r(s);break;case 1:for(s=0,a=Math.pow(2,16),p=1;p!=a;)u=g.val&g.position,g.position>>=1,0==g.position&&(g.position=n,g.val=e(g.index++)),s|=(u>0?1:0)*p,p<<=1;c=r(s);break;case 2:return''}for(l[3]=c,i=c,v.push(c);;){if(g.index>o)return'';for(s=0,a=Math.pow(2,d),p=1;p!=a;)u=g.val&g.position,g.position>>=1,0==g.position&&(g.position=n,g.val=e(g.index++)),s|=(u>0?1:0)*p,p<<=1;switch(c=s){case 0:for(s=0,a=Math.pow(2,8),p=1;p!=a;)u=g.val&g.position,g.position>>=1,0==g.position&&(g.position=n,g.val=e(g.index++)),s|=(u>0?1:0)*p,p<<=1;l[h++]=r(s),c=h-1,f--;break;case 1:for(s=0,a=Math.pow(2,16),p=1;p!=a;)u=g.val&g.position,g.position>>=1,0==g.position&&(g.position=n,g.val=e(g.index++)),s|=(u>0?1:0)*p,p<<=1;l[h++]=r(s),c=h-1,f--;break;case 2:return v.join('')}if(0==f&&(f=Math.pow(2,d),d++),l[c])m=l[c];else{if(c!==h)return null;m=i+i.charAt(0)}v.push(m),l[h++]=i+m.charAt(0),i=m,0==--f&&(f=Math.pow(2,d),d++)}}};return i}();"
+            "root.__bfLZ=LZString;"
+            "}"
+            "if(root.sGreenZoneList && root.sGreenZoneList !== root.__bfLastGZStr){"
+            "root.__bfLastGZStr=root.sGreenZoneList;"
+            "let dec=LZString.decompressFromBase64(root.sGreenZoneList);"
+            "if(dec){"
+            "let parsed=JSON.parse(dec);"
+            "for(let i=0;i<parsed.length;i++){"
+            "let z=parsed[i];"
+            "if(z&&z.poly&&z.poly.length>0){"
+            "let minX=Infinity, maxX=-Infinity, minY=Infinity, maxY=-Infinity;"
+            "for(let k=0;k<z.poly.length;k++){"
+            "if(z.poly[k].x<minX)minX=z.poly[k].x;"
+            "if(z.poly[k].x>maxX)maxX=z.poly[k].x;"
+            "if(z.poly[k].y<minY)minY=z.poly[k].y;"
+            "if(z.poly[k].y>maxY)maxY=z.poly[k].y;"
+            "}"
+            "z.minX=minX; z.maxX=maxX; z.minY=minY; z.maxY=maxY;"
+            "}"
+            "}"
+            "root.__bfParsedGZ=parsed;"
+            "}"
+            "}"
+            "}catch(_){}"
             "const cleanLabel=(v,id)=>{let s=String(v==null?'':v).trim();"
             "if(!s)return '';if(id!=null&&id>=0){const q=String(id);"
             "if(s.endsWith('('+q+')'))s=s.slice(0,-q.length-2).trim();"
@@ -682,6 +717,37 @@ namespace
             "const safe=v=>String(v==null?'':v).replace(/[\\t\\r\\n]/g,' ');"
             // -1 keeps an unreadable value apart from a genuine zero.
             "const hpOut=v=>Number.isFinite(v)?Math.round(v*10)/10:-1;"
+            "let inGz=0;try{"
+            "if(greenZoneAny&&p&&Number.isFinite(p.x)){"
+            "let lp=local?local.position:null;"
+            "let distOk=false;"
+            "if(isLocal){distOk=true;}else if(lp){"
+            "let dx=p.x-lp.x,dy=p.y-lp.y,dz=p.z-lp.z;"
+            "if(dx*dx+dy*dy+dz*dz<=40000)distOk=true;"
+            "}"
+            "if(distOk){"
+            "if(root.__bfParsedGZ){"
+            "for(let i=0;i<root.__bfParsedGZ.length;i++){"
+            "let z=root.__bfParsedGZ[i];"
+            "if(z&&z.poly&&z.poly.length>=3){"
+            "if(p.x>=z.minX&&p.x<=z.maxX&&p.y>=z.minY&&p.y<=z.maxY){"
+            "let ins=false, j=z.poly.length-1;"
+            "for(let k=0;k<z.poly.length;j=k++){"
+            "let xi=z.poly[k].x, yi=z.poly[k].y;"
+            "let xj=z.poly[j].x, yj=z.poly[j].y;"
+            "if(((yi>p.y)!==(yj>p.y)) && (p.x < (xj-xi)*(p.y-yi)/(yj-yi)+xi)) ins=!ins;"
+            "}"
+            "if(ins){inGz=1;break;}"
+            "}"
+            "}else if(z&&z.center){"
+            "let cx=z.center.x,cy=z.center.y;"
+            "if(cx===undefined&&Array.isArray(z.center)){cx=z.center[0];cy=z.center[1];}"
+            "if(cx!==undefined&&cy!==undefined){"
+            "let dx=p.x-cx,dy=p.y-cy,r=z.range||z.radius||z.r||(z.center&&z.center.r)||z.size||100;"
+            "if(dx*dx+dy*dy<=r*r){inGz=1;break;}"
+            "}}"
+            "}}"
+            "}}}catch(_){}"
             "const row=[kind,isLocal?1:0,"
             "Number.isFinite(id)?id:-1,h,"
             "Number(p.x),Number(p.y),Number(p.z),admin,"
@@ -689,7 +755,7 @@ namespace
             "safe(name),safe(factionTag),safe(familyName),"
             "sqlId,safe(nickname),dead,knock,familyId,factionType,"
             "safe(factionKey),heading,hpOut(hp),hpOut(hpSync),"
-            "hpOut(hpRaw),dying];"
+            "hpOut(hpRaw),dying,inGz];"
             "rows.push(row.join('\\t'));};"
             "emit(local,0,true);"
             // emit() discards anything without a handle, which is every player
@@ -703,8 +769,11 @@ namespace
             "else if(rage.players.forEach)"
             "rage.players.forEach(p=>emit(p,0,p===local));"
             "}"
-            "if(includeNonPlayers&&rage.peds&&rage.peds.forEach)"
-            "rage.peds.forEach(p=>{let k=1;try{if(rage.game&&rage.game.ped&&rage.game.ped.isPedHuman){if(!rage.game.ped.isPedHuman(p.handle))k=2;}else if((rage.game&&rage.game.invoke&&rage.game.invoke('0xFF059E1E4C01E63C',p.handle)>>>0)===28)k=2;}catch(_){}emit(p,k,false);});"
+            "if(includeNonPlayers&&rage.peds){"
+            "const cb=p=>{let k=1;try{if(rage.game&&rage.game.ped&&rage.game.ped.isPedHuman){if(!rage.game.ped.isPedHuman(p.handle))k=2;}else if((rage.game&&rage.game.invoke&&rage.game.invoke('0xFF059E1E4C01E63C',p.handle)>>>0)===28)k=2;}catch(_){}emit(p,k,false);};"
+            "if(typeof rage.peds.forEachInStreamRange==='function')rage.peds.forEachInStreamRange(cb);"
+            "else if(typeof rage.peds.forEach==='function')rage.peds.forEach(cb);"
+            "}"
             // The identity line the reader has always parsed and the script has
             // never sent. Every family number in the log was therefore a
             // constant zero, which is not "nothing is happening" but "nothing
@@ -716,8 +785,7 @@ namespace
             "rows.push(['@identity',helpers?1:0,0,0,0,famCache,famPending,"
             "0,0,0,0].join('\\t'));"
             "return rows.join('\\n');");
-            SHADOW_PROTECT_END();
-        }
+        SHADOW_PROTECT_END();
         if (!s_Format)
             return false;
         const int length = std::snprintf(
@@ -731,7 +799,8 @@ namespace
                 roleplayHealth ? 1 : 0,
                 needsVisibility ? 1 : 0,
                 includeNonPlayers ? 1 : 0,
-                familyLookupDemand ? 1 : 0);
+                familyLookupDemand ? 1 : 0,
+                greenZoneDemand ? 1 : 0);
         const bool ok = length > 0 &&
             length < static_cast<int>(
                 sizeof(g_SnapshotScript));
@@ -741,6 +810,7 @@ namespace
             g_ScriptKey.needsVisibility = needsVisibility;
             g_ScriptKey.includeNonPlayers = includeNonPlayers;
             g_ScriptKey.familyLookup = familyLookupDemand;
+            g_ScriptKey.greenZoneLookup = greenZoneDemand;
             g_ScriptKey.identity = identity;
             lstrcpynA(
                 g_ScriptKey.adminKey,
@@ -1009,8 +1079,8 @@ namespace
         int familyRepliesEmpty = 0;
         int familyCanary = 0;
         int familyRpcDisabled = 0;
-            constexpr int kFieldCount = 25;
-            while (*cursor && parsedCount < 256)
+        constexpr int kFieldCount = 26;
+        while (*cursor && parsedCount < 256)
             {
                 const char* lineEnd = cursor;
                 while (*lineEnd && *lineEnd != '\n')
@@ -1252,6 +1322,15 @@ namespace
                             dyingF) &&
                         std::isfinite(dyingF))
                         entry.dyingFlag = static_cast<int>(dyingF);
+                    std::uint32_t inGz = 0;
+                    const char* inGzEnd = fieldEnd[25];
+                    if (inGzEnd > fieldBegin[25] && *(inGzEnd - 1) == '\r')
+                        --inGzEnd;
+                    if (ParseUnsigned(
+                            fieldBegin[25],
+                            inGzEnd,
+                            inGz))
+                        entry.inGreenZone = inGz != 0;
                     if (entry.factionId <= 0 &&
                         !entry.factionKey[0])
                         entry.factionTag[0] = 0;
@@ -1930,6 +2009,7 @@ namespace RagePlayerNames
                 g_Entries[index].nametagDisabled;
             output[index].dead = g_Entries[index].dead;
             output[index].knock = g_Entries[index].knock;
+            output[index].inGreenZone = g_Entries[index].inGreenZone;
             output[index].hp = g_Entries[index].hp;
             output[index].hpSync = g_Entries[index].hpSync;
             output[index].hpRaw = g_Entries[index].hpRaw;
@@ -2049,6 +2129,7 @@ namespace RagePlayerNames
                 g_Entries[index].nametagDisabled;
             entry.dead = g_Entries[index].dead;
             entry.knock = g_Entries[index].knock;
+            entry.inGreenZone = g_Entries[index].inGreenZone;
             entry.hp = g_Entries[index].hp;
             entry.hpSync = g_Entries[index].hpSync;
             entry.hpRaw = g_Entries[index].hpRaw;

@@ -485,6 +485,9 @@ namespace Menu
         VisualsRow("vehicle_snapline", ICON_FA_ARROWS_UP_DOWN,
             T("Snap line", "Снеп-линия", "Снеп-лінія"),
             &visual.snapLine, visual.snapLineColor, true);
+        VisualsRow("vehicle_snapline_trunk", ICON_FA_ARROW_DOWN_UP_ACROSS_LINE,
+            T("Snap line to trunk", "Снеп-линия к багажнику", "Снеп-лінія до багажника"),
+            &visual.snapLineToTrunk, visual.snapLineColor, false);
         if (MenuUi::BeginOverflowPopup("vehicle_snapline"))
         {
             gui->dropdown(
@@ -1054,6 +1057,7 @@ namespace Menu
             profile.weaponTag = false;
             profile.dynamicIdTag = false;
             profile.staticIdTag = false;
+            profile.greenZoneTag = false;
         }
 
         const char* const* boxStyles = BoxStyleNames();
@@ -1301,35 +1305,18 @@ namespace Menu
                 &profile.staticIdTag,
                 profile.staticIdColor,
                 false);
+            VisualsRow(
+                "green_zone",
+                ICON_FA_LEAF,
+                T("Green Zone", "Зеленая зона", "Зелена зона"),
+                &profile.greenZoneTag,
+                profile.greenZoneColor,
+                false);
         }
         ImGui::Dummy(
             ImVec2(0.f, MenuTheme::Sizes().space1 * UIScale()));
         MenuUi::EndInspectorIsland();
 
-        if (s_VisualPedProfile == static_cast<int>(EspProfileId::Admin))
-        {
-            MenuUi::BeginInspectorIsland(
-                "island_admin",
-                T("ADMIN", "АДМИН", "АДМІН"));
-            gui->text_field(
-                "##admin_variable_key",
-                T("Variable key", "Ключ переменной", "Ключ змінної"),
-                ImVec2(
-                    ImGui::GetContentRegionAvail().x,
-                    MenuTheme::Sizes().controlHeight * UIScale()),
-                s_AdminVariableKey,
-                sizeof(s_AdminVariableKey));
-            ImGui::Dummy(
-                ImVec2(0.f, MenuTheme::Sizes().space2 * UIScale()));
-            gui->slider_int(
-                T("Admin threshold",
-                  "Порог администратора",
-                  "Поріг адміністратора"),
-                &s_AdminLevelThreshold,
-                0,
-                20);
-            MenuUi::EndInspectorIsland();
-        }
 
         // Per-faction text colours belong to the faction tag, which any scope
         // can draw, but the settings for it live here where the faction scope

@@ -30,6 +30,7 @@ namespace EspProjected
         Armor,
         DynamicId,
         StaticId,
+        GreenZone,
         Count
     };
 
@@ -63,6 +64,7 @@ namespace EspProjected
         float rawDistance = 0.f;
         bool dead = false;
         bool knock = false;
+        bool greenZone = false;
     };
 
     struct ElementRect

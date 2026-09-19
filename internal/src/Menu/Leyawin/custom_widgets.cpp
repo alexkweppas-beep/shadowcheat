@@ -1287,7 +1287,7 @@ bool c_widgets::checkbox(const char* label, bool* callback, bool popup, int* key
             box.Min.x + toggleH * 0.5f + (toggleW - toggleH) * state.on,
             (box.Min.y + box.Max.y) * 0.5f),
         toggleH * 0.5f - 2.f * uiScale,
-        gui->get_clr(tokens.textPrimary, 1.f),
+        gui->get_clr(ImLerp(tokens.textPrimary, tokens.onAccent, state.on), 1.f),
         16);
 
     (void)popup;
@@ -1445,7 +1445,7 @@ bool c_widgets::checkbox_with_picker(const char* label, bool* callback, float co
             box.Min.x + toggleH * 0.5f + (toggleW - toggleH) * state.alpha,
             (box.Min.y + box.Max.y) * 0.5f),
         toggleH * 0.5f - 2.f * uiScale,
-        gui->get_clr(tokens.textPrimary, 1.f),
+        gui->get_clr(ImLerp(tokens.textPrimary, tokens.onAccent, state.alpha), 1.f),
         16);
 
     if (gui->begin_popup_w(key_popup, 210, -1)) {

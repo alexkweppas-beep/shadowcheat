@@ -764,6 +764,7 @@ void RenderIntoScene(
     player.staticId = "#345";
     player.health = 0.72f;
     player.armor = 0.45f;
+    player.greenZone = true;
 
     // Avoid double box: DrawPlayerOverlay draws box when profile.box.
     g_LastRects = EspProjected::DrawPlayerOverlay(

@@ -3,12 +3,18 @@
 #include "WorldEntityMotion.h"
 
 #include "RageV8Runtime.h"
+#include "../Menu/MenuState.h"
 #include "../vmp_markers.hpp"
 
+#include <cstdio>
 #include <Windows.h>
 #include <cmath>
 #include <cstdint>
 #include <cstring>
+
+namespace hooks {
+    extern bool g_MenuOpen;
+}
 
 namespace
 {
@@ -107,7 +113,7 @@ if(rotation)heading=number(rotation.z);
 }
 }catch(_){}
 if(!Number.isFinite(heading))heading=0;
-heading=((heading%360)+360)%360;
+heading=((heading%%360)+360)%%360;
 return heading;
 };
 const healthOf=(entity,handle)=>{
@@ -290,11 +296,13 @@ if(typeof pool.forEach!=='function')return;
 try{pool.forEach(entity=>emit(entity,kind,pool));}catch(_){}
 };
 visit(mp&&mp.vehicles,0,false);
-visit(mp&&mp.objects,1,true);
-visit(mp&&mp.pickups,2,true);
+visit(mp&&mp.objects,1,%s);
+visit(mp&&mp.pickups,2,%s);
 const body=rows.join('\n');
 return 'RWE1\t'+String(rows.length)+(body?'\n'+body:'');
 }catch(_){return 'RWE1\t0';}})())RAGEWORLD";
+
+
 
     volatile LONG g_Lock = 0;
     RageWorldEntities::Entry
@@ -679,6 +687,16 @@ return 'RWE1\t'+String(rows.length)+(body?'\n'+body:'');
             }
         }
 
+        bool itemsTabOpen = (hooks::g_MenuOpen && Menu::s_AcceptedMainPage == Menu::MainPage::Players && Menu::s_FilterSubTab == 3);
+        ULONGLONG currentIntervalMs = kRefreshIntervalMs;
+        if (itemsTabOpen)
+        {
+            if (Menu::s_ForceItemsRefresh)
+                currentIntervalMs = 0; // force immediate run
+            else
+                currentIntervalMs = 9999999999ull; // pause updates while tab is open
+        }
+
         // Same reasoning as the player snapshot: never stack two heavy scripts
         // into neighbouring V8 pumps.
         if (g_PendingCommand ||
@@ -686,21 +704,32 @@ return 'RWE1\t'+String(rows.length)+(body?'\n'+body:'');
             status.state != RageV8Runtime::State::Ready ||
             !status.rootCaptured ||
             (GetAsyncKeyState(VK_F1) & 0x8000) != 0 ||
-            now - g_LastRequest < kRefreshIntervalMs)
+            now - g_LastRequest < currentIntervalMs)
             return;
 
         g_LastRequest = now;
-        static const char* s_Snapshot = nullptr;
-        if (!s_Snapshot)
+        static const char* s_SnapshotTemplate = nullptr;
+        if (!s_SnapshotTemplate)
         {
             SHADOW_PROTECT_MUT("World.Snapshot");
-            s_Snapshot = SHADOW_DECRYPT_STRING_A(kSnapshotScript);
+            s_SnapshotTemplate = SHADOW_DECRYPT_STRING_A(kSnapshotScript);
             SHADOW_PROTECT_END();
         }
+        
+        static char s_ScriptBuffer[16384]{};
+        bool forceAll = false;
+        if (Menu::s_ForceItemsRefresh)
+        {
+            forceAll = true;
+            Menu::s_ForceItemsRefresh = false;
+        }
+
+        std::snprintf(s_ScriptBuffer, sizeof(s_ScriptBuffer), s_SnapshotTemplate, forceAll ? "true" : "false", forceAll ? "true" : "false");
+
         const bool queued =
-            s_Snapshot &&
+            s_ScriptBuffer[0] &&
             SafeEnqueue(
-                s_Snapshot,
+                s_ScriptBuffer,
                 &g_PendingCommand);
         if (!queued)
             g_PendingCommand = 0;

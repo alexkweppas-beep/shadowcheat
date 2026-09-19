@@ -11,6 +11,7 @@ namespace Menu
     int s_MiscSubTab = 0;
     int s_ConfigSubTab = 0;
     int s_FilterSubTab = 0;
+    bool s_ForceItemsRefresh = false;
     int s_PreviewForcedTab = -1;
     bool s_PreviewOpenSettings = false;
 

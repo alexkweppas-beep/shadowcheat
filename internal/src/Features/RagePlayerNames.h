@@ -60,6 +60,7 @@ namespace RagePlayerNames
         bool nametagDisabled{};
         bool dead{};
         bool knock{};
+        bool inGreenZone{};
         // Roleplay hit points, 0 to 100, or -1 when unreadable. hpSync is the
         // value RAGE syncs and hpRaw the untouched native read, kept apart
         // because the native baseline differs between local and remote peds.

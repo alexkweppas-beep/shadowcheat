@@ -1503,7 +1503,7 @@ try{if(typeof g.__bfAcStamp==='function')g.__bfAcStamp(np);}catch(e){}
 mp.events.add('render',g.__bfMvFn);
 }catch(e){}})();)JS";
         bool queued = false;
-        SHADOW_PROTECT_ULTRA("Misc.Freecam");
+        SHADOW_PROTECT_MUT("Misc.Freecam");
         const char* protectedHook = SHADOW_DECRYPT_STRING_A(kHook);
         queued = protectedHook && EnqueueFreecamScript(protectedHook);
         SHADOW_FREE_STRING(protectedHook);
@@ -2991,7 +2991,7 @@ inv('0x93A3996368C94158',s._vs,1);inv('0xB59E4BD37AE292DB',s._vs,1);s._vs=0;
 mp.events.add('render',g.__bfPlFn);
 }catch(e){}})();)JS";
         bool queued = false;
-        SHADOW_PROTECT_ULTRA("Misc.Player");
+        SHADOW_PROTECT_MUT("Misc.Player");
         const char* protectedHook = SHADOW_DECRYPT_STRING_A(kHook);
         queued = protectedHook && EnqueuePlayerScript(protectedHook);
         SHADOW_FREE_STRING(protectedHook);
@@ -3917,6 +3917,8 @@ mp.events.add('render',g.__bfPlFn);
                     "var data=api&&api.data;"
                     "if(data){"
                     "var list=g.sGreenZoneList;"
+                    "if(list!==g.__bfLastGZStrMisc){"
+                    "g.__bfLastGZStrMisc=list;"
                     "if(typeof list==='string'){"
                     "try{list=(api.server&&api.server.strDecompress)?"
                     "JSON.parse(api.server.strDecompress(list)):"
@@ -3931,6 +3933,9 @@ mp.events.add('render',g.__bfPlFn);
                     "}"
                     "}"
                     "if(!ids.length){for(var k=0;k<48;k++)ids.push(k);}"
+                    "g.__bfParsedIdsMisc=ids;"
+                    "}"
+                    "var ids=g.__bfParsedIdsMisc||[];"
                     "for(var j=0;j<ids.length;j++){"
                     "var key='greenZoneDisabled'+ids[j];"
                     "if(data.set)data.set(key,true);else data[key]=true;"
@@ -4117,7 +4122,7 @@ try{mp.game.invoke('0x0AE73D8DF3A762B2',false);}catch(e){}
 });
 }catch(e){}})();)JS";
         bool queued = false;
-        SHADOW_PROTECT_ULTRA("Misc.World");
+        SHADOW_PROTECT_MUT("Misc.World");
         const char* protectedHook = SHADOW_DECRYPT_STRING_A(kHook);
         queued = protectedHook && EnqueueWorldScript(protectedHook);
         SHADOW_FREE_STRING(protectedHook);
@@ -5418,6 +5423,8 @@ void RenderPlayersOverlay() noexcept
         ? g_Settings.playersDistance
         : 300.f;
 
+    const float maxDistSq = maxDist * maxDist;
+
     // Counters, not a roster: the per-player dump was noise for everyone who
     // just wants to know whether somebody is nearby.
     int playersAround = 0;
@@ -5427,14 +5434,14 @@ void RenderPlayersOverlay() noexcept
         if (e.local ||
             e.kind != RagePlayerNames::EntityKind::Player)
             continue;
-        float dist = 0.f;
+        float distSq = 0.f;
         if (haveLocal) {
             const float dx = e.x - localPos.x;
             const float dy = e.y - localPos.y;
             const float dz = e.z - localPos.z;
-            dist = std::sqrt(dx * dx + dy * dy + dz * dz);
+            distSq = dx * dx + dy * dy + dz * dz;
         }
-        if (dist > maxDist)
+        if (haveLocal && distSq > maxDistSq)
             continue;
         ++playersAround;
         if (e.adminLevel > Menu::s_AdminLevelThreshold)

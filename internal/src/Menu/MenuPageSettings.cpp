@@ -746,25 +746,16 @@ static void RenderConfigSlotsPageRedesign(ImGuiStyle *style) {
     _snprintf(id, sizeof(id) - 1, "cloud_cfg_%d", i);
 
     char metaBuf[128]{};
-    const char *metaLabel = nullptr;
-    const char *prefix = (i == s_CloudLoadedIdx)
-        ? T("Loaded", "Загружен", "Завантажено")
-        : T("Cloud", "Облако", "Хмара");
+    const char *metaLabel = "";
 
     if (s_CloudConfigs[i].updatedAt > 0) {
       SYSTEMTIME local{};
       if (TimeUtil::LocalTimeFromUnix(s_CloudConfigs[i].updatedAt, local)) {
-        // use UTF-8 bullet '•' = \xE2\x80\xA2
-        _snprintf(metaBuf, sizeof(metaBuf) - 1, "%s \xE2\x80\xA2 %s %02d.%02d.%02d %02d:%02d",
-                  prefix,
+        _snprintf(metaBuf, sizeof(metaBuf) - 1, "%s %02d.%02d.%02d %02d:%02d",
                   T("Created", "Создан", "Створено"),
                   local.wDay, local.wMonth, local.wYear % 100, local.wHour, local.wMinute);
         metaLabel = metaBuf;
-      } else {
-        metaLabel = prefix;
       }
-    } else {
-      metaLabel = prefix;
     }
 
     // -- tile background & name

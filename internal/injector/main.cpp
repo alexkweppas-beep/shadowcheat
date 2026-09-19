@@ -736,6 +736,17 @@ int wmain(int argc, wchar_t** argv)
             Log("GTA5.exe not found");
             return 1;
         }
+        // Validate it's the real game by checking for the graphics stack
+        HANDLE probe = OpenProcess(PROCESS_QUERY_INFORMATION | PROCESS_VM_READ, FALSE, pid);
+        if (probe) {
+            bool dxgi = RemoteModuleBase(probe, pid, L"dxgi.dll") != 0;
+            bool d3d11 = RemoteModuleBase(probe, pid, L"d3d11.dll") != 0;
+            CloseHandle(probe);
+            if (!dxgi || !d3d11) {
+                Log("GTA5.exe (pid=%lu) is a dummy or not fully loaded (missing dxgi/d3d11)", pid);
+                return 1;
+            }
+        }
         Log("GTA5.exe pid=%lu", pid);
     }
 

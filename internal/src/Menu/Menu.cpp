@@ -494,11 +494,16 @@ namespace Menu
         for (int i = 0; i < static_cast<int>(EspProfileId::Count); ++i)
         {
             EspProfileSettings& p = s_EspProfiles[i];
+            p.greenZoneTag = false;
+            // Default green zone color: bright green
+            p.greenZoneColor[0] = 0.0f;
+            p.greenZoneColor[1] = 1.0f;
+            p.greenZoneColor[2] = 0.0f;
             float* colors[] = {
                 p.boxColor, p.boxFillColor, p.nameColor, p.factionColor,
                 p.familyColor, p.healthColor, p.armorColor, p.skeletonColor,
                 p.distanceColor, p.weaponColor, p.dynamicIdColor,
-                p.staticIdColor, p.deadColor, p.hiddenColor, p.radarColor
+                p.staticIdColor, p.greenZoneColor, p.deadColor, p.hiddenColor, p.radarColor
             };
             for (float* c : colors)
                 c[3] = 1.f;

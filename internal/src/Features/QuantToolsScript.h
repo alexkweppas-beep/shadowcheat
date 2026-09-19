@@ -2799,7 +2799,9 @@ if (global._qt_unload) { try { global._qt_unload(); } catch(e) {} }
     }
 
 )QTJSX91"
-        R"QTJSX91(    mp.events.add('render', () => {
+        R"QTJSX91(    let hasWeaponAttachments = false;
+    mp.events.add('render', () => {
+        if (!hasWeaponAttachments) return;
         try {
             const wh = mp.players.local.weapon;
             if (!wh || wh === 0xA2719263) return;
@@ -2825,6 +2827,7 @@ if (global._qt_unload) { try { global._qt_unload(); } catch(e) {} }
         const key = String(weaponHash >>> 0);
         if (!weaponAttachments[key]) weaponAttachments[key] = {};
         weaponAttachments[key][compHash] = on;
+        hasWeaponAttachments = true;
         const ped = mp.players.local.handle;
         ensureWeapon(ped, weaponHash);
         try {
@@ -6411,6 +6414,7 @@ if (global._qt_unload) { try { global._qt_unload(); } catch(e) {} }
 
     mp.events.add('render', function miscRenderTick() {
         if (!qtAlive) return;
+        if (!miscState.god && !miscState.seatbelt && !miscState.carCol && !miscState.pedCol && !miscState.fixedHp && !miscState.fixedAp && !miscState.noclip && !miscState.freecam) return;
         try {
             const p = mp.players.local;
             if (!p) return;

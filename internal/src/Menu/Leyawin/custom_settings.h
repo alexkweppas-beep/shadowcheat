@@ -119,8 +119,8 @@ public:
   float auto_wall = 50.f;
   float picker_checkbox[4] = {140 / 255.f, 155 / 255.f, 253 / 255.f, 1.f};
 
-  float accent_color[4] = {168.f / 255.f, 230.f / 255.f, 58.f / 255.f,
-                           1.f}; // #8685EF Shadow
+  float accent_color[4] = {205.f / 255.f, 129.f / 255.f, 212.f / 255.f,
+                           1.f}; // #CD81D4
 
   int first_bullet_delay = 0;
   int after_kill = 500;

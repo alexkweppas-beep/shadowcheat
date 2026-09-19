@@ -183,6 +183,7 @@ namespace Game {
         bool visible{};
         bool dead{};
         bool knock{};
+        bool inGreenZone{};
         // Roleplay hit points on a 0..100 scale, -1 when unknown.
         float hp{-1.f};
         int adminLevel{};

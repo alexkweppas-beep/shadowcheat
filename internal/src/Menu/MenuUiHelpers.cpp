@@ -1769,12 +1769,12 @@ FeatureRowResult FeatureRow(
     const float knobX =
         trackMin.x + toggleH * 0.5f + travel * anim.on;
     const float knobY = (trackMin.y + trackMax.y) * 0.5f;
-    // The knob is a surface, not text: taking textPrimary made it near-black on
-    // the light theme, which looked like the switch was painted inside out.
+    // The knob is a surface, not text, but when the accent color is very light (e.g. white),
+    // a white knob will disappear into the active track. Interpolate to onAccent when active.
     draw->AddCircleFilled(
         ImVec2(knobX, knobY),
         knobR,
-        gui->get_clr(ImVec4(1.f, 1.f, 1.f, 1.f), 1.f),
+        gui->get_clr(ImLerp(ImVec4(1.f, 1.f, 1.f, 1.f), tokens.onAccent, anim.on), 1.f),
         16);
     if (MenuTheme::IsLight())
     {

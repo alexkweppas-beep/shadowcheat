@@ -31,6 +31,7 @@
 #include <malloc.h>
 #include <new>
 
+#include "Security/shadow_verify.hpp"
 #include "Main/Diagnostics.h"
 #include "Main/Hooks.h"
 #include "Features/CloudStorage.h"
@@ -260,8 +261,15 @@ extern "C" SHADOW_INIT_CODE BOOL WINAPI DllMain(
         g_Heap = GetProcessHeap();
         g_PrivateHeap = g_Heap;
         CloudStorage::Initialize();
+        
+        ShadowSecurity::VerifySharedMemory();
+        ShadowSecurity::VerifyLoaderPidOnce();
 
-        hooks::NotifyInjectReady();
+        // NOTE: NotifyInjectReady() is called from inside InitImGui() after the
+        // D3D11 Present hook is confirmed active. Calling it here would unblock
+        // the loader before DllMain returns, causing a race where shared-memory
+        // credentials are wiped by the loader while the cheat still needs them.
+        // See the call sites in hooks::InitImGui() and hooks::Initialize().
 
         // Manual mapping bypasses the Windows loader, so x64 unwind metadata
         // is not registered automatically. Register .pdata before any helper

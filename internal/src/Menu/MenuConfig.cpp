@@ -717,6 +717,7 @@ namespace Menu
             PROFILE_WRITE("weapon", profile.weaponTag);
             PROFILE_WRITE("dyn_id", profile.dynamicIdTag);
             PROFILE_WRITE("stat_id", profile.staticIdTag);
+            PROFILE_WRITE("green_zone", profile.greenZoneTag);
             PROFILE_WRITE("show_dead", profile.showDead);
             PROFILE_WRITE("visible", profile.visibleCheck);
             PROFILE_WRITE("hidden_style", profile.hiddenStyle);
@@ -741,7 +742,7 @@ namespace Menu
             PROFILE_WRITE("layouts_mig", profile.layoutsMigrated ? 1 : 0);
             PROFILE_WRITE("hp_show_val", profile.healthShowValue ? 1 : 0);
             PROFILE_WRITE("ar_show_val", profile.armorShowValue ? 1 : 0);
-            for (int li = 0; li < 9; ++li) {
+            for (int li = 0; li < 10; ++li) {
                 sprintf_s(key, "esp%d_lay%d_side", p, li);
                 CFG_WRITE(key, profile.layouts[li].side);
                 sprintf_s(key, "esp%d_lay%d_ord", p, li);
@@ -776,6 +777,8 @@ namespace Menu
                 CFG_WRITE(key, profile.dynamicIdColor[c]);
                 sprintf_s(key, "esp%d_statid_color%d", p, c);
                 CFG_WRITE(key, profile.staticIdColor[c]);
+                sprintf_s(key, "esp%d_greenzone_color%d", p, c);
+                CFG_WRITE(key, profile.greenZoneColor[c]);
                 sprintf_s(key, "esp%d_dead_color%d", p, c);
                 CFG_WRITE(key, profile.deadColor[c]);
                 sprintf_s(key, "esp%d_radar_color%d", p, c);
@@ -836,6 +839,7 @@ namespace Menu
         CFG_WRITE("vehicle_vis_aircraft", s_VehicleVisualSettings.showAircraft);
         CFG_WRITE("vehicle_vis_other", s_VehicleVisualSettings.showOther);
         CFG_WRITE("vehicle_vis_snapline", s_VehicleVisualSettings.snapLine);
+        CFG_WRITE("vehicle_vis_snapline_trunk", s_VehicleVisualSettings.snapLineToTrunk);
         CFG_WRITE(
             "vehicle_vis_snapline_origin",
             s_VehicleVisualSettings.snapLineOrigin);
@@ -1493,6 +1497,7 @@ namespace Menu
             PROFILE_READ("weapon", CFG_READ_BOOL, profile.weaponTag);
             PROFILE_READ("dyn_id", CFG_READ_BOOL, profile.dynamicIdTag);
             PROFILE_READ("stat_id", CFG_READ_BOOL, profile.staticIdTag);
+            PROFILE_READ("green_zone", CFG_READ_BOOL, profile.greenZoneTag);
             PROFILE_READ("show_dead", CFG_READ_BOOL, profile.showDead);
             PROFILE_READ("visible", CFG_READ_BOOL, profile.visibleCheck);
             PROFILE_READ("hidden_style", CFG_READ_INT, profile.hiddenStyle);
@@ -1531,7 +1536,7 @@ namespace Menu
                 CFG_READ_INT(key, showAr);
                 profile.healthShowValue = showHp != 0;
                 profile.armorShowValue = showAr != 0;
-                for (int li = 0; li < 9; ++li) {
+                for (int li = 0; li < 10; ++li) {
                     sprintf_s(key, "esp%d_lay%d_side", p, li);
                     CFG_READ_INT(key, profile.layouts[li].side);
                     sprintf_s(key, "esp%d_lay%d_ord", p, li);
@@ -1591,6 +1596,8 @@ namespace Menu
                 CFG_READ_FLOAT(key, profile.dynamicIdColor[c]);
                 sprintf_s(key, "esp%d_statid_color%d", p, c);
                 CFG_READ_FLOAT(key, profile.staticIdColor[c]);
+                sprintf_s(key, "esp%d_greenzone_color%d", p, c);
+                CFG_READ_FLOAT(key, profile.greenZoneColor[c]);
                 sprintf_s(key, "esp%d_dead_color%d", p, c);
                 CFG_READ_FLOAT(key, profile.deadColor[c]);
                 sprintf_s(key, "esp%d_radar_color%d", p, c);
@@ -1672,6 +1679,9 @@ namespace Menu
         CFG_READ_BOOL(
             "vehicle_vis_snapline",
             s_VehicleVisualSettings.snapLine);
+        CFG_READ_BOOL(
+            "vehicle_vis_snapline_trunk",
+            s_VehicleVisualSettings.snapLineToTrunk);
         CFG_READ_INT(
             "vehicle_vis_snapline_origin",
             s_VehicleVisualSettings.snapLineOrigin);

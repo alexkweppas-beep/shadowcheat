@@ -1986,6 +1986,7 @@ namespace Game {
             output.visible = snapshot.visible;
             output.dead = snapshot.dead;
             output.knock = snapshot.knock;
+            output.inGreenZone = snapshot.inGreenZone;
             output.hp = snapshot.hp;
             output.adminLevel = snapshot.adminLevel;
             output.factionId = snapshot.factionId;

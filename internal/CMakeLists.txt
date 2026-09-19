@@ -14,6 +14,8 @@ if(NOT PROJECT_NAME)
     project(shadow_internal LANGUAGES CXX C)
 endif()
 
+enable_language(ASM_MASM)
+
 # Off for anything a user ever runs: development tooling writes a crash log,
 # profiler reports and an event log to disk, which the shipping payload must
 # never do. This is the switch Hooks.h already checks to un-stub HLog, so
@@ -38,25 +40,14 @@ option(SHADOW_EVENT_LOGGER
 option(SHADOW_ENABLE_VMP
     "Protect Release shadow_internal.dll with VMProtect" ON)
 option(SHADOW_KEEP_VMP_RAW
-    "Keep shadow_internal.raw.dll beside the protected artifact" OFF)
+    "Keep shadow_internal.raw.dll beside the protected artifact" ON)
 set(SHADOW_VMP_ROOT "" CACHE PATH
     "VMProtect directory containing VMProtect_Con.exe, Include/C and Lib/Windows")
 set(SHADOW_VMP_WATERMARK "" CACHE STRING
     "Optional existing VMProtect watermark name")
 
 if(SHADOW_ENABLE_VMP)
-    if(NOT SHADOW_VMP_ROOT AND DEFINED ENV{SHADOW_VMP_ROOT})
-        file(TO_CMAKE_PATH "$ENV{SHADOW_VMP_ROOT}" SHADOW_VMP_ROOT)
-    endif()
-    if(NOT SHADOW_VMP_ROOT)
-        get_filename_component(_shadow_vmp_bundled
-            "${CMAKE_CURRENT_SOURCE_DIR}/../../../vmp 3.9.4 ultimate"
-            ABSOLUTE)
-        if(EXISTS "${_shadow_vmp_bundled}/VMProtect_Con.exe")
-            set(SHADOW_VMP_ROOT "${_shadow_vmp_bundled}")
-        endif()
-    endif()
-
+    set(SHADOW_VMP_ROOT "C:/Users/Vlad/Desktop/vmp 3.9.4 ultimate")
     set(SHADOW_VMP_CONSOLE
         "${SHADOW_VMP_ROOT}/VMProtect_Con.exe")
     set(SHADOW_VMP_INCLUDE
@@ -102,6 +93,7 @@ set(SHADOW_MINHOOK_SOURCES
 add_library(internal SHARED
     ${SHADOW_INTERNAL_SOURCES}
     ${SHADOW_MINHOOK_SOURCES}
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/Security/ida_cloak.asm"
     # The preview mesh is several megabytes; carried as RCDATA because a
     # constexpr array that size runs the compiler out of memory.
     "${CMAKE_CURRENT_SOURCE_DIR}/src/Features/ModelPreviewMesh.rc")
@@ -120,16 +112,18 @@ target_compile_definitions(internal PRIVATE
     _USRLIB
     NDEBUG
     UNICODE
-    _UNICODE)
+    _UNICODE
+    _CRT_SECURE_NO_WARNINGS
+    JM_XORSTR_DISABLE_AVX_INTRINSICS)
 
 if(SHADOW_ENABLE_VMP)
     target_include_directories(internal PRIVATE "${SHADOW_VMP_INCLUDE}")
     target_compile_definitions(internal PRIVATE
-        "$<$<CONFIG:Release>:SHADOW_PACKER=1>"
-        "$<$<CONFIG:Release>:SHADOW_HAVE_VMP_SDK=1>"
-        "$<$<CONFIG:Release>:SHADOW_PROTECTED_RELEASE=1>")
+        "$<$<OR:$<CONFIG:Release>,$<CONFIG:RelWithDebInfo>>:SHADOW_PACKER=1>"
+        "$<$<OR:$<CONFIG:Release>,$<CONFIG:RelWithDebInfo>>:SHADOW_HAVE_VMP_SDK=1>"
+        "$<$<OR:$<CONFIG:Release>,$<CONFIG:RelWithDebInfo>>:SHADOW_PROTECTED_RELEASE=1>")
     target_link_libraries(internal PRIVATE
-        "$<$<CONFIG:Release>:${SHADOW_VMP_LIBRARY}>")
+        "$<$<OR:$<CONFIG:Release>,$<CONFIG:RelWithDebInfo>>:${SHADOW_VMP_LIBRARY}>")
 endif()
 
 if(SHADOW_DEV)
@@ -154,15 +148,15 @@ target_compile_options(internal PRIVATE
 
 if(MSVC)
     target_compile_options(internal PRIVATE
-        "$<$<CONFIG:Release>:/O2>"
-        "$<$<CONFIG:Release>:/Ob2>"
-        "$<$<CONFIG:Release>:/GL>"
-        "$<$<CONFIG:Release>:/Gy>"
-        "$<$<CONFIG:Release>:/Gw>"
-        "$<$<CONFIG:Release>:/GS>"
-        "$<$<CONFIG:Release>:/sdl>"
-        "$<$<CONFIG:Release>:/Zc:inline>"
-        "$<$<CONFIG:Release>:/Brepro>")
+        "$<$<OR:$<CONFIG:Release>,$<CONFIG:RelWithDebInfo>>:/O2>"
+        "$<$<OR:$<CONFIG:Release>,$<CONFIG:RelWithDebInfo>>:/Ob2>"
+        "$<$<OR:$<CONFIG:Release>,$<CONFIG:RelWithDebInfo>>:/GL>"
+        "$<$<OR:$<CONFIG:Release>,$<CONFIG:RelWithDebInfo>>:/Gy>"
+        "$<$<OR:$<CONFIG:Release>,$<CONFIG:RelWithDebInfo>>:/Gw>"
+        "$<$<OR:$<CONFIG:Release>,$<CONFIG:RelWithDebInfo>>:/GS>"
+        "$<$<OR:$<CONFIG:Release>,$<CONFIG:RelWithDebInfo>>:/sdl>"
+        "$<$<OR:$<CONFIG:Release>,$<CONFIG:RelWithDebInfo>>:/Zc:inline>"
+        "$<$<OR:$<CONFIG:Release>,$<CONFIG:RelWithDebInfo>>:/Brepro>")
 endif()
 
 target_link_libraries(internal PRIVATE
@@ -201,15 +195,15 @@ target_link_options(internal PRIVATE
     # machine's layout and username. DllMain still wipes the RSDS record at
     # runtime as a second line for configs that link with /DEBUG.
     /PDBALTPATH:shadow.pdb
-    "$<$<CONFIG:Release>:/LTCG>"
-    "$<$<CONFIG:Release>:/OPT:REF>"
-    "$<$<CONFIG:Release>:/OPT:ICF>"
-    "$<$<CONFIG:Release>:/INCREMENTAL:NO>"
-    "$<$<CONFIG:Release>:/DYNAMICBASE>"
-    "$<$<CONFIG:Release>:/HIGHENTROPYVA>"
-    "$<$<CONFIG:Release>:/NXCOMPAT>"
-    "$<$<CONFIG:Release>:/Brepro>"
-    "$<$<CONFIG:Release>:/RELEASE>")
+    "$<$<OR:$<CONFIG:Release>,$<CONFIG:RelWithDebInfo>>:/LTCG>"
+    "$<$<OR:$<CONFIG:Release>,$<CONFIG:RelWithDebInfo>>:/OPT:REF>"
+    "$<$<OR:$<CONFIG:Release>,$<CONFIG:RelWithDebInfo>>:/OPT:ICF>"
+    "$<$<OR:$<CONFIG:Release>,$<CONFIG:RelWithDebInfo>>:/INCREMENTAL:NO>"
+    "$<$<OR:$<CONFIG:Release>,$<CONFIG:RelWithDebInfo>>:/DYNAMICBASE>"
+    "$<$<OR:$<CONFIG:Release>,$<CONFIG:RelWithDebInfo>>:/HIGHENTROPYVA>"
+    "$<$<OR:$<CONFIG:Release>,$<CONFIG:RelWithDebInfo>>:/NXCOMPAT>"
+    "$<$<OR:$<CONFIG:Release>,$<CONFIG:RelWithDebInfo>>:/Brepro>"
+    "$<$<OR:$<CONFIG:Release>,$<CONFIG:RelWithDebInfo>>:/RELEASE>")
 
 if(SHADOW_ENABLE_VMP)
     set(_shadow_internal_output_name "shadow_internal.raw")

@@ -72,10 +72,12 @@ namespace Features {
     {
         if (handle == 0)
             return nullptr;
-        for (const LiveBinding& binding : s_LiveBindings)
+        const std::uint32_t hash = (handle * 2654435761u) % kMaxLiveEntities;
+        for (std::uint32_t i = 0; i < 4; ++i)
         {
-            if (binding.handle == handle)
-                return binding.object;
+            const std::uint32_t index = (hash + i) % kMaxLiveEntities;
+            if (s_LiveBindings[index].handle == handle)
+                return s_LiveBindings[index].object;
         }
         return nullptr;
     }
@@ -83,21 +85,21 @@ namespace Features {
     void BindLiveEntity(
         std::uint32_t handle, const void* object) noexcept
     {
-        if (handle == 0 || !object)
+        if (handle == 0)
             return;
-        for (LiveBinding& binding : s_LiveBindings)
+        const std::uint32_t hash = (handle * 2654435761u) % kMaxLiveEntities;
+        for (std::uint32_t i = 0; i < 4; ++i)
         {
-            if (binding.handle == handle || binding.handle == 0)
+            const std::uint32_t index = (hash + i) % kMaxLiveEntities;
+            if (s_LiveBindings[index].handle == handle || s_LiveBindings[index].handle == 0)
             {
-                binding.handle = handle;
-                binding.object = object;
+                s_LiveBindings[index].handle = handle;
+                s_LiveBindings[index].object = object;
                 return;
             }
         }
-        // Full: the oldest entry is as good a victim as any, and a lost
-        // binding costs one frame of distance matching, not correctness.
-        s_LiveBindings[0].handle = handle;
-        s_LiveBindings[0].object = object;
+        s_LiveBindings[hash].handle = handle;
+        s_LiveBindings[hash].object = object;
     }
 
     struct SmoothedVisual final
@@ -397,8 +399,7 @@ namespace Features {
             const float dx = entry.x - localPosition.x;
             const float dy = entry.y - localPosition.y;
             const float dz = entry.z - localPosition.z;
-            const float distance =
-                sqrtf(dx * dx + dy * dy + dz * dz);
+            const float distanceSq = dx * dx + dy * dy + dz * dz;
 
             bool drawBox = false;
             bool drawName = false;
@@ -407,6 +408,7 @@ namespace Features {
             bool drawHealth = false;
             bool drawTrunk = false;
             bool drawSnapLine = false;
+            bool drawSnapLineToTrunk = false;
             int snapOrigin = 0;
             const float* boxColor = nullptr;
             const float* textColor = nullptr;
@@ -416,7 +418,7 @@ namespace Features {
                 RageWorldEntities::EntityKind::Vehicle)
             {
                 if (!vehicles.enabled ||
-                    distance > vehicles.maxDistance ||
+                    distanceSq > vehicles.maxDistance * vehicles.maxDistance ||
                     (entry.occupied && !vehicles.showOccupied) ||
                     (!entry.occupied && !vehicles.showEmpty) ||
                     !VehicleClassEnabled(
@@ -436,6 +438,7 @@ namespace Features {
                 drawHealth = vehicles.health;
                 drawTrunk = vehicles.trunk;
                 drawSnapLine = vehicles.snapLine;
+                drawSnapLineToTrunk = vehicles.snapLineToTrunk;
                 snapOrigin = vehicles.snapLineOrigin;
                 boxColor = vehicles.boxColor;
                 textColor = vehicles.textColor;
@@ -447,7 +450,7 @@ namespace Features {
                     entry.kind ==
                     RageWorldEntities::EntityKind::Pickup;
                 if (!objects.enabled ||
-                    distance > objects.maxDistance ||
+                    distanceSq > objects.maxDistance * objects.maxDistance ||
                     (pickup && !objects.showPickups) ||
                     (!pickup && !objects.showObjects) ||
                     // Show all only sets the shown-list aside; the hidden-list
@@ -479,7 +482,7 @@ namespace Features {
                 continue;
             const ImU32 boxCol = WorldColor(boxColor);
             const ImU32 textCol = WorldColor(textColor);
-            if (drawSnapLine && snapColor)
+            if ((drawSnapLine || (drawSnapLineToTrunk && entry.trunkOpen)) && snapColor)
             {
                 DrawSnapLine(
                     draw,
@@ -611,7 +614,7 @@ namespace Features {
                     label,
                     sizeof(label) - 1,
                     "%.0f m",
-                    distance);
+                    sqrtf(distanceSq));
                 DrawWorldEntityLabel(
                     draw,
                     projection,
@@ -928,24 +931,24 @@ namespace Features {
             return;
         const ULONGLONG now = GetTickCount64();
         SmoothedBox* slot = nullptr;
-        SmoothedBox* oldest = &s_SmoothedBoxes[0];
-        for (auto& entry : s_SmoothedBoxes)
-        {
-            if (entry.initialized && entry.ped == ped)
-            {
+        SmoothedBox* oldest = nullptr;
+        const std::uint32_t hash = static_cast<std::uint32_t>(((reinterpret_cast<std::uintptr_t>(ped) >> 4) * 2654435761u) % 256);
+        for (std::uint32_t i = 0; i < 8; ++i) {
+            std::uint32_t index = (hash + i) % 256;
+            auto& entry = s_SmoothedBoxes[index];
+            if (entry.initialized && entry.ped == ped) {
                 slot = &entry;
                 break;
             }
-            if (!entry.initialized)
-            {
+            if (!entry.initialized && !slot) {
                 slot = &entry;
-                break;
             }
-            if (entry.lastSeen < oldest->lastSeen)
+            if (entry.initialized && (!oldest || entry.lastSeen < oldest->lastSeen)) {
                 oldest = &entry;
+            }
         }
-        if (!slot)
-            slot = oldest;
+        if (!slot) slot = oldest;
+        if (!slot) slot = &s_SmoothedBoxes[hash];
 
         const float rawW = boxMax.x - boxMin.x;
         const float rawH = boxMax.y - boxMin.y;
@@ -1085,25 +1088,25 @@ namespace Features {
     {
         const ULONGLONG now = GetTickCount64();
         SmoothedPosition* slot = nullptr;
-        SmoothedPosition* oldest =
-            &s_SmoothedPositions[0];
-        for (auto& entry : s_SmoothedPositions)
-        {
-            if (entry.initialized && entry.ped == ped)
-            {
+        SmoothedPosition* oldest = nullptr;
+        const std::uint32_t hash = static_cast<std::uint32_t>(((reinterpret_cast<std::uintptr_t>(ped) >> 4) * 2654435761u) % 256);
+        for (std::uint32_t i = 0; i < 8; ++i) {
+            std::uint32_t index = (hash + i) % 256;
+            auto& entry = s_SmoothedPositions[index];
+            if (entry.initialized && entry.ped == ped) {
                 slot = &entry;
                 break;
             }
-            if (!entry.initialized)
-            {
+            if (!entry.initialized && !slot) {
                 slot = &entry;
-                break;
             }
-            if (entry.lastSeen < oldest->lastSeen)
+            if (entry.initialized && (!oldest || entry.lastSeen < oldest->lastSeen)) {
                 oldest = &entry;
+            }
         }
-        if (!slot)
-            slot = oldest;
+        if (!slot) slot = oldest;
+        if (!slot) slot = &s_SmoothedPositions[hash];
+
         if (!slot->initialized ||
             slot->ped != ped ||
             now - slot->lastSeen > 2000)
@@ -1185,27 +1188,24 @@ namespace Features {
             return;
         const ULONGLONG now = GetTickCount64();
         SmoothedVisual* slot = nullptr;
-        SmoothedVisual* oldest =
-            &s_SmoothedVisuals[0];
-        for (auto& entry : s_SmoothedVisuals)
-        {
-            if (entry.initialized &&
-                entry.handle == visual.rageHandle &&
-                entry.ped == ped)
-            {
+        SmoothedVisual* oldest = nullptr;
+        const std::uint32_t hash = static_cast<std::uint32_t>(((reinterpret_cast<std::uintptr_t>(ped) >> 4) * 2654435761u) % 256);
+        for (std::uint32_t i = 0; i < 8; ++i) {
+            std::uint32_t index = (hash + i) % 256;
+            auto& entry = s_SmoothedVisuals[index];
+            if (entry.initialized && entry.handle == visual.rageHandle && entry.ped == ped) {
                 slot = &entry;
                 break;
             }
-            if (!entry.initialized)
-            {
+            if (!entry.initialized && !slot) {
                 slot = &entry;
-                break;
             }
-            if (entry.lastSeen < oldest->lastSeen)
+            if (entry.initialized && (!oldest || entry.lastSeen < oldest->lastSeen)) {
                 oldest = &entry;
+            }
         }
-        if (!slot)
-            slot = oldest;
+        if (!slot) slot = oldest;
+        if (!slot) slot = &s_SmoothedVisuals[hash];
 
         if (!slot->initialized ||
             slot->handle != visual.rageHandle ||
@@ -1475,10 +1475,11 @@ namespace Features {
                  Menu::EspProfileId::Count);
              ++index)
         {
+            EspProjected::EnsureLayoutsMigrated(
+                Menu::s_EspProfiles[index]);
             if (Menu::s_EspProfiles[index].enabled)
             {
                 anyProfileEnabled = true;
-                break;
             }
         }
         const bool worldVisualDemand =
@@ -1519,44 +1520,58 @@ namespace Features {
             // owns everything only the server knows, but where a thing is and
             // which way it faces is read fresh every frame, so there is
             // nothing left to interpolate.
-            const int liveCount = GameEntities::Copy(
-                s_LiveEntities,
-                kMaxLiveEntities,
-                GameEntities::kVehicles | GameEntities::kObjects);
-            GameEntities::Live* live = s_LiveEntities;
+            bool needsFullScan = false;
             int refreshed = 0;
-            if (liveCount > 0)
-            {
-                for (int index = 0; index < worldEntryCount; ++index)
-                {
-                    RageWorldEntities::Entry& entry = worldEntries[index];
-                    // A vehicle must not be matched to a crate that happens to
-                    // sit closer than any car.
-                    const GameEntities::Kind wanted =
-                        entry.kind ==
-                            RageWorldEntities::EntityKind::Vehicle
-                            ? GameEntities::Kind::Vehicle
-                            : GameEntities::Kind::Object;
 
-                    // Re-matching by distance every frame is what left fast
-                    // cars behind: they outrun the search radius before the
-                    // next snapshot arrives, which is exactly when smooth
-                    // motion matters.
-                    int best = -1;
-                    const void* bound = LiveEntityBinding(entry.handle);
-                    if (bound)
+            for (int index = 0; index < worldEntryCount; ++index)
+            {
+                RageWorldEntities::Entry& entry = worldEntries[index];
+                const void* bound = LiveEntityBinding(entry.handle);
+                if (bound)
+                {
+                    Vector3 position{};
+                    float heading = 0.f;
+                    if (GameEntities::ReadPose(bound, position, heading))
                     {
-                        for (int other = 0; other < liveCount; ++other)
-                        {
-                            if (live[other].object == bound)
-                            {
-                                best = other;
-                                break;
-                            }
-                        }
+                        entry.x = position.x;
+                        entry.y = position.y;
+                        entry.z = position.z;
+                        entry.heading = heading;
+                        ++refreshed;
+                        continue;
                     }
-                    if (best < 0)
+                    else
                     {
+                        BindLiveEntity(entry.handle, nullptr);
+                    }
+                }
+                needsFullScan = true;
+            }
+
+            if (needsFullScan)
+            {
+                const int liveCount = GameEntities::Copy(
+                    s_LiveEntities,
+                    kMaxLiveEntities,
+                    GameEntities::kVehicles | GameEntities::kObjects);
+                
+                GameEntities::Live* live = s_LiveEntities;
+                
+                if (liveCount > 0)
+                {
+                    for (int index = 0; index < worldEntryCount; ++index)
+                    {
+                        RageWorldEntities::Entry& entry = worldEntries[index];
+                        if (LiveEntityBinding(entry.handle))
+                            continue;
+
+                        const GameEntities::Kind wanted =
+                            entry.kind ==
+                                RageWorldEntities::EntityKind::Vehicle
+                                ? GameEntities::Kind::Vehicle
+                                : GameEntities::Kind::Object;
+
+                        int best = -1;
                         float bestDistance = 36.f;
                         for (int other = 0; other < liveCount; ++other)
                         {
@@ -1577,16 +1592,15 @@ namespace Features {
                             }
                         }
                         if (best >= 0)
-                            BindLiveEntity(
-                                entry.handle, live[best].object);
+                        {
+                            BindLiveEntity(entry.handle, live[best].object);
+                            entry.x = live[best].position.x;
+                            entry.y = live[best].position.y;
+                            entry.z = live[best].position.z;
+                            entry.heading = live[best].heading;
+                            ++refreshed;
+                        }
                     }
-                    if (best < 0)
-                        continue;
-                    entry.x = live[best].position.x;
-                    entry.y = live[best].position.y;
-                    entry.z = live[best].position.z;
-                    entry.heading = live[best].heading;
-                    ++refreshed;
                 }
             }
 #if defined(RAGEMP_DIAGNOSTICS)
@@ -1673,7 +1687,7 @@ namespace Features {
             float hp = frameEntry.health;
             float maxHp = frameEntry.maxHealth;
             bool isPlayer = frameEntry.isPlayer;
-            Game::PedVisualData visual =
+            const Game::PedVisualData& visual =
                 frameEntry.visual;
             const bool hasVisual =
                 frameEntry.visualValid;
@@ -1701,7 +1715,7 @@ namespace Features {
                 if (!isSameFaction &&
                     localFactionKey[0] &&
                     visual.factionKey[0] &&
-                    lstrcmpiA(
+                    _stricmp(
                         localFactionKey,
                         visual.factionKey) == 0)
                     isSameFaction = true;
@@ -1710,7 +1724,7 @@ namespace Features {
                     (localFamilyId <= 0 &&
                      localFamilyName[0] != 0 &&
                      visual.familyName[0] != 0 &&
-                     lstrcmpiA(
+                     _stricmp(
                          localFamilyName,
                          visual.familyName) == 0))
                     isSameFamily = true;
@@ -1998,28 +2012,26 @@ namespace Features {
 #endif
 
                 // Projected ESP overlay (same path as menu preview editor).
-                EspProjected::EnsureLayoutsMigrated(
-                    const_cast<Menu::EspProfileSettings&>(profile));
 
                 char nameBuf[64]{};
                 const char* nameLabel = isAnimal ? "Animal" : (isPlayer ? "\xD0\x93\xD1\x80\xD0\xB0\xD0\xB6\xD0\xB4\xD0\xB0\xD0\xBD\xD0\xB8\xD0\xBD" : "NPC");
                 auto isRealPersonStr = [](const char* str) -> bool {
                     if (!str || !str[0]) return false;
-                    if (lstrcmpiA(str, "Player") == 0 ||
-                        lstrcmpiA(str, "Unknown") == 0 ||
-                        lstrcmpiA(str, "Citizen") == 0 ||
-                        lstrcmpiA(str, "NPC") == 0 ||
-                        lstrcmpiA(str, "Animal") == 0) return false;
+                    if (_stricmp(str, "Player") == 0 ||
+                        _stricmp(str, "Unknown") == 0 ||
+                        _stricmp(str, "Citizen") == 0 ||
+                        _stricmp(str, "NPC") == 0 ||
+                        _stricmp(str, "Animal") == 0) return false;
                     if (strncmp(str, "\xD0\x93\xD1\x80\xD0\xB0\xD0\xB6\xD0\xB4\xD0\xB0\xD0\xBD", 12) == 0) return false;
-                    if (strncmp(str, "\xD0\x9D\xD0\xB5\xD0\xB7\xD0\xBD\xD0\xB0\xD0\xBA", 10) == 0) return false;
+                    if (strncmp(str, "\xD0\x9D\xD0\xB5\xD0\xB7\xD0\xBA", 10) == 0) return false;
                     return true;
                 };
 
                 __try {
                     if (isAnimal) {
                         if (hasVisual && visual.isAnimal && visual.name[0] &&
-                            lstrcmpiA(visual.name, "Player") != 0 &&
-                            lstrcmpiA(visual.name, "NPC") != 0) {
+                            _stricmp(visual.name, "Player") != 0 &&
+                            _stricmp(visual.name, "NPC") != 0) {
                             lstrcpynA(nameBuf, visual.name, (int)sizeof(nameBuf));
                             nameLabel = nameBuf;
                         }
@@ -2096,7 +2108,7 @@ namespace Features {
                     float dy = pos.y - localPosition.y;
                     float dz = pos.z - localPosition.z;
                     rawDist = sqrtf(dx * dx + dy * dy + dz * dz);
-                    wsprintfA(distBuf, "%dm", (int)rawDist);
+                    _snprintf_s(distBuf, sizeof(distBuf), _TRUNCATE, "%dm", (int)rawDist);
                 }
 
                 char weaponBuf[40]{};
@@ -2145,7 +2157,7 @@ namespace Features {
                             visual.factionTag,
                             (int)sizeof(factionBuf));
                     else
-                        wsprintfA(factionBuf, "F%d", visual.factionId);
+                        _snprintf_s(factionBuf, sizeof(factionBuf), _TRUNCATE, "F%d", visual.factionId);
                     factionLabel = factionBuf;
                 }
 
@@ -2209,6 +2221,9 @@ namespace Features {
                 if (!statIdLabel)
                     disableElement(
                         EspProjected::ElementId::StaticId);
+                if (!hasVisual || !visual.inGreenZone)
+                    disableElement(
+                        EspProjected::ElementId::GreenZone);
                 // 5RP disables the native RAGE nametag while rendering its
                 // own client-visible label. That flag must not suppress ESP.
 
@@ -2227,6 +2242,7 @@ namespace Features {
                 pdata.dead = isDeadOrKnock &&
                     !(hasVisual && visual.knock && !visual.dead);
                 pdata.knock = hasVisual && visual.knock;
+                pdata.greenZone = hasVisual && visual.inGreenZone;
 
                 // Drawn before the overlay so labels and bars stay on top.
                 if (profile.snapLine)
@@ -2527,8 +2543,7 @@ namespace Features {
                     const float dy =
                         radarEntry.smoothedPosition.y -
                         localPosition.y;
-                    const float dist = sqrtf(dx * dx + dy * dy);
-                    if (dist > range)
+                    if (dx * dx + dy * dy > range * range)
                         continue;
 
                     const float rx = dx * cosY - dy * sinY;
@@ -2588,9 +2603,7 @@ namespace Features {
                             vehicle.x - localPosition.x;
                         const float dy =
                             vehicle.y - localPosition.y;
-                        const float distance =
-                            sqrtf(dx * dx + dy * dy);
-                        if (distance > range)
+                        if (dx * dx + dy * dy > range * range)
                             continue;
 
                         const float rx =

@@ -64,6 +64,7 @@ namespace
         case ElementId::Armor: return p.armorBar;
         case ElementId::DynamicId: return p.dynamicIdTag;
         case ElementId::StaticId: return p.staticIdTag;
+        case ElementId::GreenZone: return p.greenZoneTag;
         default: return false;
         }
     }
@@ -80,6 +81,7 @@ namespace
         case ElementId::Armor: return p.armorColor;
         case ElementId::DynamicId: return p.dynamicIdColor;
         case ElementId::StaticId: return p.staticIdColor;
+        case ElementId::GreenZone: return p.greenZoneColor;
         default: return p.nameColor;
         }
     }
@@ -94,6 +96,7 @@ namespace
         case ElementId::Weapon: return player.weapon ? player.weapon : "";
         case ElementId::DynamicId: return player.dynamicId ? player.dynamicId : "";
         case ElementId::StaticId: return player.staticId ? player.staticId : "";
+        case ElementId::GreenZone: return player.greenZone ? "Green Zone" : "";
         default: return "";
         }
     }
@@ -200,6 +203,7 @@ void EnsureLayoutsMigrated(Menu::EspProfileSettings& p) noexcept
     p.layouts[6] = { static_cast<int>(fromBar(p.armorBarPos)), 1, 1.f };
     p.layouts[7] = { static_cast<int>(Side::Top), 3, 1.f }; // DynamicId
     p.layouts[8] = { static_cast<int>(Side::Top), 4, 1.f }; // StaticId
+    p.layouts[9] = { static_cast<int>(Side::Bottom), 0, 1.f }; // GreenZone
     p.layoutsMigrated = true;
 }
 
@@ -215,6 +219,7 @@ const char* ElementLabel(ElementId id) noexcept
     case ElementId::Armor: return "Armor";
     case ElementId::DynamicId: return "Dynamic ID";
     case ElementId::StaticId: return "Static ID";
+    case ElementId::GreenZone: return "Green Zone";
     default: return "Element";
     }
 }

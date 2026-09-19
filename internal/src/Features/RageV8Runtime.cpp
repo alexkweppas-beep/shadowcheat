@@ -640,7 +640,7 @@ namespace
         DWORD& ownerThreadId) noexcept
     {
         void* found = nullptr;
-        SHADOW_PROTECT_ULTRA("Core.V8.Isolate");
+        SHADOW_PROTECT_MUT("Core.V8.Isolate");
         do
         {
             ownerThreadId = 0;
@@ -725,7 +725,7 @@ namespace
     __declspec(noinline) bool ResolveApi() noexcept
     {
         bool resolved = false;
-        SHADOW_PROTECT_ULTRA("Core.V8.Resolve");
+        SHADOW_PROTECT_MUT("Core.V8.Resolve");
         do
         {
             HMODULE module =

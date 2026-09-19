@@ -49,6 +49,9 @@ namespace GameEntities
     // degrade the picture, not remove it.
     bool Available() noexcept;
 
+    // Reads pose for a specific known game entity pointer.
+    bool ReadPose(const void* object, Vector3& position, float& heading) noexcept;
+
     // kinds is a mask of kVehicles / kObjects.
     int Copy(Live* output, int capacity, unsigned kinds) noexcept;
 }

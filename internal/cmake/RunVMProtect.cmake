@@ -1,4 +1,4 @@
-if(NOT CONFIG STREQUAL "Release")
+if(NOT CONFIG STREQUAL "Release" AND NOT CONFIG STREQUAL "RelWithDebInfo")
     return()
 endif()
 

@@ -22,6 +22,9 @@ const char *LastError();
 std::int64_t SubscriptionEndsAt() noexcept;
 const char* GetUsername() noexcept;
 
+// Performs a background ping to the server to verify the session/token is still valid.
+bool VerifySubscription();
+
 bool List(const char *kind, Item *items, int capacity, int &count);
 bool Get(const char *kind, const char *id, char *content, std::size_t capacity);
 bool Upsert(const char *kind, const char *name, const char *content);

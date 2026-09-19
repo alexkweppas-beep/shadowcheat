@@ -152,6 +152,7 @@ namespace Menu
         bool weaponTag{};
         bool dynamicIdTag{};
         bool staticIdTag{};
+        bool greenZoneTag{};
         bool showDead{false};
         bool visibleCheck{};
         // How much of a target behind cover the visible check recolours.
@@ -177,8 +178,8 @@ namespace Menu
         int healthStyle{};  // EspBarStyle
         int armorStyle{};   // EspBarStyle
         int weaponDisplay{}; // EspWeaponDisplay
-        // Projected layout: name,faction,family,distance,weapon,health,armor,dynamicId,staticId
-        EspElementLayout layouts[9]{};
+        // Projected layout: name,faction,family,distance,weapon,health,armor,dynamicId,staticId,greenZone
+        EspElementLayout layouts[10]{};
         bool layoutsMigrated{};
         bool healthShowValue{true};
         bool armorShowValue{true};
@@ -194,6 +195,7 @@ namespace Menu
         float weaponColor[4]{0.95f, 0.75f, 0.35f, 1.f};
         float dynamicIdColor[4]{0.7f, 0.85f, 1.f, 1.f};
         float staticIdColor[4]{1.f, 0.9f, 0.45f, 1.f};
+        float greenZoneColor[4]{0.15f, 0.85f, 0.30f, 1.f};
         float deadColor[4]{0.75f, 0.2f, 0.2f, 1.f};
         float hiddenColor[4]{0.f, 0.f, 0.f, 1.f};
         float snapLineColor[4]{0.55f, 0.80f, 1.f, 0.85f};
@@ -241,6 +243,7 @@ namespace Menu
         bool showAircraft{true};
         bool showOther{true};
         bool snapLine{};
+        bool snapLineToTrunk{};
         int  snapLineOrigin{}; // EspSnapOrigin
         float maxDistance{350.f};
         float boxColor[4]{0.30f, 0.72f, 1.f, 1.f};

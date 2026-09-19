@@ -435,12 +435,11 @@ static __declspec(noinline) bool RefreshTokenFromSharedMem() {
           g_ExpiresAt = 0;
         }
       }
-      // DllMain reads this before signalling injection-ready. The loader no
-      // longer needs a reusable JWT in the shared page afterwards.
-      if (writable) {
-        SecureZeroMemory(auth->token, sizeof(auth->token));
-        SecureZeroMemory(auth->hwid, sizeof(auth->hwid));
-      }
+      // NOTE: Do NOT wipe the token from shared memory here.
+      // The shared memory section is owned by the loader process; when the
+      // loader closes g_hSharedMemory the OS releases the backing store.
+      // Wiping early causes EnsureSession() re-reads to find an empty token
+      // and fail, breaking config/script load after the first Initialize().
     }
     if (auth)
       UnmapViewOfFile(auth);
@@ -517,6 +516,33 @@ const char *LastError() { return g_Error; }
 std::int64_t SubscriptionEndsAt() noexcept { return g_ExpiresAt; }
 
 const char* GetUsername() noexcept { return g_Username; }
+
+bool VerifySubscription() {
+  if (!EnsureSession()) {
+    SetError("Cloud session unavailable");
+    return false; // Wait, we should return true if it's just unavailable? No, if session is entirely missing, that's bad.
+  }
+  
+  wchar_t path[128]{};
+  swprintf_s(path, L"/api/configs/list?product=%S", kConfigProduct);
+
+  char response[2048]{};
+  DWORD status = 0;
+  bool ok = Request(path, nullptr, false, response, sizeof(response), status);
+  
+  // If request failed but status is 0, it means it's a network error (internet disconnected)
+  // We do not want to crash the user for bad internet.
+  if (!ok && status == 0) {
+      return true; // Network error, pretend it's fine for now
+  }
+  
+  // If status is 401/403 or similar unauthorized, subscription is invalid
+  if (status == 401 || status == 403) {
+      return false; // Explicitly rejected
+  }
+  
+  return true; // Valid or other non-fatal error
+}
 
 // ── List: GET /api/configs/list?product=ragemp  or  GET /api/scripts/list ──
 bool List(const char *kind, Item *items, int capacity, int &count) {

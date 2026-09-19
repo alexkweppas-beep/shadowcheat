@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <Document>
-	<Protection InputFileName="shadow_internal.raw.dll" Options="32768" CheckKernelDebugger="false" CompressionMode="0" VMCodeSectionName=".svm" VMExecutorCount="2" LicenseDataFileName="" OutputFileName="" WaterMarkName="" RunParameters="">
+	<Protection InputFileName="shadow_internal.raw.dll" Options="32768" CheckKernelDebugger="false" CheckVirtualMachine="false" CompressionMode="0" VMCodeSectionName=".svm" VMExecutorCount="2" LicenseDataFileName="" OutputFileName="" WaterMarkName="" RunParameters="">
 		<Folders/>
 		<Procedures>
 			<Procedure MapAddress="VMProtectMarker &quot;Core.V8.Resolve&quot;" IncludedInCompilation="true" Options="1"/>

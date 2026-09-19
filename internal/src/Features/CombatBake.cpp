@@ -140,7 +140,7 @@ namespace
         PackSlot(45u, 3),       // visFallbackFailures
         PackSlot(1500u, 4),     // visFallbackHoldMs
         PackSlot(120u, 5),      // visSwitchMs
-        PackSlot(32u, 6),       // visMaxProbes
+        PackSlot(16u, 6),       // visMaxProbes
     };
 
     constexpr float DecodeMilli(
@@ -180,7 +180,7 @@ namespace CombatBake
         if (g_Ready)
             return;
 
-        SHADOW_PROTECT_ULTRA("Combat.Bake");
+        SHADOW_PROTECT_MUT("Combat.Bake");
         const std::uint32_t key = MixKey();
 
         for (int i = 0; i < kHitboxCount; ++i)

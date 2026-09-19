@@ -78,7 +78,7 @@ namespace Offsets
     // All RVAs verified against live game memory on build 1.0.231.0.
     bool Initialize()
     {
-        SHADOW_PROTECT_VIRT("Core.Offsets");
+        SHADOW_PROTECT_MUT("Core.Offsets");
         HMODULE hExe = GetModuleHandleW(L"GTA5.exe");
         if (!hExe) {
             hooks::HLog("Offsets: GTA5.exe not loaded yet");

@@ -122,12 +122,16 @@ namespace
         }
         return type == wanted;
     }
+}
 
+namespace GameEntities
+{
     bool ReadPose(
-        std::uintptr_t entity,
+        const void* entityPtr,
         Vector3& position,
         float& heading) noexcept
     {
+        std::uintptr_t entity = reinterpret_cast<std::uintptr_t>(entityPtr);
         std::uintptr_t matrix = 0;
         if (!ReadPointer(entity + Offsets::Entity::Transform, matrix))
             return false;
@@ -151,8 +155,6 @@ namespace
             !std::isfinite(position.z))
             return false;
 
-        // Heading the way the game states it: degrees clockwise from north,
-        // taken from the forward row of the matrix.
         heading = std::atan2(-forward.x, forward.y) *
             (180.f / 3.14159265f);
         if (!std::isfinite(heading))
@@ -161,10 +163,7 @@ namespace
             heading += 360.f;
         return true;
     }
-}
 
-namespace GameEntities
-{
     bool Available() noexcept
     {
         const std::uintptr_t replay = ReplayInterface();
@@ -233,7 +232,7 @@ namespace GameEntities
 
                 Vector3 position{};
                 float heading = 0.f;
-                if (!ReadPose(entity, position, heading))
+                if (!GameEntities::ReadPose(reinterpret_cast<const void*>(entity), position, heading))
                     continue;
 
                 Live& live = output[written++];

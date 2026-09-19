@@ -230,7 +230,7 @@ using HitboxCapsule = CombatBake::Capsule;
 static_assert(
     static_cast<int>(Hitbox::Count) == CombatBake::kHitboxCount);
 
-float PointSegmentDistance(
+float PointSegmentDistanceSq(
     const ImVec2& point,
     const ImVec2& a,
     const ImVec2& b) noexcept
@@ -248,7 +248,7 @@ float PointSegmentDistance(
     }
     const float dx = apx - abx * t;
     const float dy = apy - aby * t;
-    return std::sqrt(dx * dx + dy * dy);
+    return dx * dx + dy * dy;
 }
 
 // Screen pixels per world metre at this ped's depth.
@@ -281,9 +281,9 @@ bool ProjectedPixelsPerMetre(
         const float wx = wb.x - wa.x;
         const float wy = wb.y - wa.y;
         const float wz = wb.z - wa.z;
-        const float worldSpan =
-            std::sqrt(wx * wx + wy * wy + wz * wz);
-        if (worldSpan < CombatBake::g_Policy.minBoneSpanMetres)
+        const float worldSpanSq =
+            wx * wx + wy * wy + wz * wz;
+        if (worldSpanSq < CombatBake::g_Policy.minBoneSpanMetres * CombatBake::g_Policy.minBoneSpanMetres)
             continue;
         const float sx =
             entry.projectedBones[to].x -
@@ -291,15 +291,17 @@ bool ProjectedPixelsPerMetre(
         const float sy =
             entry.projectedBones[to].y -
             entry.projectedBones[from].y;
-        const float ratio =
-            std::sqrt(sx * sx + sy * sy) / worldSpan;
-        if (ratio > best)
-            best = ratio;
+        const float ratioSq =
+            (sx * sx + sy * sy) / worldSpanSq;
+        if (ratioSq > best)
+            best = ratioSq;
     }
-    if (!(best > CombatBake::g_Policy.minPixelsPerMetre) ||
+    if (!(best > CombatBake::g_Policy.minPixelsPerMetre * CombatBake::g_Policy.minPixelsPerMetre) ||
         !std::isfinite(best))
+    {
         return false;
-    pixelsPerMetre = best;
+    }
+    pixelsPerMetre = std::sqrt(best);
     return true;
 }
 
@@ -315,7 +317,7 @@ bool ProjectedPixelsPerMetre(
 // whole body, so a near arm and a far shoulder are judged at the same scale,
 // and the answer drifts from the geometry the shot will actually meet. Done in
 // world space there is nothing to convert and nothing to drift.
-float RayToSegmentDistance(
+float RayToSegmentDistanceSq(
     const Vector3& origin,
     const Vector3& direction,
     const Vector3& from,
@@ -381,7 +383,7 @@ float RayToSegmentDistance(
     const float dx = onRay.x - onSegment.x;
     const float dy = onRay.y - onSegment.y;
     const float dz = onRay.z - onSegment.z;
-    return std::sqrt(dx * dx + dy * dy + dz * dz);
+    return dx * dx + dy * dy + dz * dz;
 }
 
 __declspec(noinline) bool EvaluateHitboxCandidate(
@@ -403,7 +405,7 @@ __declspec(noinline) bool EvaluateHitboxCandidate(
         return false;
     }
 
-    float bestRatio = 1.f;
+    float bestRatioSq = 4.f;
     int bestHitbox = -1;
     int bestAnchor = -1;
     for (int index = 0;
@@ -441,13 +443,14 @@ __declspec(noinline) bool EvaluateHitboxCandidate(
         if ((entry.projectedBoneMask & bits) != bits)
             continue;
 
-        float ratio = 2.f;
+        float ratioSq = 4.f;
         if (haveRay)
         {
             const Vector3& a = entry.visual.bones[capsule.from];
             const Vector3& b = entry.visual.bones[capsule.to];
-            ratio = RayToSegmentDistance(
-                rayOrigin, rayDirection, a, b) / capsule.radiusMetres;
+            const float distSq = RayToSegmentDistanceSq(
+                rayOrigin, rayDirection, a, b);
+            ratioSq = distSq / (capsule.radiusMetres * capsule.radiusMetres);
         }
         else
         {
@@ -461,11 +464,12 @@ __declspec(noinline) bool EvaluateHitboxCandidate(
             const ImVec2 b(
                 entry.projectedBones[capsule.to].x,
                 entry.projectedBones[capsule.to].y);
-            ratio = PointSegmentDistance(center, a, b) / radius;
+            const float distSq = PointSegmentDistanceSq(center, a, b);
+            ratioSq = distSq / (radius * radius);
         }
-        if (ratio <= bestRatio)
+        if (ratioSq <= bestRatioSq)
         {
-            bestRatio = ratio;
+            bestRatioSq = ratioSq;
             bestHitbox = index;
             // Recorded here so a fallback span reports the bone it actually
             // used; the table's own `from` may be the missing one.
@@ -495,7 +499,7 @@ __declspec(noinline) bool EvaluateHitboxCandidate(
     output.ped = entry.ped;
     output.world = world;
     output.screen = entry.projectedBones[anchor];
-    output.crosshairDistanceSq = bestRatio * bestRatio;
+    output.crosshairDistanceSq = bestRatioSq;
     output.rageHandle = entry.visual.rageHandle;
     output.remoteId = static_cast<int>(entry.visual.remoteId);
     output.hitbox = bestHitbox;

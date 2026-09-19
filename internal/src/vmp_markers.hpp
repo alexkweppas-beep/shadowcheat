@@ -17,11 +17,11 @@
 #include <VMProtectSDK.h>
 
 #define SHADOW_PROTECT_ULTRA(name) \
-    VMProtectBeginUltra(name);     \
+    VMProtectBeginMutation(name);     \
     do { } while (0)
 
 #define SHADOW_PROTECT_VIRT(name)       \
-    VMProtectBeginVirtualization(name); \
+    VMProtectBeginMutation(name); \
     do { } while (0)
 
 #define SHADOW_PROTECT_MUT(name) \

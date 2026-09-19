@@ -725,8 +725,6 @@ namespace Menu
             if (s_ObjListChoice < 0 || s_ObjListChoice > 1)
                 s_ObjListChoice = 0;
 
-            ImGui::Dummy(ImVec2(0.f, 8.f * scale));
-
             gui->checkbox(
                 T("Objects ESP", "ESP объектов", "ESP об'єктів"),
                 &visual.enabled);
@@ -1224,6 +1222,14 @@ namespace Menu
             ImGuiWindowFlags_None,
             false);
         {
+            const ImVec2 original_pos = ImGui::GetCursorPos();
+            ImGui::SetCursorPos(ImVec2(layout.detailWidth - 46.f * scale, 12.f * scale));
+            if (MenuUi::GhostIconButton("refresh_items", ICON_FA_ARROW_ROTATE_RIGHT, ImVec2(34.f * scale, 34.f * scale), false))
+            {
+                Menu::s_ForceItemsRefresh = true;
+            }
+            ImGui::SetCursorPos(original_pos);
+
             ImGui::BeginChild(
                 "##items_scroll",
                 ImVec2(0.f, 0.f),
@@ -1379,6 +1385,13 @@ namespace Menu
                 310.f,
                 420.f,
                 250.f);
+
+        static int s_LastSubTab = -1;
+        if (s_FilterSubTab == 3 && s_LastSubTab != 3)
+        {
+            Menu::s_ForceItemsRefresh = true;
+        }
+        s_LastSubTab = s_FilterSubTab;
 
         switch (s_FilterSubTab)
         {

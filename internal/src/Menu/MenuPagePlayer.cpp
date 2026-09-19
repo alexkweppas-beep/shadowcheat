@@ -562,41 +562,6 @@ namespace Menu
                   "Список працює, коли це вимкнено"));
         MenuUi::EndInspectorIsland();
 
-        MenuUi::BeginInspectorIsland(
-            "loot_status",
-            T("STATUS", "СОСТОЯНИЕ", "СТАН"),
-            0.f);
-        // Reachable next to known: an idle run on an empty street reads exactly
-        // like a filter that matches nothing unless both numbers are shown.
-        char summary[160]{};
-        _snprintf_s(
-            summary,
-            sizeof(summary),
-            _TRUNCATE,
-            T("In range: %d of %d known\nTaken %d, refused %d",
-              "В радиусе: %d из %d известных\nПоднято %d, отказов %d",
-              "У радіусі: %d з %d відомих\nПіднято %d, відмов %d"),
-            status.reachable,
-            status.knownItems,
-            status.taken,
-            status.refused);
-        ImGui::TextUnformatted(summary);
-        if (status.slotsKnown)
-        {
-            char slots[96]{};
-            _snprintf_s(
-                slots,
-                sizeof(slots),
-                _TRUNCATE,
-                T("Free inventory slots: %d",
-                  "Свободных слотов: %d",
-                  "Вільних слотів: %d"),
-                status.freeSlots);
-            ImGui::TextUnformatted(slots);
-        }
-        if (status.detail[0])
-            ImGui::TextUnformatted(status.detail);
-        MenuUi::EndInspectorIsland();
     }
 
     void RenderPlayerPage()
