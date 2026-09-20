@@ -1,36 +1,53 @@
-@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap');
+@import "../tokens.css";
 
-:root {
-  --bg-main: #000000;
-  --bg-secondary: #0a0a0a;
-  --bg-tertiary: #111111;
+/* Hallmark · genre: atmospheric · macrostructure: Split Studio · theme: Midnight
+ * tone: austere · nav: N1b · footer: Ft5 · design-system: design.md · designed-as-app
+ * audience: GTA V players · use: buy subscription
+ */
 
-  --text-main: #ffffff;
-  --text-secondary: #888888;
-
-  --accent-primary: #8a8a8a;
-  --accent-secondary: #5a5a5a;
-  --accent-hover: #b0b0b0;
-
-  --border-color: rgba(255, 255, 255, 0.1);
-
-  --danger: #ef4444;
-  --success: #22c55e;
+html,
+body {
+  overflow-x: clip;
 }
 
-* {
+*,
+*::before,
+*::after {
   box-sizing: border-box;
   margin: 0;
   padding: 0;
 }
 
+html {
+  background: var(--color-paper);
+}
+
 body {
-  font-family: 'Inter', sans-serif;
-  background-color: var(--bg-main);
-  color: var(--text-main);
-  line-height: 1.5;
+  font-family: var(--font-body);
+  font-weight: 400;
+  background-color: var(--color-paper);
+  color: var(--color-ink);
+  line-height: 1.55;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
+  min-height: 100dvh;
+}
+
+body::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  z-index: 0;
+  background:
+    radial-gradient(ellipse 42% 34% at 12% 8%, color-mix(in oklch, var(--color-bloom) 22%, transparent), transparent 70%),
+    radial-gradient(ellipse 48% 40% at 92% 88%, color-mix(in oklch, var(--color-bloom) 14%, transparent), transparent 72%);
+}
+
+#root {
+  position: relative;
+  z-index: var(--z-base);
+  min-height: 100dvh;
 }
 
 a {
@@ -38,89 +55,264 @@ a {
   text-decoration: none;
 }
 
+img {
+  max-width: 100%;
+  height: auto;
+}
+
 button {
   font-family: inherit;
   cursor: pointer;
   border: none;
   background: none;
+  color: inherit;
 }
 
-/* Typography */
 h1,
 h2,
 h3,
 h4,
 h5,
 h6 {
-  font-weight: 700;
-  line-height: 1.2;
+  font-family: var(--font-display);
+  font-style: normal;
+  font-weight: var(--display-weight);
+  letter-spacing: var(--tracking-display);
+  line-height: 1.12;
+  overflow-wrap: anywhere;
+  min-width: 0;
 }
 
-/* Utilities */
 .container {
-  max-width: 1200px;
-  margin: 0 auto;
-  padding: 0 20px;
+  max-width: var(--page-max);
+  margin-inline: auto;
+  padding-inline: var(--page-gutter);
 }
 
-/* Glassmorphism Card */
+.tnum {
+  font-variant-numeric: tabular-nums;
+  font-family: var(--font-outlier);
+}
+
+/* Surfaces */
 .glass-card {
-  background: var(--bg-secondary);
-  border: 1px solid var(--border-color);
-  border-radius: 16px;
-  padding: 24px;
+  background: var(--color-paper-2);
+  border: var(--rule-hair) solid var(--color-rule);
+  border-radius: var(--radius-card);
+  padding: var(--space-lg);
 }
 
-/* Inputs */
-.input-field {
+/* Inputs — 8 states, constant 1px border */
+.input-field,
+.coupon-input,
+.dash-input,
+.admin-input,
+.auth-input-group input,
+.promo-input {
   width: 100%;
-  background: rgba(255, 255, 255, 0.03);
-  border: 1px solid rgba(255, 255, 255, 0.08);
-  color: white;
-  padding: 12px 16px;
-  border-radius: 8px;
-  font-size: 14px;
-  transition: border-color 0.2s;
-  outline: none;
+  background: var(--color-paper-3);
+  border: var(--rule-hair) solid var(--color-rule);
+  color: var(--color-ink);
+  padding: var(--space-sm) var(--space-md);
+  border-radius: var(--radius-input);
+  font-size: var(--text-sm);
+  font-family: inherit;
+  outline: 2px solid transparent;
+  outline-offset: 2px;
+  min-height: 44px;
+  transition:
+    background-color var(--dur-micro) var(--ease-out),
+    border-color var(--dur-micro) var(--ease-out);
 }
 
-.input-field:focus {
-  border-color: var(--accent-primary);
+.input-field::placeholder,
+.coupon-input::placeholder,
+.dash-input::placeholder,
+.auth-input-group input::placeholder,
+.promo-input::placeholder {
+  color: var(--color-muted);
 }
 
-/* Gradient Text */
+@media (hover: hover) and (pointer: fine) {
+  .input-field:hover,
+  .coupon-input:hover,
+  .dash-input:hover,
+  .admin-input:hover,
+  .auth-input-group input:hover {
+    border-color: var(--color-rule-2);
+  }
+}
+
+.input-field:focus-visible,
+.coupon-input:focus-visible,
+.dash-input:focus-visible,
+.admin-input:focus-visible,
+.auth-input-group input:focus-visible,
+.promo-input:focus-visible {
+  outline: 2px solid var(--color-focus);
+  border-color: var(--color-rule-2);
+}
+
+.input-field:disabled,
+.dash-input:disabled,
+.auth-input-group input:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.input-field[aria-invalid="true"],
+.dash-input[aria-invalid="true"],
+.auth-input-group input[aria-invalid="true"] {
+  border-color: var(--color-danger);
+}
+
+/* Buttons — 8 states */
+.btn,
+.btn-primary,
+.btn-secondary,
+.cta-outline,
+.cta-fill,
+.dash-btn,
+.pay-btn,
+.auth-submit-btn,
+.coupon-btn,
+.plan-btn,
+.promo-btn,
+.amount-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-xs);
+  min-height: 44px;
+  padding: var(--space-sm) var(--space-lg);
+  font-family: inherit;
+  font-weight: 600;
+  font-size: var(--text-sm);
+  line-height: 1;
+  white-space: nowrap;
+  border-radius: var(--radius-pill);
+  border: var(--rule-hair) solid transparent;
+  transition:
+    background-color var(--dur-micro) var(--ease-out),
+    color var(--dur-micro) var(--ease-out),
+    border-color var(--dur-micro) var(--ease-out),
+    transform var(--dur-micro) var(--ease-out),
+    opacity var(--dur-micro) var(--ease-out);
+}
+
+.btn-primary,
+.cta-fill,
+.pay-rub,
+.auth-submit-btn,
+.dash-btn-white {
+  background: var(--color-accent);
+  color: var(--color-accent-ink);
+  border-color: var(--color-accent);
+}
+
+.btn-secondary,
+.cta-outline,
+.coupon-btn,
+.plan-btn,
+.amount-btn,
+.promo-btn,
+.btn-glass,
+.btn-dark,
+.btn-dark-sm,
+.dash-btn-cancel {
+  background: transparent;
+  color: var(--color-ink);
+  border-color: var(--color-rule-2);
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .btn-primary:hover,
+  .cta-fill:hover,
+  .pay-rub:hover,
+  .auth-submit-btn:hover,
+  .btn-primary.is-hover,
+  .dash-btn-white:hover {
+    background: var(--color-focus);
+    transform: translateY(-1.5px);
+  }
+
+  .btn-secondary:hover,
+  .cta-outline:hover,
+  .coupon-btn:hover,
+  .plan-btn:hover,
+  .amount-btn:hover,
+  .btn-glass:hover:not(:disabled),
+  .btn-dark:hover,
+  .btn-dark-sm:hover,
+  .btn-secondary.is-hover {
+    background: var(--color-paper-3);
+    transform: translateY(-1.5px);
+  }
+}
+
+button:focus-visible,
+a:focus-visible,
+input:focus-visible,
+select:focus-visible,
+textarea:focus-visible {
+  outline: 2px solid var(--color-focus);
+  outline-offset: 2px;
+}
+
+.btn:active,
+.btn-primary:active,
+.btn-secondary:active,
+.cta-outline:active,
+.cta-fill:active,
+.dash-btn:active,
+.pay-btn:active,
+.auth-submit-btn:active,
+.plan-btn:active,
+.btn.is-active {
+  transform: translateY(1px);
+}
+
+.btn:disabled,
+.btn-primary:disabled,
+.btn-secondary:disabled,
+.dash-btn:disabled,
+.pay-btn:disabled,
+.auth-submit-btn:disabled,
+.plan-btn:disabled,
+[data-state="disabled"] {
+  opacity: 0.5;
+  cursor: not-allowed;
+  transform: none;
+}
+
+[data-state="loading"] {
+  opacity: 0.72;
+  pointer-events: none;
+}
+
+[data-state="error"] {
+  border-color: var(--color-danger);
+  color: var(--color-danger);
+}
+
+[data-state="success"] {
+  border-color: var(--color-success);
+  color: var(--color-success);
+}
+
 .text-gradient {
-  background: linear-gradient(90deg, #fff, #a1a1aa);
-  -webkit-background-clip: text;
-  -webkit-text-fill-color: transparent;
+  color: var(--color-ink);
+  background: none;
+  -webkit-text-fill-color: unset;
 }
 
-/* Buttons */
-.btn-primary {
-  background-color: var(--accent-secondary);
-  color: white;
-  padding: 12px 24px;
-  border-radius: 8px;
-  font-weight: 600;
-  transition: all 0.2s;
-  white-space: nowrap;
-}
-
-.btn-primary:hover {
-  background-color: var(--accent-hover);
-}
-
-.btn-secondary {
-  background-color: rgba(255, 255, 255, 0.05);
-  color: white;
-  border: 1px solid rgba(255, 255, 255, 0.1);
-  padding: 12px 24px;
-  border-radius: 8px;
-  font-weight: 600;
-  transition: all 0.2s;
-  white-space: nowrap;
-}
-
-.btn-secondary:hover {
-  background-color: rgba(255, 255, 255, 0.1);
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 150ms !important;
+    transition-property: opacity, background-color, border-color, color !important;
+  }
 }

@@ -1,46 +1,57 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { NavLink, useNavigate } from 'react-router-dom';
+import { useNavigate, useLocation } from 'react-router-dom';
 import './Header.css';
 import AuthModal from './AuthModal';
 
 export default function Header() {
   const [isProductsOpen, setIsProductsOpen] = useState(false);
   const [isAuthOpen, setIsAuthOpen] = useState(false);
+  const [isMenuOpen, setIsMenuOpen] = useState(false);
+  const [isScrolled, setIsScrolled] = useState(false);
   const dropdownRef = useRef(null);
   const navigate = useNavigate();
+  const location = useLocation();
 
-  // Close dropdown on outside click
   useEffect(() => {
     function handleClickOutside(event) {
       if (dropdownRef.current && !dropdownRef.current.contains(event.target)) {
         setIsProductsOpen(false);
       }
     }
-    document.addEventListener("mousedown", handleClickOutside);
-    return () => document.removeEventListener("mousedown", handleClickOutside);
-  }, [dropdownRef]);
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, []);
+
+  useEffect(() => {
+    const onScroll = () => setIsScrolled(window.scrollY > 24);
+    onScroll();
+    window.addEventListener('scroll', onScroll, { passive: true });
+    return () => window.removeEventListener('scroll', onScroll);
+  }, []);
+
+  useEffect(() => {
+    setIsMenuOpen(false);
+    setIsProductsOpen(false);
+  }, [location.pathname]);
 
   const products = [
     {
       id: 'external',
       title: 'EXTERNAL',
-      subtitle: '',
       status: 'Undetected',
-      color: 'transparent',
-      icon: <img src="/external.png" style={{ width: '24px', height: '24px', objectFit: 'contain', transform: 'scale(1.7)' }} alt="EXTERNAL" />
+      icon: <img src="/external.png" className="product-icon-img" alt="" />
     },
     {
       id: 'trigger',
       title: 'TRIGGER',
-      subtitle: '',
       status: 'Undetected',
-      color: 'transparent',
-      icon: <img src="/external.png" style={{ width: '24px', height: '24px', objectFit: 'contain', transform: 'scale(1.7)' }} alt="TRIGGER" />
+      icon: <img src="/external.png" className="product-icon-img" alt="" />
     }
   ];
 
   const handleProductClick = (gameId) => {
     setIsProductsOpen(false);
+    setIsMenuOpen(false);
     navigate(`/games/${gameId}`);
   };
 
@@ -65,70 +76,100 @@ export default function Header() {
     window.location.reload();
   };
 
+  const goFaq = () => {
+    setIsMenuOpen(false);
+    if (location.pathname === '/') {
+      document.getElementById('faq')?.scrollIntoView({ behavior: 'smooth' });
+    } else {
+      navigate('/#faq');
+    }
+  };
+
   const token = localStorage.getItem('token');
 
   return (
-    <header className="main-header">
-      <div className="container header-container">
-        <div className="logo" onClick={() => navigate('/')}>
-          <img src="/logo.svg" className="logo-icon" alt="Logo" />
-        </div>
+    <header className={`site-nav ${isScrolled ? 'is-scrolled' : ''}`}>
+      <div className="site-nav__inner">
+        <button type="button" className="nav__brand" onClick={() => navigate('/')} aria-label="На главную">
+          <img src="/logo.svg" className="logo-icon" alt="shadow" />
+        </button>
 
-        <nav className="main-nav">
-          <div className="dropdown-container">
-            <button 
-              className={`nav-link dropdown-toggle ${isProductsOpen ? 'active' : ''}`}
+        <nav className="nav__center" aria-label="Основное меню">
+          <div className="nav__item nav__item--menu" ref={dropdownRef}>
+            <button
+              type="button"
+              className={`nav__link ${isProductsOpen ? 'is-open' : ''}`}
+              aria-expanded={isProductsOpen}
+              aria-haspopup="true"
               onClick={() => setIsProductsOpen(!isProductsOpen)}
             >
               Товары
-              <svg className="dropdown-arrow" style={{marginLeft: '4px'}} width="10" height="6" viewBox="0 0 10 6" fill="none" xmlns="http://www.w3.org/2000/svg">
-                <path d="M1 1L5 5L9 1" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
-              </svg>
+              <span className="nav__caret" aria-hidden="true" />
             </button>
-
-            {/* Dropdown Menu */}
             {isProductsOpen && (
-              <div className="products-dropdown" ref={dropdownRef}>
-                <div className="products-grid">
-                  {products.map((p) => (
-                    <div 
-                      key={p.id} 
-                      className="product-dropdown-card"
-                      onClick={() => handleProductClick(p.id)}
-                    >
-                      <div className="product-icon">
-                        {p.icon}
-                      </div>
-                      <div className="product-name">
-                        {p.title}<br/><span style={{fontWeight:400,fontSize:12,color:'var(--text-secondary)'}}>{p.subtitle}</span>
-                      </div>
-                      <div className="product-status">{p.status}</div>
-                    </div>
-                  ))}
-                </div>
+              <div className="nav__dropdown products-dropdown">
+                {products.map((p) => (
+                  <button
+                    type="button"
+                    key={p.id}
+                    className="product-dropdown-card"
+                    onClick={() => handleProductClick(p.id)}
+                  >
+                    <span className="product-icon">{p.icon}</span>
+                    <span className="product-name">{p.title}</span>
+                    <span className="product-status">{p.status}</span>
+                  </button>
+                ))}
               </div>
             )}
           </div>
-          <a href="#" className="nav-link" style={{textDecoration: 'none'}}>Новости</a>
-          <a href="#" className="nav-link" style={{textDecoration: 'none'}}>FAQ</a>
+          <a href="#" className="nav__link">Новости</a>
+          <button type="button" className="nav__link" onClick={goFaq}>FAQ</button>
         </nav>
 
-        <div className="header-actions" style={{ display: 'flex', gap: '12px', alignItems: 'center' }}>
-          <button className="btn-secondary" onClick={handleDashboardClick}>
-            Личный кабинет
+        <div className="nav__right">
+          <button type="button" className="cta-outline nav__cabinet" onClick={handleDashboardClick}>
+            Кабинет
           </button>
           {token && (
-            <button className="btn-secondary" onClick={handleLogout}>
+            <button type="button" className="nav__link nav__logout" onClick={handleLogout}>
               Выйти
             </button>
           )}
+          <button
+            type="button"
+            className="nav__burger"
+            aria-expanded={isMenuOpen}
+            aria-label={isMenuOpen ? 'Закрыть меню' : 'Открыть меню'}
+            onClick={() => setIsMenuOpen(!isMenuOpen)}
+          >
+            <span />
+            <span />
+          </button>
         </div>
       </div>
 
-      {/* Modals */}
-      <AuthModal 
-        isOpen={isAuthOpen} 
-        onClose={() => setIsAuthOpen(false)} 
+      {isMenuOpen && (
+        <div className="nav__sheet">
+          <button type="button" className="nav__sheet-link" onClick={() => { setIsProductsOpen(true); }}>
+            Товары
+          </button>
+          {isProductsOpen && products.map((p) => (
+            <button type="button" key={p.id} className="nav__sheet-sub" onClick={() => handleProductClick(p.id)}>
+              {p.title}
+            </button>
+          ))}
+          <a href="#" className="nav__sheet-link">Новости</a>
+          <button type="button" className="nav__sheet-link" onClick={goFaq}>FAQ</button>
+          <button type="button" className="cta-fill nav__sheet-cta" onClick={handleDashboardClick}>
+            Личный кабинет
+          </button>
+        </div>
+      )}
+
+      <AuthModal
+        isOpen={isAuthOpen}
+        onClose={() => setIsAuthOpen(false)}
         onLogin={handleLogin}
       />
     </header>

@@ -48,74 +48,75 @@ export default function DistributorPage() {
   const activeKeys = keys.filter(k => !k.used);
   const usedKeys = keys.filter(k => k.used);
 
-  if (!user) return <div style={{ color: 'white', padding: '40px', textAlign: 'center' }}>Загрузка...</div>;
+  if (!user) return <div className="page-loading">Загрузка…</div>;
 
   return (
     <div className="dashboard-page">
       <Header />
 
       <div className="container dashboard-container">
-        <h2 style={{ color: 'white', marginBottom: '20px', fontSize: '24px' }}>Кабинет Дистрибьютора</h2>
+        <h2 className="dash-page-title">Кабинет Дистрибьютора</h2>
 
-        <div className="dash-row dash-row-2" style={{ marginBottom: '24px' }}>
+        <div className="dash-row dash-row-3">
           <div className="dash-card info-card" style={{ flex: 1 }}>
             <div className="info-label">Всего выдано ключей</div>
             <div className="info-val">{keys.length}</div>
           </div>
           <div className="dash-card info-card" style={{ flex: 1 }}>
             <div className="info-label">Неиспользованных</div>
-            <div className="info-val" style={{ color: '#4ade80' }}>{activeKeys.length}</div>
+            <div className="info-val is-success">{activeKeys.length}</div>
           </div>
           <div className="dash-card info-card" style={{ flex: 1 }}>
             <div className="info-label">Активировано</div>
-            <div className="info-val" style={{ color: '#ef4444' }}>{usedKeys.length}</div>
+            <div className="info-val is-danger">{usedKeys.length}</div>
           </div>
         </div>
 
-        <div className="dash-card" style={{ padding: '24px' }}>
-          <h3 style={{ color: 'white', marginBottom: '16px' }}>Ваши ключи</h3>
+        <div className="dash-card keys-card">
+          <h3 className="action-title">Ваши ключи</h3>
 
-          <div style={{ overflowX: 'auto' }}>
-            <table style={{ width: '100%', borderCollapse: 'collapse', color: 'white', textAlign: 'left' }}>
+          <div className="keys-table-wrap">
+            <table className="keys-table">
               <thead>
-                <tr style={{ borderBottom: '1px solid rgba(255,255,255,0.1)' }}>
-                  <th style={{ padding: '12px 8px', color: 'rgba(255,255,255,0.5)', fontWeight: '500' }}>Ключ</th>
-                  <th style={{ padding: '12px 8px', color: 'rgba(255,255,255,0.5)', fontWeight: '500' }}>Продукт</th>
-                  <th style={{ padding: '12px 8px', color: 'rgba(255,255,255,0.5)', fontWeight: '500' }}>Дней</th>
-                  <th style={{ padding: '12px 8px', color: 'rgba(255,255,255,0.5)', fontWeight: '500' }}>Статус</th>
-                  <th style={{ padding: '12px 8px', color: 'rgba(255,255,255,0.5)', fontWeight: '500' }}>Дата выдачи</th>
+                <tr>
+                  <th>Ключ</th>
+                  <th>Продукт</th>
+                  <th>Дней</th>
+                  <th>Статус</th>
+                  <th>Дата выдачи</th>
                 </tr>
               </thead>
               <tbody>
                 {keys.length > 0 ? (
                   keys.map((k, i) => (
-                    <tr key={i} style={{ borderBottom: '1px solid rgba(255,255,255,0.05)' }}>
-                      <td style={{ padding: '12px 8px', fontFamily: 'monospace', color: '#60a5fa' }}>
+                    <tr key={i}>
+                      <td className="tnum">
                         {k.key_str}
                         <button
-                          onClick={() => { navigator.clipboard.writeText(k.key_str); alert('Ключ скопирован!'); }}
-                          style={{ marginLeft: '8px', padding: '2px 6px', fontSize: '11px', background: 'rgba(255,255,255,0.1)', border: 'none', borderRadius: '4px', color: 'white', cursor: 'pointer' }}
+                          type="button"
+                          className="copy-key"
+                          onClick={() => { navigator.clipboard.writeText(k.key_str); }}
                         >
-                          📋
+                          Копировать
                         </button>
                       </td>
-                      <td style={{ padding: '12px 8px', textTransform: 'uppercase' }}>{k.product_id}</td>
-                      <td style={{ padding: '12px 8px' }}>{k.days} дн.</td>
-                      <td style={{ padding: '12px 8px' }}>
+                      <td className="product-name">{k.product_id}</td>
+                      <td>{k.days} дн.</td>
+                      <td>
                         {k.used ? (
-                          <span style={{ color: '#ef4444', background: 'rgba(239, 68, 68, 0.1)', padding: '4px 8px', borderRadius: '4px', fontSize: '12px' }}>Активирован</span>
+                          <span className="sub-status is-danger">Активирован</span>
                         ) : (
-                          <span style={{ color: '#4ade80', background: 'rgba(74, 222, 128, 0.1)', padding: '4px 8px', borderRadius: '4px', fontSize: '12px' }}>Свободен</span>
+                          <span className="sub-status is-active">Свободен</span>
                         )}
                       </td>
-                      <td style={{ padding: '12px 8px', fontSize: '14px', color: 'rgba(255,255,255,0.7)' }}>
+                      <td className="keys-date">
                         {new Date(k.created_at).toLocaleString('ru-RU')}
                       </td>
                     </tr>
                   ))
                 ) : (
                   <tr>
-                    <td colSpan="5" style={{ padding: '24px', textAlign: 'center', color: 'rgba(255,255,255,0.5)' }}>У вас пока нет ключей. Обратитесь к администратору.</td>
+                    <td colSpan="5" className="keys-empty">У вас пока нет ключей. Обратитесь к администратору.</td>
                   </tr>
                 )}
               </tbody>

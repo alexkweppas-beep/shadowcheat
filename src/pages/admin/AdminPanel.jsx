@@ -34,17 +34,16 @@ function AdminLoginForm({ onLogin }) {
   };
 
   return (
-    <div style={{ height: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center', background: '#0a0a0a' }}>
-      <form onSubmit={handleSubmit} style={{ background: '#141414', border: '1px solid rgba(255,255,255,0.08)', borderRadius: '16px', padding: '40px', width: '360px', display: 'flex', flexDirection: 'column', gap: '16px' }}>
-        <h2 style={{ color: 'white', margin: 0, fontSize: '24px', textAlign: 'center' }}>Вход в панель</h2>
-        <input type="text" placeholder="Логин" value={username} onChange={e => setUsername(e.target.value)}
-          style={{ background: '#1e1e1e', border: '1px solid rgba(255,255,255,0.1)', borderRadius: '8px', padding: '12px 16px', color: 'white', fontSize: '14px', outline: 'none' }} required />
-        <input type="password" placeholder="Пароль" value={password} onChange={e => setPassword(e.target.value)}
-          style={{ background: '#1e1e1e', border: '1px solid rgba(255,255,255,0.1)', borderRadius: '8px', padding: '12px 16px', color: 'white', fontSize: '14px', outline: 'none' }} required />
-        {error && <p style={{ color: '#ef4444', margin: 0, fontSize: '13px', textAlign: 'center' }}>{error}</p>}
-        <button type="submit" disabled={loading}
-          style={{ background: 'white', color: 'black', border: 'none', borderRadius: '8px', padding: '12px', fontSize: '15px', fontWeight: '600', cursor: loading ? 'not-allowed' : 'pointer', opacity: loading ? 0.7 : 1 }}>
-          {loading ? 'Входим...' : 'Войти'}
+    <div className="admin-login">
+      <form onSubmit={handleSubmit} className="admin-login__form">
+        <h2 className="admin-login__title">Вход в панель</h2>
+        <input type="text" placeholder="логин" value={username} onChange={e => setUsername(e.target.value)}
+          className="admin-input" required />
+        <input type="password" placeholder="••••••••" value={password} onChange={e => setPassword(e.target.value)}
+          className="admin-input" required />
+        {error && <p className="admin-login__error">{error}</p>}
+        <button type="submit" disabled={loading} className="cta-fill admin-login__submit" data-state={loading ? 'loading' : undefined}>
+          {loading ? 'Входим…' : 'Войти'}
         </button>
       </form>
     </div>

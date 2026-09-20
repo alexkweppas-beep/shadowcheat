@@ -237,16 +237,16 @@ export default function DashboardPage() {
                     <div className="sub-item" key={pid}>
                       <span className="sub-name">• {LABELS[pid] || pid}</span>
                       {info.frozen ? (
-                        <span className="sub-status" style={{ color: '#60a5fa' }}>❄ Заморожено ({info.days_left} ч.)</span>
+                        <span className="sub-status is-frozen">Заморожено ({info.days_left} ч.)</span>
                       ) : (
-                        <span className="sub-status" style={{ color: '#4ade80' }}>Активно ({info.days_left} ч.)</span>
+                        <span className="sub-status is-active">Активно ({info.days_left} ч.)</span>
                       )}
                     </div>
                   ));
                 })()
               ) : (
                 <div className="sub-item">
-                  <span className="sub-name" style={{ color: 'rgba(255,255,255,0.3)' }}>Нет активных подписок</span>
+                  <span className="sub-name is-empty">Нет активных подписок</span>
                 </div>
               )}
             </div>
@@ -254,10 +254,16 @@ export default function DashboardPage() {
               <button
                 className="dash-btn btn-glass w-full"
                 disabled={!hasActiveSub || (user && user.subscriptions && user.subscriptions.some(s => s.frozen_at))}
-                style={{ opacity: (hasActiveSub && !(user && user.subscriptions && user.subscriptions.some(s => s.frozen_at))) ? 1 : 0.5, cursor: (hasActiveSub && !(user && user.subscriptions && user.subscriptions.some(s => s.frozen_at))) ? 'pointer' : 'not-allowed' }}
                 onClick={() => setIsDownloadModalOpen(true)}
               >
                 Скачать лоадер
+              </button>
+              <button
+                className="dash-btn btn-glass w-full"
+                style={{ marginTop: 8 }}
+                onClick={() => navigate('/radar')}
+              >
+                Веб-радар
               </button>
             </div>
           </div>
@@ -335,22 +341,22 @@ export default function DashboardPage() {
         </div>
 
         {/* Links to special pages */}
-        <div style={{ marginTop: '40px', display: 'flex', justifyContent: 'center', gap: '16px', flexWrap: 'wrap' }}>
+        <div className="dash-special-links">
           {user && user.media_access ? (
-            <button className="dash-btn btn-white" onClick={() => navigate('/media')}>
+            <button className="dash-btn btn-secondary" onClick={() => navigate('/media')}>
               Кабинет Медиа-партнера
             </button>
           ) : null}
 
           {user && user.is_distributor ? (
-            <button className="dash-btn btn-white" onClick={() => navigate('/distributor')}>
+            <button className="dash-btn btn-secondary" onClick={() => navigate('/distributor')}>
               Кабинет Дистрибьютора
             </button>
           ) : null}
 
           {localStorage.getItem('adminToken') && (
-            <button className="dash-btn btn-white" style={{ background: 'rgba(239, 68, 68, 0.1)', color: '#ef4444', border: '1px solid rgba(239, 68, 68, 0.2)' }} onClick={() => navigate('/admin444')}>
-              Перейти в Админ-Панель
+            <button className="dash-btn dash-btn-admin" onClick={() => navigate('/admin444')}>
+              Админ-панель
             </button>
           )}
         </div>

@@ -1,5 +1,5 @@
 .settings-page {
-  animation: fadeIn 0.3s ease-in-out;
+  animation: fadeIn var(--dur-short) var(--ease-out);
 }
 
 .page-header {
@@ -57,14 +57,14 @@
 }
 
 .freeze-alert {
-  background: rgba(239, 68, 68, 0.1); /* danger with low opacity */
-  border: 1px solid rgba(239, 68, 68, 0.2);
-  color: #fca5a5;
-  padding: 12px;
-  border-radius: 8px;
-  text-align: center;
-  margin-bottom: 16px;
-  font-size: 14px;
+  background: var(--color-paper-3);
+  border: var(--rule-hair) solid var(--color-danger);
+  color: var(--color-danger);
+  padding: var(--space-sm);
+  border-radius: var(--radius-input);
+  text-align: left;
+  margin-bottom: var(--space-md);
+  font-size: var(--text-sm);
 }
 
 .form-group {

@@ -1,30 +1,27 @@
 .image-comparison-container {
   position: relative;
   width: 100%;
-  max-width: 900px;
-  margin: 0 auto;
-  border-radius: 16px;
+  max-width: 100%;
+  margin: 0;
+  border-radius: var(--radius-card);
   overflow: hidden;
   cursor: ew-resize;
   user-select: none;
   touch-action: none;
-  box-shadow: 0 20px 40px rgba(0, 0, 0, 0.4);
-  background-color: #1a1a1f;
+  background-color: var(--color-paper-2);
   aspect-ratio: 16/9;
+  border: var(--rule-hair) solid var(--color-rule);
 }
 
 .image-comparison-images {
   position: absolute;
-  top: 0;
-  left: 0;
-  width: 100%;
-  height: 100%;
+  inset: 0;
 }
 
-.image-after {
+.image-after,
+.image-before {
   position: absolute;
-  top: 0;
-  left: 0;
+  inset: 0;
   width: 100%;
   height: 100%;
   object-fit: cover;
@@ -32,21 +29,8 @@
 
 .image-before-wrapper {
   position: absolute;
-  top: 0;
-  left: 0;
-  width: 100%;
-  height: 100%;
+  inset: 0;
   z-index: 2;
-  /* clip-path is set inline */
-}
-
-.image-before {
-  position: absolute;
-  top: 0;
-  left: 0;
-  width: 100%;
-  height: 100%;
-  object-fit: cover;
 }
 
 .comparison-slider-line {
@@ -54,11 +38,10 @@
   top: 0;
   bottom: 0;
   width: 2px;
-  background-color: rgba(255, 255, 255, 0.9);
+  background-color: var(--color-ink);
   z-index: 3;
   transform: translateX(-50%);
   pointer-events: none;
-  box-shadow: 0 0 10px rgba(0, 0, 0, 0.5);
 }
 
 .comparison-slider-button {
@@ -66,26 +49,22 @@
   top: 50%;
   left: 50%;
   transform: translate(-50%, -50%);
-  width: 48px;
-  height: 48px;
-  border-radius: 50%;
-  background-color: rgba(255, 255, 255, 0.2);
-  backdrop-filter: blur(8px);
-  border: 2px solid rgba(255, 255, 255, 0.9);
+  width: 44px;
+  height: 44px;
+  border-radius: var(--radius-pill);
+  background-color: var(--color-paper-2);
+  border: var(--rule-hair) solid var(--color-ink);
   display: flex;
   align-items: center;
   justify-content: center;
-  color: white;
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.4);
-  transition: transform 0.2s, background-color 0.2s;
+  color: var(--color-ink);
 }
 
 .image-comparison-container:active .comparison-slider-button {
-  transform: translate(-50%, -50%) scale(1.1);
-  background-color: rgba(255, 255, 255, 0.3);
+  transform: translate(-50%, -50%) scale(1.05);
 }
 
 .comparison-slider-button svg {
-  width: 24px;
-  height: 24px;
+  width: 20px;
+  height: 20px;
 }

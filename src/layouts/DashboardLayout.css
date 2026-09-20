@@ -1,58 +1,54 @@
+/* Hallmark · genre: atmospheric · macrostructure: Workbench · unused layout kept in-system */
+
 .dashboard-container {
   display: flex;
-  height: 100vh;
-  width: 100vw;
-  background-color: #17191c;
+  height: 100dvh;
+  width: 100%;
+  background-color: var(--color-paper);
   overflow: hidden;
 }
 
 .sidebar {
-  width: 260px;
+  width: 16rem;
   background-color: transparent;
-  border-right: 1px solid rgba(255, 255, 255, 0.05);
+  border-right: var(--rule-hair) solid var(--color-rule);
   display: flex;
   flex-direction: column;
-  padding: 24px;
+  padding: var(--space-lg);
 }
 
 .sidebar-header {
-  margin-bottom: 32px;
+  margin-bottom: var(--space-xl);
 }
 
 .logo-text {
-  font-size: 14px;
-  color: var(--text-secondary);
-  text-transform: uppercase;
-  letter-spacing: 1px;
+  font-size: var(--text-sm);
+  color: var(--color-ink-2);
+  letter-spacing: var(--tracking-label);
 }
 
 .sidebar-nav {
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: var(--space-xs);
   flex: 1;
 }
 
 .nav-item {
   display: flex;
   align-items: center;
-  gap: 12px;
-  padding: 12px 16px;
-  border-radius: 8px;
-  color: var(--text-secondary);
+  gap: var(--space-sm);
+  padding: var(--space-sm) var(--space-md);
+  border-radius: var(--radius-input);
+  color: var(--color-ink-2);
   font-weight: 500;
-  transition: all 0.2s ease;
+  min-height: 44px;
 }
 
-.nav-item:hover {
-  background-color: rgba(255, 255, 255, 0.03);
-  color: var(--text-main);
-}
-
+.nav-item:hover,
 .nav-item.active {
-  background-color: rgba(255, 255, 255, 0.08);
-  color: var(--text-main);
-  border: 1px solid rgba(255, 255, 255, 0.05);
+  background-color: var(--color-paper-3);
+  color: var(--color-ink);
 }
 
 .sidebar-footer {
@@ -62,27 +58,26 @@
 .logout-btn {
   display: flex;
   align-items: center;
-  gap: 12px;
-  padding: 12px 16px;
+  gap: var(--space-sm);
+  padding: var(--space-sm) var(--space-md);
   width: 100%;
-  border-radius: 8px;
-  color: var(--text-secondary);
-  background-color: rgba(255, 255, 255, 0.05);
-  font-weight: 500;
-  transition: all 0.2s ease;
+  border-radius: var(--radius-input);
+  color: var(--color-ink-2);
+  min-height: 44px;
 }
 
 .logout-btn:hover {
-  background-color: rgba(255, 255, 255, 0.1);
-  color: var(--text-main);
+  background-color: var(--color-paper-3);
+  color: var(--color-ink);
 }
 
 .dashboard-main {
   flex: 1;
-  background-color: rgba(255, 255, 255, 0.03);
-  border: 1px solid rgba(255, 255, 255, 0.08);
-  padding: 40px;
+  background-color: var(--color-paper-2);
+  border: var(--rule-hair) solid var(--color-rule);
+  padding: var(--space-xl);
   overflow-y: auto;
-  border-radius: 24px;
-  margin: 16px;
+  border-radius: var(--radius-card);
+  margin: var(--space-md);
+  min-width: 0;
 }

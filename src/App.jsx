@@ -2,6 +2,7 @@ import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-d
 import LandingPage from './pages/LandingPage';
 import ProductsPage from './pages/ProductsPage';
 import DashboardPage from './pages/dashboard/DashboardPage';
+import RadarPage from './pages/dashboard/RadarPage';
 import AdminPanel from './pages/admin/AdminPanel';
 import MediaPage from './pages/MediaPage';
 import DistributorPage from './pages/DistributorPage';
@@ -16,6 +17,7 @@ function App() {
         
         {/* Dashboard Route */}
         <Route path="/home" element={<DashboardPage />} />
+        <Route path="/radar" element={<RadarPage />} />
         
         {/* Media & Distributor */}
         <Route path="/media" element={<MediaPage />} />

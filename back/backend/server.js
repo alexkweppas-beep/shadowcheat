@@ -661,8 +661,16 @@ const apiLimiter = rateLimit({
     validate: { trustProxy: false },
     windowMs: 60_000, // 1 minute
     max: 120, // 120 requests per IP per minute
+    skip: (req) => String(req.originalUrl || '').startsWith('/api/radar/'),
     message: { error: 'Too many requests. Please try again later.' }
 });
+const radarPushLimiter = rateLimit({
+    validate: { trustProxy: false },
+    windowMs: 60_000,
+    max: 400
+});
+const { createRadarStore } = require('./radar_store');
+const radarStore = createRadarStore(15_000);
 
 // Apply rate limiter to all /api/ routes
 app.use('/api/', apiLimiter);
@@ -1758,6 +1766,8 @@ function resolveConfigUser(req) {
         if (bodyObj.token && !token) token = bodyObj.token;
         if (bodyObj.hwid && !hwid) hwid = bodyObj.hwid;
     }
+    if (!token && req.query && req.query.token)
+        token = String(req.query.token);
 
     // Check username from header, body, or query
     let username = req.headers['x-username'];
@@ -2815,6 +2825,46 @@ app.put('/api/admin/users/:id', authenticateToken, requireAdmin, (req, res) => {
     res.json({ ok: true });
 });
 // End of admin block
+
+function writeRadarEvent(res, name, payload) {
+    res.write(`event: ${name}\n`);
+    res.write(`data: ${JSON.stringify(payload)}\n\n`);
+}
+
+app.post('/api/radar/push', radarPushLimiter, (req, res) => {
+    const user = resolveConfigUser(req);
+    if (!user) return res.status(401).json({ error: 'Unauthorized' });
+    const now = Date.now();
+    radarStore.prune(now);
+    radarStore.put(user.id, req.body && typeof req.body === 'object' ? req.body : {}, now);
+    res.json({ ok: true });
+});
+
+app.get('/api/radar/latest', authenticateToken, (req, res) => {
+    const now = Date.now();
+    radarStore.prune(now);
+    res.json({ frame: radarStore.get(req.user.id, now) });
+});
+
+app.get('/api/radar/stream', authenticateToken, (req, res) => {
+    res.setHeader('Content-Type', 'text/event-stream');
+    res.setHeader('Cache-Control', 'no-cache, no-transform');
+    res.setHeader('Connection', 'keep-alive');
+    res.setHeader('X-Accel-Buffering', 'no');
+    if (typeof res.flushHeaders === 'function')
+        res.flushHeaders();
+    const now = Date.now();
+    const latest = radarStore.get(req.user.id, now);
+    writeRadarEvent(res, latest ? 'frame' : 'idle', latest || { empty: true });
+    const ping = setInterval(() => writeRadarEvent(res, 'ping', { t: Date.now() }), 15_000);
+    const unsub = radarStore.subscribe(req.user.id, (frame) => {
+        writeRadarEvent(res, 'frame', frame);
+    });
+    req.on('close', () => {
+        clearInterval(ping);
+        unsub();
+    });
+});
 
 // ─── Session ban check in checkLoaderVersion ─────────────────────────────────
 

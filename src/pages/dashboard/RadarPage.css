@@ -1,0 +1,135 @@
+.radar-page {
+  min-height: 100dvh;
+  background: #070a14;
+  color: #e8ecf4;
+}
+
+.radar-page__map {
+  width: 100vw;
+  height: 100dvh;
+  background: #070a14;
+}
+
+.radar-page .leaflet-container {
+  background: #070a14;
+  font-family: inherit;
+}
+
+.radar-hud,
+.radar-panel,
+.radar-follow {
+  position: fixed;
+  z-index: 500;
+  background: rgba(14, 19, 33, 0.92);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 12px;
+  backdrop-filter: blur(16px);
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.45);
+}
+
+.radar-hud {
+  top: 16px;
+  left: 16px;
+  min-width: 220px;
+  padding: 12px 14px;
+}
+
+.radar-hud__title {
+  font-size: 11px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: #4fc3f7;
+  margin-bottom: 8px;
+}
+
+.radar-hud__row {
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+  font-size: 13px;
+  margin-top: 4px;
+}
+
+.radar-hud__row span:last-child {
+  font-variant-numeric: tabular-nums;
+}
+
+.radar-hud__live {
+  color: #4ade80;
+}
+
+.radar-hud__off {
+  color: #f87171;
+}
+
+.radar-panel {
+  top: 16px;
+  right: 16px;
+  width: 260px;
+  padding: 12px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.radar-panel button,
+.radar-panel label {
+  font-size: 13px;
+}
+
+.radar-panel button {
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 8px;
+  padding: 8px 10px;
+  background: rgba(255, 255, 255, 0.04);
+}
+
+.radar-panel button.is-on {
+  border-color: #4fc3f7;
+  color: #4fc3f7;
+}
+
+.radar-follow {
+  left: 16px;
+  bottom: 16px;
+  min-width: 240px;
+  padding: 12px 14px;
+}
+
+.radar-follow h2 {
+  font-size: 16px;
+  margin-bottom: 6px;
+}
+
+.radar-follow p {
+  margin: 2px 0;
+  font-size: 13px;
+  color: #9ca6b8;
+}
+
+.radar-dot {
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  border: 2px solid #fff;
+  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.4);
+}
+
+.radar-dot--self {
+  background: #22c55e;
+}
+
+.radar-dot--player {
+  background: #38bdf8;
+}
+
+.radar-dot--stale {
+  background: #64748b;
+}
+
+.radar-dot--veh {
+  width: 9px;
+  height: 9px;
+  background: #f59e0b;
+  border-width: 1px;
+}

@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import Header from '../components/Header';
+import SiteFooter from '../components/SiteFooter';
 import { useParams, useNavigate } from 'react-router-dom';
 import { API_BASE } from '../api.js';
 import './ProductsPage.css';
@@ -232,32 +233,29 @@ export default function ProductsPage() {
     <div className="products-page">
       <Header />
       <div className="container">
-        <div className="product-layout" style={{ marginTop: '32px' }}>
+        <div className="product-layout">
 
           {/* LEFT COLUMN */}
           <div className="product-left">
             {/* Slider */}
             <div>
-              <div
-                className="product-slider-placeholder"
-                style={{ padding: 0, overflow: 'hidden', background: '#111', position: 'relative', borderRadius: '12px', aspectRatio: '16/9' }}
-              >
+              <div className="product-slider-placeholder">
                 {product.screenshots && product.screenshots.length > 0 ? (
                   <>
                     <img
                       src={product.screenshots[currentSlide]}
-                      alt={`Screenshot ${currentSlide + 1}`}
-                      style={{ width: '100%', height: '100%', objectFit: 'cover', cursor: 'pointer' }}
+                      alt={`Скриншот ${currentSlide + 1}`}
+                      className="product-slide-img"
                       onClick={() => setActiveScreenshot(product.screenshots[currentSlide])}
                     />
 
                     {/* Left Arrow */}
                     {product.screenshots.length > 1 && (
                       <button
+                        type="button"
+                        className="slider-arrow slider-arrow--prev"
+                        aria-label="Предыдущий кадр"
                         onClick={() => setCurrentSlide((prev) => (prev > 0 ? prev - 1 : product.screenshots.length - 1))}
-                        style={{ position: 'absolute', top: '50%', left: '16px', transform: 'translateY(-50%)', background: 'rgba(0,0,0,0.5)', color: 'white', border: 'none', borderRadius: '50%', width: '40px', height: '40px', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', transition: 'background 0.2s' }}
-                        onMouseOver={e => e.currentTarget.style.background = 'rgba(0,0,0,0.8)'}
-                        onMouseOut={e => e.currentTarget.style.background = 'rgba(0,0,0,0.5)'}
                       >
                         <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M15 18l-6-6 6-6" /></svg>
                       </button>
@@ -266,19 +264,25 @@ export default function ProductsPage() {
                     {/* Right Arrow */}
                     {product.screenshots.length > 1 && (
                       <button
+                        type="button"
+                        className="slider-arrow slider-arrow--next"
+                        aria-label="Следующий кадр"
                         onClick={() => setCurrentSlide((prev) => (prev < product.screenshots.length - 1 ? prev + 1 : 0))}
-                        style={{ position: 'absolute', top: '50%', right: '16px', transform: 'translateY(-50%)', background: 'rgba(0,0,0,0.5)', color: 'white', border: 'none', borderRadius: '50%', width: '40px', height: '40px', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', transition: 'background 0.2s' }}
-                        onMouseOver={e => e.currentTarget.style.background = 'rgba(0,0,0,0.8)'}
-                        onMouseOut={e => e.currentTarget.style.background = 'rgba(0,0,0,0.5)'}
                       >
                         <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M9 18l6-6-6-6" /></svg>
                       </button>
                     )}
 
                     {/* Indicators */}
-                    <div style={{ position: 'absolute', bottom: '16px', left: '50%', transform: 'translateX(-50%)', display: 'flex', gap: '8px' }}>
+                    <div className="slider-dots">
                       {product.screenshots.map((_, idx) => (
-                        <div key={idx} onClick={() => setCurrentSlide(idx)} style={{ width: '8px', height: '8px', borderRadius: '50%', background: currentSlide === idx ? 'white' : 'rgba(255,255,255,0.4)', cursor: 'pointer', transition: 'background 0.2s' }} />
+                        <button
+                          type="button"
+                          key={idx}
+                          className={`slider-dot ${currentSlide === idx ? 'is-active' : ''}`}
+                          aria-label={`Кадр ${idx + 1}`}
+                          onClick={() => setCurrentSlide(idx)}
+                        />
                       ))}
                     </div>
                   </>
@@ -298,20 +302,13 @@ export default function ProductsPage() {
           {/* RIGHT COLUMN */}
           <div className="product-right">
 
-            <div style={{ marginBottom: '8px' }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: '28px' }}>
-                <img
-                  src={product.logo}
-                  alt="Logo"
-                  style={{
-                    width: '48px',
-                    height: '48px',
-                    objectFit: 'contain',
-                    transform: 'scale(1.6)'
-                  }}
-                />
-                <h1 className="product-main-title" style={{ margin: 0 }}>{product.name}</h1>
-              </div>
+            <div className="product-heading-row">
+              <img
+                src={product.logo}
+                alt=""
+                className="product-heading-logo"
+              />
+              <h1 className="product-main-title">{product.name}</h1>
             </div>
 
             {/* Subscription */}
@@ -319,43 +316,30 @@ export default function ProductsPage() {
 
               {/* Silent toggle — только для trigger */}
               {product.hasSilentOption && (
-                <div style={{
-                  display: 'flex', alignItems: 'center', gap: '12px',
-                  marginBottom: '16px', padding: '12px 14px',
-                  background: silentEnabled ? 'rgba(74,222,128,0.08)' : 'rgba(255,255,255,0.03)',
-                  border: silentEnabled ? '1px solid rgba(74,222,128,0.3)' : '1px solid rgba(255,255,255,0.06)',
-                  borderRadius: '10px', cursor: 'pointer', transition: 'all 0.2s'
-                }} onClick={() => setSilentEnabled(v => !v)}>
-                  <div style={{
-                    width: '20px', height: '20px', borderRadius: '5px',
-                    border: silentEnabled ? '2px solid #4ade80' : '2px solid rgba(255,255,255,0.2)',
-                    background: silentEnabled ? '#4ade80' : 'transparent',
-                    display: 'flex', alignItems: 'center', justifyContent: 'center',
-                    transition: 'all 0.2s', flexShrink: 0
-                  }}>
+                <button
+                  type="button"
+                  className={`silent-toggle ${silentEnabled ? 'is-on' : ''}`}
+                  onClick={() => setSilentEnabled(v => !v)}
+                >
+                  <span className="silent-check" aria-hidden="true">
                     {silentEnabled && (
-                      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#000" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round">
+                      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round">
                         <polyline points="20 6 9 17 4 12" />
                       </svg>
                     )}
-                  </div>
-                  <div style={{ flex: 1 }}>
-                    <div style={{ fontSize: '14px', fontWeight: '600', color: silentEnabled ? '#4ade80' : 'var(--text-primary)' }}>
-                      Silent Aim
-                    </div>
-                    <div style={{ fontSize: '12px', color: 'var(--text-secondary)', marginTop: '2px' }}>
-                      {silentEnabled ? `FOV, хитбокс, бинд — +300₽` : 'Добавить модуль Silent Aim +300₽'}
-                    </div>
-                  </div>
-                  <div style={{
-                    fontSize: '14px', fontWeight: '700',
-                    color: silentEnabled ? '#4ade80' : 'var(--text-secondary)'
-                  }}>
+                  </span>
+                  <span className="silent-copy">
+                    <span className="silent-title">Silent Aim</span>
+                    <span className="silent-hint">
+                      {silentEnabled ? 'FOV, хитбокс, бинд — +300₽' : 'Добавить модуль Silent Aim +300₽'}
+                    </span>
+                  </span>
+                  <span className="silent-price tnum">
                     {silentEnabled
                       ? `${(PRICES.trigger[selectedPlanId] || 0) + SILENT_ADDON}₽`
                       : `${PRICES.trigger[selectedPlanId] || 0}₽`}
-                  </div>
-                </div>
+                  </span>
+                </button>
               )}
 
               <div className="plan-selector-grid" style={{ marginBottom: '12px' }}>
@@ -378,17 +362,17 @@ export default function ProductsPage() {
                 <button className="coupon-btn" onClick={handleApplyPromo}>Применить</button>
               </div>
 
-              <div style={{ display: 'flex', flexDirection: 'column', gap: '12px', marginBottom: '24px' }}>
-                <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '15px' }}>
-                  <span style={{ color: 'var(--text-secondary)' }}>Дни за реф-код</span>
-                  <span style={{ fontWeight: '600' }}>{promoActive ? `+${selectedPlan.bonusDays} days` : '0'}</span>
+              <div className="price-rows">
+                <div className="price-row">
+                  <span>Дни за реф-код</span>
+                  <span className="tnum">{promoActive ? `+${selectedPlan.bonusDays}` : '0'}</span>
                 </div>
-                <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '15px' }}>
-                  <span style={{ color: 'var(--text-secondary)' }}>Итоговая цена</span>
-                  <span style={{ fontWeight: '600' }}>
+                <div className="price-row">
+                  <span>Итоговая цена</span>
+                  <span className="tnum">
                     {getDisplayPrice ? getDisplayPrice() : selectedPlan.price} {product.currency}
                     {game === 'trigger' && silentEnabled && (
-                      <span style={{ fontSize: '11px', color: 'rgba(74,222,128,0.8)', marginLeft: '6px' }}>+Silent</span>
+                      <span className="silent-tag">+Silent</span>
                     )}
                   </span>
                 </div>
@@ -396,11 +380,8 @@ export default function ProductsPage() {
 
               <div className="payment-buttons">
                 <button
+                  type="button"
                   className="pay-btn pay-rub"
-                  style={{
-                    width: '100%',
-                    ...(product.comingSoon ? { opacity: 0.4, cursor: 'not-allowed', pointerEvents: 'none' } : {})
-                  }}
                   onClick={product.comingSoon ? undefined : handleBuy}
                   disabled={!!product.comingSoon}
                   title={product.comingSoon ? 'Скоро в продаже' : undefined}
@@ -411,47 +392,38 @@ export default function ProductsPage() {
                   Приобрести
                 </button>
               </div>
-              <div style={{ textAlign: 'center', marginTop: '12px', fontSize: '10px', opacity: 0.4 }}>
-                Can't make a payment from your country? Write to our <a href="https://t.me/fraud444" target="_blank" rel="noreferrer" style={{ color: 'inherit', textDecoration: 'underline' }}>reseller</a>
-              </div>
+              <p className="reseller-note">
+                Can't make a payment from your country? Write to our <a href="https://t.me/fraud444" target="_blank" rel="noreferrer">reseller</a>
+              </p>
             </div>
 
-            <div style={{ marginTop: '-8px' }}>
-              <div className="ac-list" style={{ marginBottom: '8px' }}>
+            <div className="product-meta">
+              <div className="ac-list">
                 {product.anticheats.map((ac, idx) => (
                   <div key={idx} className="ac-item">
-                    <div className="ac-name">
-                      {ac.name}
-                    </div>
+                    <div className="ac-name">{ac.name}</div>
                     <div className="ac-status">{ac.status}</div>
                   </div>
                 ))}
               </div>
 
               {product.systemRequirements && (
-                <div style={{
-                  background: 'rgba(255, 255, 255, 0.03)',
-                  backdropFilter: 'blur(10px)',
-                  border: '1px solid rgba(255, 255, 255, 0.05)',
-                  borderRadius: '12px',
-                  padding: '16px',
-                  display: 'flex',
-                  flexDirection: 'column',
-                  gap: '12px'
-                }}>
-                  <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '14px' }}>
-                    <span style={{ color: 'var(--text-secondary)' }}>Система</span>
-                    <span style={{ fontWeight: '500' }}>{product.systemRequirements.os}</span>
-                  </div>
-                  <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '14px' }}>
-                    <span style={{ color: 'var(--text-secondary)' }}>Версия игры</span>
-                    <span style={{ fontWeight: '500' }}>{product.systemRequirements.version}</span>
-                  </div>
-                  <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '14px' }}>
-                    <span style={{ color: 'var(--text-secondary)' }}>Поддержка</span>
-                    <span style={{ fontWeight: '500' }}>{product.systemRequirements.support}</span>
-                  </div>
-                </div>
+                <table className="spec-sheet tnum">
+                  <tbody>
+                    <tr>
+                      <th>Система</th>
+                      <td>{product.systemRequirements.os}</td>
+                    </tr>
+                    <tr>
+                      <th>Версия игры</th>
+                      <td>{product.systemRequirements.version}</td>
+                    </tr>
+                    <tr>
+                      <th>Поддержка</th>
+                      <td>{product.systemRequirements.support}</td>
+                    </tr>
+                  </tbody>
+                </table>
               )}
             </div>
 
@@ -462,71 +434,17 @@ export default function ProductsPage() {
       </div>
       {/* Image Modal */}
       {activeScreenshot && (
-        <div
-          style={{
-            position: 'fixed', top: 0, left: 0, right: 0, bottom: 0,
-            background: 'rgba(0,0,0,0.9)', zIndex: 9999,
-            display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '40px'
-          }}
-          onClick={() => setActiveScreenshot(null)}
-        >
-          <div style={{ position: 'relative', maxWidth: '90vw', maxHeight: '90vh' }}>
-            <button
-              onClick={() => setActiveScreenshot(null)}
-              style={{
-                position: 'absolute', top: '-40px', right: 0, background: 'none', border: 'none',
-                color: '#fff', fontSize: '32px', cursor: 'pointer'
-              }}
-            >
-              &times;
+        <div className="shot-overlay" onClick={() => setActiveScreenshot(null)}>
+          <div className="shot-overlay__inner">
+            <button type="button" className="shot-overlay__close" onClick={() => setActiveScreenshot(null)} aria-label="Закрыть">
+              ×
             </button>
-            <img
-              src={activeScreenshot}
-              alt="Fullscreen Screenshot"
-              style={{ width: '100%', height: '100%', objectFit: 'contain', borderRadius: '12px', maxHeight: '85vh' }}
-            />
+            <img src={activeScreenshot} alt="Скриншот продукта" />
           </div>
         </div>
       )}
 
-      {/* Footer */}
-      <footer style={{
-        borderTop: '1px solid rgba(255,255,255,0.05)',
-        padding: '32px 0',
-        marginTop: '60px',
-        color: 'rgba(255,255,255,0.5)',
-        fontSize: '14px'
-      }}>
-        <div className="container" style={{
-          display: 'flex',
-          justifyContent: 'center',
-          alignItems: 'center',
-          gap: '24px',
-          flexWrap: 'wrap'
-        }}>
-          <div>© 2026 shadow. Все права защищены.</div>
-          <div style={{ width: '1px', height: '16px', background: 'rgba(255,255,255,0.1)' }}></div>
-          <div style={{ display: 'flex', gap: '16px' }}>
-            <a href="#" style={{ color: 'inherit', textDecoration: 'none', transition: 'color 0.2s' }} onMouseOver={e => e.target.style.color = 'white'} onMouseOut={e => e.target.style.color = 'rgba(255,255,255,0.5)'}>Пользовательское соглашение</a>
-            <a href="#" style={{ color: 'inherit', textDecoration: 'none', transition: 'color 0.2s' }} onMouseOver={e => e.target.style.color = 'white'} onMouseOut={e => e.target.style.color = 'rgba(255,255,255,0.5)'}>Политика конфиденциальности</a>
-          </div>
-          <div style={{ width: '1px', height: '16px', background: 'rgba(255,255,255,0.1)' }}></div>
-          <div style={{ display: 'flex', gap: '12px' }}>
-            <a href="#" style={{ display: 'flex', alignItems: 'center', gap: '6px', background: 'rgba(255,255,255,0.05)', padding: '6px 12px', borderRadius: '6px', color: 'inherit', textDecoration: 'none', transition: 'background 0.2s' }} onMouseOver={e => e.currentTarget.style.background = 'rgba(255,255,255,0.1)'} onMouseOut={e => e.currentTarget.style.background = 'rgba(255,255,255,0.05)'}>
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M20.317 4.3698a19.7913 19.7913 0 00-4.8851-1.5152.0741.0741 0 00-.0785.0371c-.211.3753-.4447.8648-.6083 1.2495-1.8447-.2762-3.68-.2762-5.4868 0-.1636-.3933-.4058-.8742-.6177-1.2495a.077.077 0 00-.0785-.037 19.7363 19.7363 0 00-4.8852 1.515.0699.0699 0 00-.0321.0277C.5334 9.0458-.319 13.5799.0992 18.0578a.0824.0824 0 00.0312.0561c2.0528 1.5076 4.0413 2.4228 5.9929 3.0294a.0777.0777 0 00.0842-.0276c.4616-.6304.8731-1.2952 1.226-1.9942a.076.076 0 00-.0416-.1057c-.6528-.2476-1.2743-.5495-1.8722-.8923a.077.077 0 01-.0076-.1277c.1258-.0943.2517-.1923.3718-.2914a.0743.0743 0 01.0776-.0105c3.9278 1.7933 8.18 1.7933 12.0614 0a.0739.0739 0 01.0785.0095c.1202.099.246.1981.3728.2924a.077.077 0 01-.0066.1276 12.2986 12.2986 0 01-1.873.8914.0766.0766 0 00-.0407.1067c.3604.698.7719 1.3628 1.225 1.9932a.076.076 0 00.0842.0286c1.961-.6067 3.9495-1.5219 6.0023-3.0294a.077.077 0 00.0313-.0552c.5004-5.177-.8382-9.6739-3.5485-13.6604a.061.061 0 00-.0312-.0286zM8.02 15.3312c-1.1825 0-2.1569-1.0857-2.1569-2.419 0-1.3332.9555-2.4189 2.157-2.4189 1.2108 0 2.1757 1.0952 2.1568 2.419 0 1.3332-.9555 2.4189-2.1569 2.4189zm7.9748 0c-1.1825 0-2.1569-1.0857-2.1569-2.419 0-1.3332.9554-2.4189 2.1569-2.4189 1.2108 0 2.1757 1.0952 2.1568 2.419 0 1.3332-.946 2.4189-2.1568 2.4189Z" /></svg>
-              Discord
-            </a>
-            <a href="#" style={{ display: 'flex', alignItems: 'center', gap: '6px', background: 'rgba(255,255,255,0.05)', padding: '6px 12px', borderRadius: '6px', color: 'inherit', textDecoration: 'none', transition: 'background 0.2s' }} onMouseOver={e => e.currentTarget.style.background = 'rgba(255,255,255,0.1)'} onMouseOut={e => e.currentTarget.style.background = 'rgba(255,255,255,0.05)'}>
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M22 2L11 13"></path><path d="M22 2L15 22L11 13L2 9L22 2Z"></path></svg>
-              Telegram
-            </a>
-            <a href="#" style={{ display: 'flex', alignItems: 'center', gap: '6px', background: 'rgba(255,255,255,0.05)', padding: '6px 12px', borderRadius: '6px', color: 'inherit', textDecoration: 'none', transition: 'background 0.2s' }} onMouseOver={e => e.currentTarget.style.background = 'rgba(255,255,255,0.1)'} onMouseOut={e => e.currentTarget.style.background = 'rgba(255,255,255,0.05)'}>
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" style={{ transform: 'scale(1.2)' }}><path d="M23.498 6.186a3.016 3.016 0 0 0-2.122-2.136C19.505 3.545 12 3.545 12 3.545s-7.505 0-9.377.505A3.017 3.017 0 0 0 .502 6.186C0 8.07 0 12 0 12s0 3.93.502 5.814a3.016 3.016 0 0 0 2.122 2.136c1.871.505 9.376.505 9.376.505s7.505 0 9.377-.505a3.015 3.015 0 0 0 2.122-2.136C24 15.93 24 12 24 12s0-3.93-.502-5.814zM9.545 15.568V8.432L15.818 12l-6.273 3.568z" /></svg>
-              YouTube
-            </a>
-          </div>
-        </div>
-      </footer>
+      <SiteFooter />
 
     </div>
   );
