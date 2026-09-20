@@ -42,6 +42,7 @@
 #include "../Features/CloudStorage.h"
 #include "../Features/FeatureBinds.h"
 #include "../Features/ObsBypass.h"
+#include "../Features/WebRadar.h"
 #include "../Features/MeshSilhouette.h"
 #include "../Features/PedPreview.h"
 #include "../Main/Hooks.h"
@@ -451,6 +452,57 @@ namespace Menu
         MenuUi::EndPageColumns();
     }
 #endif
+
+    void RenderWebRadarIsland()
+    {
+        auto& radar = WebRadar::GetSettings();
+        MenuUi::BeginInspectorIsland(
+            "misc_web_radar",
+            T("WEB RADAR", "ВЕБ-РАДАР", "ВЕБ-РАДАР"),
+            0.f,
+            WebRadar::StatusText(),
+            true);
+        MiscRow(
+            "misc_web_radar_on",
+            ICON_FA_LOCATION_DOT,
+            T("Enable", "Включить", "Увімкнути"),
+            &radar.enabled,
+            false,
+            false);
+        DrawAimAnimatedSlider(
+            "misc_web_radar_hz",
+            radar.enabled,
+            ICON_FA_GAUGE_HIGH,
+            T("Rate###radar_hz", "Частота###radar_hz", "Частота###radar_hz"),
+            &radar.hz,
+            1.f,
+            10.f,
+            "%.0f Hz");
+        DrawAimAnimatedSlider(
+            "misc_web_radar_radius",
+            radar.enabled,
+            ICON_FA_CIRCLE,
+            T("Radius###radar_radius", "Радиус###radar_radius", "Радіус###radar_radius"),
+            &radar.radius,
+            50.f,
+            800.f,
+            "%.0f m");
+        if (MenuUi::ActionButton(
+                "misc_web_radar_copy",
+                T("Copy radar link", "Скопировать ссылку", "Скопіювати посилання"),
+                ImVec2(ImGui::GetContentRegionAvail().x, 34.f * UIScale()),
+                false,
+                ICON_FA_LINK))
+            WebRadar::CopyPageUrl();
+        ImGui::TextDisabled("%s", WebRadar::PageUrl());
+        if (WebRadar::LastStatus() != 0) {
+            ImGui::TextDisabled(
+                "HTTP %u  %u ms",
+                WebRadar::LastStatus(),
+                WebRadar::LastSendAgeMs());
+        }
+        MenuUi::EndInspectorIsland();
+    }
 
     void RenderServerPage()
     {

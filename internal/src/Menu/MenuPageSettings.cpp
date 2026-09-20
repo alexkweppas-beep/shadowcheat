@@ -248,6 +248,7 @@ void DrawGlobalKeysCard() {
   MenuUi::BeginInspectorIsland("flyout_capture_island",
                                T("Capture", "Захват", "Захоплення"), 10.f,
                                ObsBypass::StatusText(), true);
+  ImGui::TextDisabled("%s", ObsBypass::StatusDetail());
   MenuUi::SettingRowDesc obs{};
   obs.icon = ICON_FA_VIDEO;
   obs.label = T("OBS bypass", "Обход OBS", "Обхід OBS");

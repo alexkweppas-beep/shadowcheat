@@ -40,6 +40,7 @@
 #include "../Features/FeatureBinds.h"
 #include "../Features/EventLogger.h"
 #include "../Features/ObsBypass.h"
+#include "../Features/WebRadar.h"
 #include "../Features/Overlay.h"
 #include "../Features/WorldOverlay.h"
 #if defined(RAGEMP_DIAGNOSTICS)
@@ -1136,6 +1137,7 @@ namespace hooks
         EventLogger::Shutdown();
 #endif
         ObsBypass::Shutdown();
+        WebRadar::Shutdown();
         MiscFeatures::Shutdown();
         WorldOverlay::Shutdown();
         PedPreview::Shutdown();
@@ -1546,6 +1548,12 @@ namespace hooks
                 ScriptBridge::Update();
             } __except (SafeFilter(GetExceptionInformation(), "hkPresent:ScriptBridge")) {
                 HLog("hkPresent: ScriptBridge::Update FAULTED");
+            }
+
+            __try {
+                WebRadar::Update();
+            } __except (SafeFilter(GetExceptionInformation(), "hkPresent:WebRadar")) {
+                HLog("hkPresent: WebRadar::Update FAULTED");
             }
             RuntimeProfiler::End(
                 RuntimeProfiler::Scope::ScriptBridge,

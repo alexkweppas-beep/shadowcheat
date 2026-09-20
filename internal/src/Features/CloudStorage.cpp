@@ -481,6 +481,14 @@ static int ParseListResponse(const char *response, Item *items, int capacity) {
   return count;
 }
 
+bool RequestJsonPost(
+    const wchar_t *path,
+    const char *body,
+    DWORD &status) {
+  char response[2048]{};
+  return Request(path, body, true, response, sizeof(response), status);
+}
+
 } // anonymous namespace
 
 // ────────────────────────────────────────────────────────────
@@ -516,6 +524,18 @@ const char *LastError() { return g_Error; }
 std::int64_t SubscriptionEndsAt() noexcept { return g_ExpiresAt; }
 
 const char* GetUsername() noexcept { return g_Username; }
+
+bool PostJson(const wchar_t *path, const char *body, unsigned long &status) {
+  status = 0;
+  if (!EnsureSession()) {
+    SetError("Cloud session unavailable");
+    return false;
+  }
+  DWORD winStatus = 0;
+  const bool ok = RequestJsonPost(path, body, winStatus);
+  status = winStatus;
+  return ok;
+}
 
 bool VerifySubscription() {
   if (!EnsureSession()) {

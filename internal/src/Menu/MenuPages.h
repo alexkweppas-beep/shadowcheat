@@ -55,6 +55,7 @@ namespace Menu
     void RenderPlayersPage();
     void RenderAroundPage();
     void RenderMiscPage();
+    void RenderWebRadarIsland();
     void RenderPlayerPage();
     void RenderCarsPage();
     void RenderWorldPage();

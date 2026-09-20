@@ -30,6 +30,7 @@
 #include "../Features/MiscFeatures.h"
 #include "../Features/ServerProfile.h"
 #include "../Features/ObsBypass.h"
+#include "../Features/WebRadar.h"
 #include "../SDK/WeaponCatalog.h"
 #include "../SDK/WeaponGroups.h"
 
@@ -384,6 +385,9 @@ namespace Menu
         CFG_WRITE("menu_particles", s_Particles);
         CFG_WRITE("menu_cursor_particles", set->particle_cursor);
         CFG_WRITE("menu_obs_bypass", set->obs_bypass);
+        CFG_WRITE("radar_enabled", WebRadar::GetSettings().enabled);
+        CFG_WRITE("radar_hz", WebRadar::GetSettings().hz);
+        CFG_WRITE("radar_radius", WebRadar::GetSettings().radius);
         CFG_WRITE("menu_window_rounding", set->window_rounding);
         CFG_WRITE("menu_child_rounding", set->child_rounding);
         CFG_WRITE("menu_selection_rounding", set->selection_rounding);
@@ -1060,6 +1064,9 @@ namespace Menu
         CFG_READ_BOOL("menu_particles", s_Particles);
         CFG_READ_BOOL("menu_cursor_particles", set->particle_cursor);
         CFG_READ_BOOL("menu_obs_bypass", set->obs_bypass);
+        CFG_READ_BOOL("radar_enabled", WebRadar::GetSettings().enabled);
+        CFG_READ_FLOAT("radar_hz", WebRadar::GetSettings().hz);
+        CFG_READ_FLOAT("radar_radius", WebRadar::GetSettings().radius);
         CFG_READ_FLOAT("menu_window_rounding", set->window_rounding);
         CFG_READ_FLOAT("menu_child_rounding", set->child_rounding);
         CFG_READ_FLOAT("menu_selection_rounding", set->selection_rounding);

@@ -46,10 +46,42 @@ using CaptureFn2 = void (*)(void* swap, void* backbuffer);
 CaptureFn2 g_OrigCapture2 = nullptr;
 void* g_HookTarget = nullptr;
 
+enum class FailReason : int {
+    None = 0,
+    MarkerMissing,
+    XrefMissing,
+    BoundsUnknown,
+    MinHookFailed,
+    PointersMissing
+};
+
+FailReason g_FailReason{FailReason::None};
+char g_StatusDetail[192]{"obs idle"};
+int g_ModuleSize = 0;
+int g_LastMhOk = 0;
+int g_LastMhWanted = 0;
+int g_LastPtrCount = 0;
+char g_LastStrat[40]{"none"};
+uint8_t* g_FoundFns[4]{};
+int g_FoundCount = 0;
+HMODULE g_LastObsMod = nullptr;
+
+constexpr int kMaxCaptureHooks = 4;
+struct CaptureHook final {
+    uint8_t* target{};
+    CaptureFn2 orig{};
+    void* stub{};
+    bool minhook{};
+};
+CaptureHook g_CaptureHooks[kMaxCaptureHooks]{};
+int g_CaptureHookCount = 0;
+
 // OBS stores data.capture as a raw function pointer. Patching those pointers
 // is more reliable than a prologue hook when several functions share a prologue.
 constexpr int kMaxPtrPatches = 8;
 void** g_PatchedSlots[kMaxPtrPatches]{};
+void* g_PatchedOrigFn[kMaxPtrPatches]{};
+void* g_PatchedHookFn[kMaxPtrPatches]{};
 int g_PatchedCount = 0;
 
 DXGI_FORMAT TypedRtvFormat(DXGI_FORMAT format) noexcept
@@ -193,17 +225,11 @@ bool DrawOverlayAfterCapture(void* swapPtr, void* backbufferPtr) noexcept
     return false;
 }
 
-void __cdecl HkCapture2(void* swap, void* backbuffer)
+void AfterOrigCapture(void* swap, void* backbuffer) noexcept
 {
-    g_LastCaptureMs.store(GetTickCount64());
-    g_FramesSinceCapture.store(0);
-    const ULONG n = g_CaptureCalls.fetch_add(1) + 1;
+    const ULONG n = g_CaptureCalls.load();
     const bool nested = g_InsidePresent.load();
     const bool deferred = g_DeferThisPresent.load();
-
-    // OBS copies the clean backbuffer first.
-    if (g_OrigCapture2)
-        g_OrigCapture2(swap, backbuffer);
 
     // Ensure the GPU copy is ordered before we dirty the backbuffer.
     // Without this, async shtex copies can race and OBS records the overlay.
@@ -253,6 +279,100 @@ void __cdecl HkCapture2(void* swap, void* backbuffer)
                 "(defer failed)");
         }
     }
+}
+
+void RunCaptureHook(void* swap, void* backbuffer, CaptureFn2 orig) noexcept
+{
+    g_LastCaptureMs.store(GetTickCount64());
+    g_FramesSinceCapture.store(0);
+    g_CaptureCalls.fetch_add(1);
+    if (orig)
+        orig(swap, backbuffer);
+    AfterOrigCapture(swap, backbuffer);
+}
+
+void __cdecl HkCapture2(void* swap, void* backbuffer)
+{
+    CaptureFn2 orig = g_OrigCapture2;
+    if (g_CaptureHookCount > 0 && g_CaptureHooks[0].orig)
+        orig = g_CaptureHooks[0].orig;
+    RunCaptureHook(swap, backbuffer, orig);
+}
+
+void __cdecl HkCaptureB(void* swap, void* backbuffer)
+{
+    CaptureFn2 orig = g_CaptureHookCount > 1 ? g_CaptureHooks[1].orig : g_OrigCapture2;
+    RunCaptureHook(swap, backbuffer, orig);
+}
+
+void __cdecl HkCaptureC(void* swap, void* backbuffer)
+{
+    CaptureFn2 orig = g_CaptureHookCount > 2 ? g_CaptureHooks[2].orig : g_OrigCapture2;
+    RunCaptureHook(swap, backbuffer, orig);
+}
+
+void __cdecl HkCaptureD(void* swap, void* backbuffer)
+{
+    CaptureFn2 orig = g_CaptureHookCount > 3 ? g_CaptureHooks[3].orig : g_OrigCapture2;
+    RunCaptureHook(swap, backbuffer, orig);
+}
+
+void* StubForIndex(int index) noexcept
+{
+    if (index == 1)
+        return reinterpret_cast<void*>(&HkCaptureB);
+    if (index == 2)
+        return reinterpret_cast<void*>(&HkCaptureC);
+    if (index == 3)
+        return reinterpret_cast<void*>(&HkCaptureD);
+    return reinterpret_cast<void*>(&HkCapture2);
+}
+
+const char* FailStatusText(FailReason reason) noexcept
+{
+    if (reason == FailReason::MarkerMissing)
+        return "OBS found, marker missing";
+    if (reason == FailReason::XrefMissing)
+        return "OBS found, xref missing";
+    if (reason == FailReason::BoundsUnknown)
+        return "OBS found, function bounds unknown";
+    if (reason == FailReason::MinHookFailed)
+        return "OBS found, MinHook failed";
+    if (reason == FailReason::PointersMissing)
+        return "OBS found, capture pointers missing";
+    return "OBS found, hook failed";
+}
+
+void RebuildStatusDetail() noexcept
+{
+    char rvas[80]{};
+    int used = 0;
+    for (int i = 0; i < g_FoundCount && used < 70; ++i) {
+        const unsigned long rva = g_LastObsMod && g_FoundFns[i]
+            ? static_cast<unsigned long>(
+                  g_FoundFns[i] - reinterpret_cast<uint8_t*>(g_LastObsMod))
+            : 0;
+        const int n = wsprintfA(rvas + used, used ? ",0x%lX" : "0x%lX", rva);
+        if (n > 0)
+            used += n;
+    }
+    wsprintfA(
+        g_StatusDetail,
+        "obs size=0x%X rva=%s strat=%s mh=%d/%d ptrs=%d reason=%d",
+        g_ModuleSize,
+        rvas[0] ? rvas : "-",
+        g_LastStrat,
+        g_LastMhOk,
+        g_LastMhWanted,
+        g_LastPtrCount,
+        static_cast<int>(g_FailReason));
+}
+
+void RememberFail(FailReason reason) noexcept
+{
+    g_FailReason = reason;
+    RebuildStatusDetail();
+    hooks::HLog(g_StatusDetail);
 }
 
 uint8_t* FindModuleString(HMODULE mod, const char* text) noexcept
@@ -314,9 +434,9 @@ uint8_t* FindRipRelativeXref(
             uint8_t* scan = cursor > regionBase ? cursor : regionBase;
             for (; scan + 7 < regionEnd; ++scan)
             {
-                // 48/4C 8D <modrm mod=00 rm=101> = lea r64, [rip+disp32]
+                // lea r64,[rip+disp32] or mov r64,[rip+disp32]
                 if ((scan[0] != 0x48 && scan[0] != 0x4C) ||
-                    scan[1] != 0x8D ||
+                    (scan[1] != 0x8D && scan[1] != 0x8B) ||
                     (scan[2] & 0xC7) != 0x05)
                     continue;
                 const int32_t rel =
@@ -331,55 +451,120 @@ uint8_t* FindRipRelativeXref(
     return nullptr;
 }
 
-// Resolve REAL d3d11_capture via xref to a string that only it uses.
-// Do NOT use a short prologue pattern — OBS has multiple lookalikes.
-uint8_t* ResolveD3d11Capture(HMODULE mod) noexcept
+uint8_t* FindByPrologue(uint8_t* base, uint8_t* ref) noexcept
 {
-    if (!mod)
-        return nullptr;
-
-    uint8_t* str = FindModuleString(
-        mod, "d3d11_shtex_capture: failed to get backbuffer");
-    if (!str) {
-        str = FindModuleString(
-            mod, "d3d11_shmem_capture: failed to get backbuffer");
-    }
-    if (!str) {
-        hooks::HLog("ObsBypass: capture string missing");
-        return nullptr;
-    }
-
-    MODULEINFO info{};
-    if (!GetModuleInformation(GetCurrentProcess(), mod, &info, sizeof(info)))
-        return nullptr;
-    auto* base = static_cast<uint8_t*>(info.lpBaseOfDll);
-    uint8_t* end = base + info.SizeOfImage;
-
-    uint8_t* ref = FindRipRelativeXref(base, end, str);
-    if (!ref) {
-        hooks::HLog("ObsBypass: capture xref missing");
-        return nullptr;
-    }
-
     for (int back = 0; back < 0x400; ++back) {
-        uint8_t* c = ref - back;
-        if (c <= base)
+        uint8_t* cursor = ref - back;
+        if (cursor <= base)
             break;
-        if (c[0] == 0xCC && c[1] != 0xCC)
-            return c + 1;
+        if (cursor[0] == 0xCC && cursor[1] != 0xCC)
+            return cursor + 1;
         const bool prologue =
-            (c[0] == 0x48 && c[1] == 0x89 && c[2] == 0x5C) ||
-            (c[0] == 0x40 && c[1] == 0x53) ||
-            (c[0] == 0x48 && c[1] == 0x83 && c[2] == 0xEC);
-        if (prologue && c > base && c[-1] == 0xCC)
-            return c;
+            (cursor[0] == 0x48 && cursor[1] == 0x89 && cursor[2] == 0x5C) ||
+            (cursor[0] == 0x40 && cursor[1] == 0x53) ||
+            (cursor[0] == 0x48 && cursor[1] == 0x83 && cursor[2] == 0xEC);
+        if (prologue && cursor > base && cursor[-1] == 0xCC)
+            return cursor;
     }
     return nullptr;
 }
 
-bool PatchCapturePointers(HMODULE mod, void* captureFn) noexcept
+uint8_t* FindByPdata(uint8_t* base, uint8_t* ref) noexcept
 {
-    if (!mod || !captureFn)
+    auto* dos = reinterpret_cast<IMAGE_DOS_HEADER*>(base);
+    if (dos->e_magic != IMAGE_DOS_SIGNATURE)
+        return nullptr;
+    auto* nt = reinterpret_cast<IMAGE_NT_HEADERS*>(base + dos->e_lfanew);
+    if (nt->Signature != IMAGE_NT_SIGNATURE)
+        return nullptr;
+    const IMAGE_DATA_DIRECTORY dir =
+        nt->OptionalHeader.DataDirectory[IMAGE_DIRECTORY_ENTRY_EXCEPTION];
+    if (!dir.VirtualAddress || !dir.Size)
+        return nullptr;
+    auto* rows = reinterpret_cast<RUNTIME_FUNCTION*>(base + dir.VirtualAddress);
+    const int count = static_cast<int>(dir.Size / sizeof(RUNTIME_FUNCTION));
+    const DWORD rva = static_cast<DWORD>(ref - base);
+    for (int i = 0; i < count; ++i) {
+        if (rva >= rows[i].BeginAddress && rva < rows[i].EndAddress)
+            return base + rows[i].BeginAddress;
+    }
+    return nullptr;
+}
+
+bool RememberFunction(uint8_t* fn, const char* strat) noexcept
+{
+    if (!fn)
+        return false;
+    for (int i = 0; i < g_FoundCount; ++i) {
+        if (g_FoundFns[i] == fn)
+            return true;
+    }
+    if (g_FoundCount >= 4)
+        return true;
+    g_FoundFns[g_FoundCount++] = fn;
+    lstrcpynA(g_LastStrat, strat, sizeof(g_LastStrat));
+    return true;
+}
+
+uint8_t* ResolveOneMarker(uint8_t* base, uint8_t* end, uint8_t* str) noexcept
+{
+    uint8_t* ref = FindRipRelativeXref(base, end, str);
+    if (!ref)
+        return nullptr;
+    uint8_t* fn = FindByPdata(base, ref);
+    if (fn && RememberFunction(fn, "pdata"))
+        return fn;
+    fn = FindByPrologue(base, ref);
+    if (fn && RememberFunction(fn, "prologue"))
+        return fn;
+    return nullptr;
+}
+
+int ResolveCaptureFns(HMODULE mod) noexcept
+{
+    g_FoundCount = 0;
+    lstrcpynA(g_LastStrat, "none", sizeof(g_LastStrat));
+    if (!mod)
+        return 0;
+    MODULEINFO info{};
+    if (!GetModuleInformation(GetCurrentProcess(), mod, &info, sizeof(info)))
+        return 0;
+    auto* base = static_cast<uint8_t*>(info.lpBaseOfDll);
+    uint8_t* end = base + info.SizeOfImage;
+    g_ModuleSize = static_cast<int>(info.SizeOfImage);
+    g_LastObsMod = mod;
+    static const char* kMarkers[] = {
+        "d3d11_shtex_capture: failed to get backbuffer",
+        "d3d11_shmem_capture: failed to get backbuffer",
+        "d3d11_shtex_capture",
+        "d3d11_shmem_capture"
+    };
+    bool sawMarker = false;
+    bool sawXref = false;
+    for (const char* text : kMarkers) {
+        uint8_t* str = FindModuleString(mod, text);
+        if (!str)
+            continue;
+        sawMarker = true;
+        uint8_t* fn = ResolveOneMarker(base, end, str);
+        if (FindRipRelativeXref(base, end, str))
+            sawXref = true;
+        (void)fn;
+    }
+    if (g_FoundCount > 0)
+        return g_FoundCount;
+    if (!sawMarker)
+        RememberFail(FailReason::MarkerMissing);
+    else if (!sawXref)
+        RememberFail(FailReason::XrefMissing);
+    else
+        RememberFail(FailReason::BoundsUnknown);
+    return 0;
+}
+
+bool PatchCapturePointers(HMODULE mod, void* captureFn, void* hookFn) noexcept
+{
+    if (!mod || !captureFn || !hookFn)
         return false;
 
     MODULEINFO info{};
@@ -389,7 +574,6 @@ bool PatchCapturePointers(HMODULE mod, void* captureFn) noexcept
     auto* base = static_cast<uint8_t*>(info.lpBaseOfDll);
     uint8_t* end = base + info.SizeOfImage;
     const auto want = reinterpret_cast<uintptr_t>(captureFn);
-    const auto hook = reinterpret_cast<uintptr_t>(&HkCapture2);
     int patched = 0;
 
     for (uint8_t* p = base; p + sizeof(void*) <= end; p += sizeof(void*)) {
@@ -423,8 +607,12 @@ bool PatchCapturePointers(HMODULE mod, void* captureFn) noexcept
                     break;
                 }
             }
-            if (!known && g_PatchedCount < kMaxPtrPatches)
-                g_PatchedSlots[g_PatchedCount++] = slot;
+            if (!known && g_PatchedCount < kMaxPtrPatches) {
+                g_PatchedSlots[g_PatchedCount] = slot;
+                g_PatchedOrigFn[g_PatchedCount] = captureFn;
+                g_PatchedHookFn[g_PatchedCount] = hookFn;
+                ++g_PatchedCount;
+            }
 
             DWORD oldProtect = 0;
             if (!VirtualProtect(slot, sizeof(void*), PAGE_READWRITE, &oldProtect))
@@ -433,7 +621,7 @@ bool PatchCapturePointers(HMODULE mod, void* captureFn) noexcept
             // raw hooked address or HkCapture2 will recurse into itself.
             if (!g_OrigCapture2)
                 g_OrigCapture2 = reinterpret_cast<CaptureFn2>(*slot);
-            *slot = reinterpret_cast<void*>(&HkCapture2);
+            *slot = hookFn;
             VirtualProtect(slot, sizeof(void*), oldProtect, &oldProtect);
             ++patched;
         }
@@ -448,55 +636,44 @@ bool PatchCapturePointers(HMODULE mod, void* captureFn) noexcept
     return patched > 0 || g_PatchedCount > 0;
 }
 
-void RefreshCapturePointers(HMODULE mod, void* captureFn) noexcept
+void RefreshCapturePointers(HMODULE mod) noexcept
 {
-    if (!mod || !captureFn || !g_Hooked.load())
+    if (!mod || !g_Hooked.load())
         return;
-    // OBS may re-assign data.capture on init — keep the slots we already know
-    // pointed at our hook. This part is cheap: a handful of known addresses.
     bool reverted = false;
     for (int i = 0; i < g_PatchedCount; ++i) {
         void** slot = g_PatchedSlots[i];
-        if (!slot)
+        if (!slot || !g_PatchedOrigFn[i] || !g_PatchedHookFn[i])
             continue;
         __try {
-            if (reinterpret_cast<uintptr_t>(*slot) ==
-                reinterpret_cast<uintptr_t>(captureFn)) {
+            if (*slot == g_PatchedOrigFn[i]) {
                 DWORD oldProtect = 0;
-                if (VirtualProtect(
-                        slot,
-                        sizeof(void*),
-                        PAGE_READWRITE,
-                        &oldProtect)) {
-                    *slot = reinterpret_cast<void*>(&HkCapture2);
-                    VirtualProtect(
-                        slot, sizeof(void*), oldProtect, &oldProtect);
+                if (VirtualProtect(slot, sizeof(void*), PAGE_READWRITE, &oldProtect)) {
+                    *slot = g_PatchedHookFn[i];
+                    VirtualProtect(slot, sizeof(void*), oldProtect, &oldProtect);
                     reverted = true;
                 }
             }
         } __except (EXCEPTION_EXECUTE_HANDLER) {
         }
     }
-
-    // A full-module rescan walks every writable page of graphics-hook and runs
-    // on the render thread, so it is not something to do once a second for the
-    // whole session. Once a slot is known, the cheap loop above maintains it;
-    // rescan only while nothing has been found yet, or right after OBS put the
-    // original pointer back.
     static ULONGLONG s_LastScan = 0;
     const ULONGLONG now = GetTickCount64();
-    const bool needScan = g_PatchedCount == 0 || reverted;
-    if (needScan && now - s_LastScan > 1000ull) {
+    if ((!g_PatchedCount || reverted) && now - s_LastScan > 1000ull) {
         s_LastScan = now;
-        PatchCapturePointers(mod, captureFn);
+        for (int i = 0; i < g_CaptureHookCount; ++i) {
+            PatchCapturePointers(
+                mod,
+                g_CaptureHooks[i].target,
+                g_CaptureHooks[i].stub);
+        }
     }
 }
 
-bool InstallMinHook(void* target) noexcept
+bool InstallOneMinHook(CaptureHook& hook) noexcept
 {
-    if (!target)
-        return false;
-
+    if (!hook.target || hook.minhook)
+        return hook.minhook;
     static bool mhReady = false;
     if (!mhReady) {
         const MH_STATUS st = MH_Initialize();
@@ -504,23 +681,19 @@ bool InstallMinHook(void* target) noexcept
             return false;
         mhReady = true;
     }
-
     CaptureFn2 trampoline = nullptr;
-    if (MH_CreateHook(
-            target,
-            reinterpret_cast<void*>(&HkCapture2),
-            reinterpret_cast<void**>(&trampoline)) != MH_OK)
+    if (MH_CreateHook(hook.target, hook.stub, reinterpret_cast<void**>(&trampoline)) != MH_OK)
         return false;
-
-    if (MH_EnableHook(target) != MH_OK) {
-        MH_RemoveHook(target);
+    if (MH_EnableHook(hook.target) != MH_OK) {
+        MH_RemoveHook(hook.target);
         return false;
     }
-
+    hook.orig = trampoline;
+    hook.minhook = true;
     if (!g_OrigCapture2)
         g_OrigCapture2 = trampoline;
-    g_HookTarget = target;
-    hooks::HLog("ObsBypass: MinHook on d3d11_capture OK");
+    if (!g_HookTarget)
+        g_HookTarget = hook.target;
     return true;
 }
 
@@ -532,47 +705,57 @@ bool TryInstall() noexcept
     HMODULE obs = GetModuleHandleW(L"graphics-hook64.dll");
     if (!obs)
         obs = GetModuleHandleW(L"graphics-hook.dll");
-    if (!obs)
-    {
+    if (!obs) {
         SHADOW_PROTECT_END();
         return false;
     }
-
-    if (!g_ResolvedCapture) {
-        g_ResolvedCapture = ResolveD3d11Capture(obs);
-        if (!g_ResolvedCapture) {
-            hooks::HLog("ObsBypass: d3d11_capture not found");
-            SHADOW_PROTECT_END();
-            return false;
-        }
-        MODULEINFO info{};
-        GetModuleInformation(GetCurrentProcess(), obs, &info, sizeof(info));
-        char buf[96];
-        wsprintfA(
-            buf,
-            "ObsBypass: d3d11_capture rva=0x%lX",
-            static_cast<unsigned long>(
-                g_ResolvedCapture - static_cast<uint8_t*>(info.lpBaseOfDll)));
-        hooks::HLog(buf);
+    if (g_FoundCount == 0 && ResolveCaptureFns(obs) == 0) {
+        SHADOW_PROTECT_END();
+        return false;
     }
-
-    // MinHook first (provides a safe trampoline), then patch OBS's
-    // data.capture pointers so calls go through us even if prologue hooks
-    // miss lookalike functions.
+    g_ResolvedCapture = g_FoundFns[0];
+    g_LastMhWanted = g_FoundCount;
+    g_LastMhOk = 0;
     bool ok = false;
-    if (!g_HookTarget && InstallMinHook(g_ResolvedCapture))
-        ok = true;
-    if (PatchCapturePointers(obs, g_ResolvedCapture))
-        ok = true;
-
-    if (ok) {
-        g_Hooked.store(true);
-        if (!g_OrigCapture2)
-            g_OrigCapture2 = reinterpret_cast<CaptureFn2>(g_ResolvedCapture);
+    g_CaptureHookCount = 0;
+    for (int i = 0; i < g_FoundCount && i < kMaxCaptureHooks; ++i) {
+        CaptureHook& hook = g_CaptureHooks[g_CaptureHookCount];
+        hook.target = g_FoundFns[i];
+        hook.stub = StubForIndex(i);
+        hook.orig = nullptr;
+        hook.minhook = false;
+        if (InstallOneMinHook(hook)) {
+            ++g_LastMhOk;
+            ok = true;
+        }
+        if (PatchCapturePointers(obs, hook.target, hook.stub))
+            ok = true;
+        ++g_CaptureHookCount;
     }
-    const bool hooked = g_Hooked.load();
+    g_LastPtrCount = g_PatchedCount;
+    if (!ok) {
+        for (int i = 0; i < g_CaptureHookCount; ++i) {
+            if (g_CaptureHooks[i].minhook && g_CaptureHooks[i].target) {
+                MH_DisableHook(g_CaptureHooks[i].target);
+                MH_RemoveHook(g_CaptureHooks[i].target);
+            }
+            g_CaptureHooks[i] = {};
+        }
+        g_CaptureHookCount = 0;
+        RememberFail(g_LastMhOk == 0 && g_FoundCount > 0
+            ? FailReason::MinHookFailed
+            : FailReason::PointersMissing);
+        SHADOW_PROTECT_END();
+        return false;
+    }
+    g_FailReason = FailReason::None;
+    g_Hooked.store(true);
+    if (!g_OrigCapture2)
+        g_OrigCapture2 = reinterpret_cast<CaptureFn2>(g_ResolvedCapture);
+    RebuildStatusDetail();
+    hooks::HLog(g_StatusDetail);
     SHADOW_PROTECT_END();
-    return hooked;
+    return true;
 }
 
 } // namespace
@@ -617,12 +800,17 @@ const char* StatusText() noexcept
         !GetModuleHandleW(L"graphics-hook.dll"))
         return "Waiting for OBS Game Capture";
     if (!g_Hooked.load())
-        return "OBS found, hook failed";
+        return FailStatusText(g_FailReason);
     if (g_StickyStreamProof.load() && g_LocalDrawOk.load())
         return "Active — you see ESP, OBS Game Capture does not";
     if (IsCaptureActive())
         return "Capturing (arming stream-proof...)";
     return "Hooked — start Game Capture on GTA5";
+}
+
+const char* StatusDetail() noexcept
+{
+    return g_StatusDetail;
 }
 
 void BeginPresent() noexcept
@@ -705,8 +893,8 @@ void Tick() noexcept
 
     if (!g_Hooked.load())
         TryInstall();
-    else if (g_ResolvedCapture)
-        RefreshCapturePointers(obs, g_ResolvedCapture);
+    else
+        RefreshCapturePointers(obs);
 }
 
 void Shutdown() noexcept
@@ -721,16 +909,16 @@ void Shutdown() noexcept
     // which crashes the game some frames after unload rather than at unload.
     for (int i = 0; i < g_PatchedCount; ++i) {
         void** slot = g_PatchedSlots[i];
-        if (slot && g_ResolvedCapture) {
+        if (slot && g_PatchedOrigFn[i]) {
             __try {
-                if (*slot == reinterpret_cast<void*>(&HkCapture2)) {
+                if (*slot == g_PatchedHookFn[i]) {
                     DWORD oldProtect = 0;
                     if (VirtualProtect(
                             slot,
                             sizeof(void*),
                             PAGE_READWRITE,
                             &oldProtect)) {
-                        *slot = g_ResolvedCapture;
+                        *slot = g_PatchedOrigFn[i];
                         VirtualProtect(
                             slot,
                             sizeof(void*),
@@ -742,14 +930,21 @@ void Shutdown() noexcept
             }
         }
         g_PatchedSlots[i] = nullptr;
+        g_PatchedOrigFn[i] = nullptr;
+        g_PatchedHookFn[i] = nullptr;
     }
     g_PatchedCount = 0;
 
-    if (g_HookTarget) {
-        MH_DisableHook(g_HookTarget);
-        MH_RemoveHook(g_HookTarget);
-        g_HookTarget = nullptr;
+    for (int i = 0; i < g_CaptureHookCount; ++i) {
+        if (g_CaptureHooks[i].minhook && g_CaptureHooks[i].target) {
+            MH_DisableHook(g_CaptureHooks[i].target);
+            MH_RemoveHook(g_CaptureHooks[i].target);
+        }
+        g_CaptureHooks[i] = {};
     }
+    g_CaptureHookCount = 0;
+    g_FoundCount = 0;
+    g_HookTarget = nullptr;
     g_OrigCapture2 = nullptr;
     g_ResolvedCapture = nullptr;
     g_Hooked.store(false);

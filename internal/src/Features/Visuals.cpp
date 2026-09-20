@@ -1548,9 +1548,12 @@ namespace Features {
                 needsFullScan = true;
             }
 
+            // Declared out here because the diagnostics report below sits
+            // outside the scan block and still has to name it.
+            int liveCount = 0;
             if (needsFullScan)
             {
-                const int liveCount = GameEntities::Copy(
+                liveCount = GameEntities::Copy(
                     s_LiveEntities,
                     kMaxLiveEntities,
                     GameEntities::kVehicles | GameEntities::kObjects);

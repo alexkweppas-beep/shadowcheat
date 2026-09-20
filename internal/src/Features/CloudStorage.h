@@ -25,6 +25,8 @@ const char* GetUsername() noexcept;
 // Performs a background ping to the server to verify the session/token is still valid.
 bool VerifySubscription();
 
+bool PostJson(const wchar_t *path, const char *body, unsigned long &status);
+
 bool List(const char *kind, Item *items, int capacity, int &count);
 bool Get(const char *kind, const char *id, char *content, std::size_t capacity);
 bool Upsert(const char *kind, const char *name, const char *content);

@@ -175,7 +175,7 @@ namespace Menu
               "Без колізії: об'єкти"),
             &s.disableObjectCollision);
         MenuUi::EndInspectorIsland();
-
+        RenderWebRadarIsland();
     }
 
     static void RenderPlayerMovePage()

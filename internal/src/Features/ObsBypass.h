@@ -11,6 +11,7 @@ void SetEnabled(bool enabled) noexcept;
 bool IsHooked() noexcept;
 bool IsCaptureActive() noexcept;
 const char* StatusText() noexcept;
+const char* StatusDetail() noexcept;
 
 // Bracket the Present call so capture knows it is nested inside us.
 void BeginPresent() noexcept;
