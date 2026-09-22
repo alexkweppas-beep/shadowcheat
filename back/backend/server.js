@@ -9,6 +9,7 @@ const rateLimit = require('express-rate-limit');
 const Database = require('better-sqlite3');
 const path = require('path');
 const fs = require('fs');
+const productDelivery = require('./product_delivery');
 
 // ─── 9.1: session_key encryption at rest ───
 // Master key из env — если не задан, сервер не стартует.
@@ -49,6 +50,19 @@ if (!process.env.JWT_SECRET || process.env.JWT_SECRET === 'REPLACE_WITH_RANDOM_6
 }
 if (!process.env.CLIENT_SHARED_SECRET || process.env.CLIENT_SHARED_SECRET === 'REPLACE_WITH_RANDOM_32BYTES_HEX') {
     console.error('[FATAL] CLIENT_SHARED_SECRET is not configured! Set a real secret in .env');
+    process.exit(1);
+}
+if (!process.env.WATERMARK_SECRET || process.env.WATERMARK_SECRET.length < 32) {
+    console.error('[FATAL] WATERMARK_SECRET must contain at least 32 characters');
+    process.exit(1);
+}
+const RAGEMP_VARIANT_COUNT = Number.parseInt(
+    process.env.RAGEMP_VARIANT_COUNT || '32',
+    10);
+if (!Number.isInteger(RAGEMP_VARIANT_COUNT) ||
+    RAGEMP_VARIANT_COUNT < 2 ||
+    RAGEMP_VARIANT_COUNT > 64) {
+    console.error('[FATAL] RAGEMP_VARIANT_COUNT must be between 2 and 64');
     process.exit(1);
 }
 
@@ -94,7 +108,9 @@ app.use(express.json({
 app.use('/admin', express.static(path.join(__dirname, 'admin_static')));
 
 // ─── SQLite Database ───
-const db = new Database(path.join(__dirname, 'shadow.db'));
+const databasePath = process.env.SHADOW_DB_PATH ||
+    path.join(__dirname, 'shadow.db');
+const db = new Database(databasePath);
 db.pragma('journal_mode = DELETE');
 db.pragma('foreign_keys = ON');
 
@@ -146,6 +162,9 @@ CREATE TABLE IF NOT EXISTS download_log (
     hwid            TEXT,
     loader_filename TEXT,
     integrity_hash  TEXT,
+    customer_tag    TEXT,
+    launch_id       TEXT,
+    variant_id      INTEGER,
     ts              TEXT DEFAULT (datetime('now'))
 );
 
@@ -184,6 +203,10 @@ CREATE TABLE IF NOT EXISTS loader_sessions (
     integrity_hash    TEXT,
     session_key_hex   TEXT,
     current_challenge TEXT,
+    product_id        TEXT,
+    customer_tag      TEXT,
+    launch_id         TEXT,
+    variant_id        INTEGER,
     last_heartbeat    TEXT DEFAULT (datetime('now'))
 );
 
@@ -302,6 +325,30 @@ CREATE TABLE IF NOT EXISTS user_configs (
         db.exec("ALTER TABLE loader_sessions ADD COLUMN current_challenge TEXT");
     if (!have.has('loader_session_uuid'))
         db.exec("ALTER TABLE loader_sessions ADD COLUMN loader_session_uuid TEXT");
+    if (!have.has('product_id'))
+        db.exec("ALTER TABLE loader_sessions ADD COLUMN product_id TEXT");
+    if (!have.has('customer_tag'))
+        db.exec("ALTER TABLE loader_sessions ADD COLUMN customer_tag TEXT");
+    if (!have.has('launch_id'))
+        db.exec("ALTER TABLE loader_sessions ADD COLUMN launch_id TEXT");
+    if (!have.has('variant_id'))
+        db.exec("ALTER TABLE loader_sessions ADD COLUMN variant_id INTEGER");
+}
+try { db.exec("ALTER TABLE download_log ADD COLUMN customer_tag TEXT"); } catch (e) { }
+try { db.exec("ALTER TABLE download_log ADD COLUMN launch_id TEXT"); } catch (e) { }
+try { db.exec("ALTER TABLE download_log ADD COLUMN variant_id INTEGER"); } catch (e) { }
+try {
+    db.exec(`CREATE TABLE IF NOT EXISTS feature_bundle_log (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        user_id INTEGER NOT NULL,
+        launch_id TEXT NOT NULL,
+        variant_id INTEGER NOT NULL,
+        feature_id TEXT NOT NULL,
+        canary TEXT NOT NULL,
+        ts TEXT DEFAULT (datetime('now'))
+    )`);
+} catch (e) {
+    console.warn('[MIGRATION] feature_bundle_log:', e.message);
 }
 try { db.exec("ALTER TABLE loader_bindings ADD COLUMN ip TEXT"); } catch (e) { }
 try { db.exec("ALTER TABLE activity_log ADD COLUMN loader_version TEXT"); } catch (e) { }
@@ -529,37 +576,53 @@ function generateSessionKey() {
     return crypto.randomBytes(32).toString('hex');
 }
 
-// ─── Per-user Binary Polymorphism ───
-// Мутируем бинарник для каждого пользователя: разные байты = разная сигнатура
-// Подход: несколько фиксированных placeholder'ов в бинаре
-const HWID_PLACEHOLDER = Buffer.from('SHADOW_HWID_PLACEHOLDER_' + '0'.repeat(64), 'ascii');
-const USER_PLACEHOLDER = Buffer.from('SHADOW_USER_PLACEHOLDER_' + '0'.repeat(32), 'ascii');
-const USERTAG_PLACEHOLDER = Buffer.from('SHADOW_TAG_00000000', 'ascii'); // 8 байт тега
+function loadPersonalizedProduct(productId, user, hwid) {
+    if (!/^[a-z0-9_-]{1,32}$/.test(productId))
+        throw new Error('Invalid product id');
+    const variantId = productDelivery.deriveVariantId({
+        userId: user.id,
+        hwid,
+        variantSecret: process.env.WATERMARK_SECRET,
+        variantCount: RAGEMP_VARIANT_COUNT
+    });
+    const variantDirectory = variantId.toString().padStart(2, '0');
+    const templatePath = path.join(
+        __dirname, 'products', productId, 'variants',
+        variantDirectory, 'cheat.dll');
+    if (!fs.existsSync(templatePath))
+        throw new Error('Protected product template not found');
+    const customerTag = productDelivery.deriveCustomerTag(
+        user.id, hwid, process.env.WATERMARK_SECRET);
+    const template = fs.readFileSync(templatePath);
+    return {
+        artifact: productDelivery.personalizeArtifact(template, customerTag),
+        customerTag,
+        variantId
+    };
+}
 
-function patchBinary(raw, hwid, username, userId) {
-    let buf = Buffer.from(raw);
+function validateRagempVariantCatalog() {
+    for (let variantId = 0;
+         variantId < RAGEMP_VARIANT_COUNT;
+         ++variantId) {
+        const directory = variantId.toString().padStart(2, '0');
+        const artifactPath = path.join(
+            __dirname, 'products', 'ragemp', 'variants',
+            directory, 'cheat.dll');
+        if (!fs.existsSync(artifactPath))
+            return false;
+        const artifact = fs.readFileSync(artifactPath);
+        if (artifact.indexOf(
+                productDelivery.CUSTOMER_TAG_PLACEHOLDER) < 0)
+            return false;
+    }
+    return true;
+}
 
-    // 1. Вшить HWID
-    const hwid_buf = Buffer.alloc(HWID_PLACEHOLDER.length, 0);
-    Buffer.from(hwid.padEnd(HWID_PLACEHOLDER.length, '\0'), 'ascii').copy(hwid_buf, 0, 0, HWID_PLACEHOLDER.length);
-    const hi = buf.indexOf(HWID_PLACEHOLDER);
-    if (hi >= 0) buf = Buffer.concat([buf.slice(0, hi), hwid_buf, buf.slice(hi + HWID_PLACEHOLDER.length)]);
-
-    // 2. Вшить username
-    const user_buf = Buffer.alloc(USER_PLACEHOLDER.length, 0);
-    Buffer.from(username.substring(0, USER_PLACEHOLDER.length - 1), 'ascii').copy(user_buf);
-    const ui = buf.indexOf(USER_PLACEHOLDER);
-    if (ui >= 0) buf = Buffer.concat([buf.slice(0, ui), user_buf, buf.slice(ui + USER_PLACEHOLDER.length)]);
-
-    // 3. Уникальный user tag (CRC32 от userId + hwid → детерминированный, уникальный)
-    const tag_buf = Buffer.alloc(USERTAG_PLACEHOLDER.length, 0);
-    Buffer.from('SHAD', 'ascii').copy(tag_buf, 0); // magic
-    const user_hash = crypto.createHash('sha256').update(userId.toString() + hwid).digest();
-    user_hash.copy(tag_buf, 4, 0, 4); // 4 байта уникального тега
-    const ti = buf.indexOf(USERTAG_PLACEHOLDER);
-    if (ti >= 0) buf = Buffer.concat([buf.slice(0, ti), tag_buf, buf.slice(ti + USERTAG_PLACEHOLDER.length)]);
-
-    return buf;
+if (process.env.NODE_ENV === 'production' &&
+    !validateRagempVariantCatalog()) {
+    console.error('[FATAL] protected RAGE:MP variant catalog is incomplete');
+    process.exit(1);
 }
 
 // Генерация уникального имени лоадера для пользователя
@@ -1363,17 +1426,31 @@ app.post('/api/loader/download', authenticateToken, async (req, res) => {
     if (!sub) return res.status(403).json({ error: 'No active subscription or subscription is frozen' });
 
     let raw;
+    let customerTag = null;
+    let variantId = null;
     if (product_id === 'trigger' || product_id === 'trigger_silent') {
         // Для триггера DLL не нужна, выдаем пустышку чисто для session_key
         raw = Buffer.from('trigger_no_dll_required_payload');
+    } else if (product_id === 'ragemp') {
+        try {
+            const personalized = loadPersonalizedProduct(
+                product_id, req.user, hwid);
+            raw = personalized.artifact;
+            customerTag = personalized.customerTag;
+            variantId = personalized.variantId;
+        } catch (error) {
+            console.error('[DELIVERY]', error.message);
+            return res.status(404).json({ error: 'Protected product not found' });
+        }
     } else {
-        const bin_path = path.join(__dirname, 'products', product_id, 'cheat.dll');
-        if (!fs.existsSync(bin_path)) return res.status(404).json({ error: 'Product not found' });
-        raw = fs.readFileSync(bin_path);
-        raw = patchBinary(raw, hwid, req.user.username, req.user.id);
+        const binaryPath = path.join(
+            __dirname, 'products', product_id, 'cheat.dll');
+        if (!fs.existsSync(binaryPath))
+            return res.status(404).json({ error: 'Product not found' });
+        raw = fs.readFileSync(binaryPath);
     }
 
-    const integrity_hash = crypto.createHash('sha256').update(raw).digest('hex');
+    const integrity_hash = productDelivery.hashArtifact(raw);
 
     const key = crypto.randomBytes(32);
     const iv = crypto.randomBytes(12);
@@ -1389,16 +1466,34 @@ app.post('/api/loader/download', authenticateToken, async (req, res) => {
     //   использует его же для HMAC) и random 16-байт nonce. Клиент при первом
     //   heartbeat шлёт challenge_response = HMAC-SHA256(session_key, nonce).
     const initial_challenge = crypto.randomBytes(16).toString('hex');
+    const launchId = crypto.randomUUID();
+    const launchTicket = customerTag
+        ? productDelivery.issueLaunchTicket({
+            userId: req.user.id,
+            productId: product_id,
+            hwid,
+            customerTag,
+            integrityHash: integrity_hash,
+            launchId,
+            variantId,
+            jwtSecret: process.env.JWT_SECRET
+        })
+        : null;
 
     const tx = db.transaction(() => {
-        db.prepare('INSERT INTO download_log (user_id, product_id, hwid, loader_filename, integrity_hash) VALUES (?,?,?,?,?)').run(
-            req.user.id, product_id, hwid, loader_filename, integrity_hash
+        db.prepare(`INSERT INTO download_log
+            (user_id, product_id, hwid, loader_filename, integrity_hash,
+             customer_tag, launch_id, variant_id) VALUES (?,?,?,?,?,?,?,?)`).run(
+            req.user.id, product_id, hwid, loader_filename, integrity_hash,
+            customerTag, launchId, variantId
         );
         // 9.1 fix: session_key_hex хранится зашифрованным через AES-256-GCM
         db.prepare(`INSERT OR REPLACE INTO loader_sessions
-            (user_id, integrity_hash, session_key_hex, current_challenge, last_heartbeat)
-            VALUES (?,?,?,?,datetime('now'))`).run(
-            req.user.id, integrity_hash, encryptSessionKey(key.toString('hex')), initial_challenge
+            (user_id, integrity_hash, session_key_hex, current_challenge,
+             product_id, customer_tag, launch_id, variant_id, last_heartbeat)
+            VALUES (?,?,?,?,?,?,?,?,datetime('now'))`).run(
+            req.user.id, integrity_hash, encryptSessionKey(key.toString('hex')),
+            initial_challenge, product_id, customerTag, launchId, variantId
         );
     });
     tx();
@@ -1408,6 +1503,9 @@ app.post('/api/loader/download', authenticateToken, async (req, res) => {
         session_key: key.toString('hex'),
         integrity_hash,
         loader_filename,
+        customer_tag: customerTag,
+        launch_ticket: launchTicket,
+        variant_id: variantId === null ? null : String(variantId),
     });
 });
 
@@ -1729,108 +1827,159 @@ app.post('/api/loader/driver', authenticateToken, async (req, res) => {
         driver: driver_payload.toString('base64'),
     });
 });
-// -------------------------------------------------------------------------
-//  USER CONFIGS ROUTES (HWID Based for Cheat)
-// -------------------------------------------------------------------------
-// The cheat will send HWID in the Authorization header as Bearer token
+function bearerToken(req) {
+    const header = req.headers['authorization'];
+    return header && header.startsWith('Bearer ')
+        ? header.slice(7).trim()
+        : null;
+}
+
+function requestProduct(req) {
+    if (req.path.startsWith('/api/scripts/'))
+        return 'ragemp';
+    if (req.query && req.query.product)
+        return String(req.query.product).toLowerCase();
+    if (!req.body)
+        return null;
+    try {
+        const body = typeof req.body === 'string'
+            ? JSON.parse(req.body)
+            : req.body;
+        return body.product ? String(body.product).toLowerCase() : null;
+    } catch {
+        return null;
+    }
+}
+
+function activeLaunchSession(userId) {
+    return db.prepare(`SELECT integrity_hash, product_id, customer_tag,
+        launch_id, variant_id
+        FROM loader_sessions WHERE user_id=?`).get(userId);
+}
 
 function resolveConfigUser(req) {
-    let token = null;
-    let hwid = null;
-
-    // 1. Check Authorization header
-    const authHeader = req.headers['authorization'];
-    if (authHeader && authHeader.startsWith('Bearer ')) {
-        const bearer = authHeader.substring(7).trim();
-        if (bearer.includes('.')) {
-            token = bearer;
-        } else if (bearer.length > 0) {
-            hwid = bearer;
-        }
+    const token = bearerToken(req);
+    if (!token)
+        return null;
+    try {
+        const decoded = jwt.verify(token, process.env.JWT_SECRET);
+        const user = db.prepare(
+            'SELECT id, username, hwid, banned FROM users WHERE id=?'
+        ).get(decoded.uid);
+        if (!user || user.banned)
+            return null;
+        const product = requestProduct(req) || decoded.product_id;
+        if (decoded.scope !== 'product')
+            return product === 'ragemp' ? null : user;
+        const session = activeLaunchSession(user.id);
+        if (!session || product !== session.product_id)
+            return null;
+        productDelivery.verifyLaunchTicket(token, {
+            productId: session.product_id,
+            hwid: user.hwid,
+            customerTag: session.customer_tag,
+            integrityHash: session.integrity_hash,
+            launchId: session.launch_id,
+            variantId: session.variant_id
+        }, process.env.JWT_SECRET);
+        return user;
+    } catch {
+        return null;
     }
-
-    // 2. Check X-HWID header
-    if (req.headers['x-hwid']) {
-        hwid = req.headers['x-hwid'].trim();
-    }
-
-    // 3. Check parsed body
-    let bodyObj = null;
-    if (req.body) {
-        if (typeof req.body === 'object') bodyObj = req.body;
-        else if (typeof req.body === 'string') {
-            try { bodyObj = JSON.parse(req.body); } catch(e){}
-        }
-    }
-    if (bodyObj) {
-        if (bodyObj.token && !token) token = bodyObj.token;
-        if (bodyObj.hwid && !hwid) hwid = bodyObj.hwid;
-    }
-    if (!token && req.query && req.query.token)
-        token = String(req.query.token);
-
-    // Check username from header, body, or query
-    let username = req.headers['x-username'];
-    if (bodyObj && bodyObj.username && !username) username = bodyObj.username;
-    if (req.query && req.query.username && !username) username = req.query.username;
-
-    if (username && typeof username === 'string' && username.trim().length > 0) {
-        try {
-            const user = db.prepare('SELECT id, username, hwid, banned FROM users WHERE LOWER(username)=LOWER(?)').get(username.trim());
-            if (user && !user.banned) {
-                return user;
-            }
-        } catch (e) {}
-    }
-
-    // Try resolving by JWT Token first (persistent across HWID changes)
-    if (token) {
-        try {
-            const decoded = jwt.verify(token, process.env.JWT_SECRET);
-            if (decoded && decoded.uid) {
-                const user = db.prepare('SELECT id, username, hwid, banned FROM users WHERE id=?').get(decoded.uid);
-                if (user && !user.banned) {
-                    // If user has a valid new HWID (e.g. spoofed), sync it
-                    if (hwid && hwid.length > 5 && user.hwid !== hwid) {
-                        try {
-                            db.prepare('UPDATE users SET hwid=? WHERE id=?').run(hwid, user.id);
-                        } catch(e){}
-                    }
-                    return user;
-                }
-            }
-        } catch(e) {}
-    }
-
-    // Try resolving by HWID (case-insensitive)
-    if (hwid && hwid.length > 0) {
-        let user = db.prepare('SELECT id, username, hwid, banned FROM users WHERE LOWER(hwid)=LOWER(?) ORDER BY id DESC LIMIT 1').get(hwid.trim());
-        if (!user) {
-            // Auto-bind if there is an unbanned user with hwid IS NULL (e.g. freshly registered, HWID reset, or single active user)
-            const unlinked = db.prepare(`
-                SELECT u.id, u.username, u.hwid, u.banned FROM users u
-                WHERE u.hwid IS NULL AND u.banned = 0
-                ORDER BY u.id ASC LIMIT 1
-            `).get();
-            if (unlinked) {
-                console.log(`[CONFIG_AUTH] Auto-binding HWID ${hwid} to user ${unlinked.username}`);
-                try {
-                    db.prepare('UPDATE users SET hwid=? WHERE id=?').run(hwid.trim(), unlinked.id);
-                    user = unlinked;
-                } catch(e) {}
-            }
-        }
-        if (user && !user.banned) {
-            return user;
-        } else if (user && user.banned) {
-            console.log(`[CONFIG_AUTH] User is banned: ${user.username}`);
-        } else {
-            console.log(`[CONFIG_AUTH] HWID not found in users table: ${hwid}`);
-        }
-    }
-
-    return null;
 }
+
+const FEATURE_FILES = Object.freeze({
+    quant: 'quant.js',
+    five_rp: 'five_rp.js',
+    ukraine: 'ukraine.js',
+    policy: null
+});
+
+function readFeatureSource(featureId) {
+    if (!Object.prototype.hasOwnProperty.call(FEATURE_FILES, featureId))
+        throw new Error('Unknown feature bundle');
+    const fileName = FEATURE_FILES[featureId];
+    if (fileName === null)
+        return productDelivery.combatPolicyBuffer();
+    const sourcePath = path.join(
+        __dirname, 'products', 'ragemp', 'features', fileName);
+    if (!fs.existsSync(sourcePath))
+        throw new Error('Feature bundle is unavailable');
+    return fs.readFileSync(sourcePath);
+}
+
+function createFeatureBundle(user, session, featureId) {
+    const canary = productDelivery.deriveFeatureCanary({
+        userId: user.id,
+        launchId: session.launch_id,
+        featureId,
+        watermarkSecret: process.env.WATERMARK_SECRET
+    });
+    const rawSource = readFeatureSource(featureId);
+    const source = featureId === 'policy'
+        ? productDelivery.watermarkPolicy(rawSource, canary)
+        : productDelivery.watermarkFeatureSource(rawSource, canary);
+    return {
+        ...productDelivery.encryptFeatureBundle(source),
+        canary
+    };
+}
+
+function hasActiveProductSubscription(userId, productId) {
+    return Boolean(db.prepare(`SELECT id FROM subscriptions
+        WHERE user_id=? AND product_id=? AND days_left > 0
+        AND (frozen_at IS NULL AND is_frozen = 0)`).get(
+        userId,
+        productId));
+}
+
+app.post('/api/cheat/renew', express.text({ type: '*/*' }), (req, res) => {
+    const user = resolveConfigUser(req);
+    if (!user)
+        return res.status(401).send('Unauthorized');
+    const session = activeLaunchSession(user.id);
+    if (!session ||
+        !hasActiveProductSubscription(user.id, session.product_id))
+        return res.status(403).send('Subscription unavailable');
+    const token = productDelivery.issueLaunchTicket({
+        userId: user.id,
+        productId: session.product_id,
+        hwid: user.hwid,
+        customerTag: session.customer_tag,
+        integrityHash: session.integrity_hash,
+        launchId: session.launch_id,
+        variantId: session.variant_id,
+        jwtSecret: process.env.JWT_SECRET
+    });
+    return res.type('text/plain').send(token);
+});
+
+app.post('/api/product/blob', (req, res) => {
+    const user = resolveConfigUser(req);
+    const featureId = String(req.body?.feature || '').toLowerCase();
+    if (!user)
+        return res.status(401).json({ error: 'Unauthorized' });
+    const session = activeLaunchSession(user.id);
+    if (!session ||
+        session.product_id !== 'ragemp' ||
+        !hasActiveProductSubscription(user.id, session.product_id))
+        return res.status(403).json({ error: 'Invalid product session' });
+    try {
+        const bundle = createFeatureBundle(user, session, featureId);
+        db.prepare(`INSERT INTO feature_bundle_log
+            (user_id, launch_id, variant_id, feature_id, canary)
+            VALUES (?,?,?,?,?)`).run(
+            user.id, session.launch_id, session.variant_id,
+            featureId, bundle.canary);
+        return res.json({
+            ...bundle,
+            feature_id: featureId,
+            variant_id: String(session.variant_id)
+        });
+    } catch (error) {
+        return res.status(404).json({ error: error.message });
+    }
+});
 
 app.all('/api/configs/list', express.text({ type: '*/*' }), (req, res) => {
     try {
