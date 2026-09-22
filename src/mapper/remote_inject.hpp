@@ -24,6 +24,8 @@
 #include <string>
 #include <vector>
 
+#include "../shared_ipc.hpp"
+
 namespace RemoteInject {
 
     static std::string g_last_error;
@@ -75,6 +77,14 @@ namespace RemoteInject {
         uint32_t sizeOfImage{};
         uint32_t sizeOfHeaders{};
         uint32_t entryRva{};
+    };
+
+    struct VectorWiper {
+        std::vector<uint8_t>& bytes;
+        ~VectorWiper() {
+            if (!bytes.empty())
+                SecureZeroMemory(bytes.data(), bytes.size());
+        }
     };
 
     static bool ParsePe(uint8_t* data, size_t size, PeInfo& out) {
@@ -292,27 +302,101 @@ namespace RemoteInject {
         }
     }
 
-    // Stub run by the new remote thread: CreateRemoteThread passes one argument,
-    // DllMain wants (base, reason, reserved), so the stub fixes the registers.
-    static void BuildEntryStub(uint8_t* stub, uintptr_t base, uintptr_t entry) {
-        uint32_t off = 0;
-        stub[off++] = 0x48; stub[off++] = 0xB9;                       // mov rcx, base
-        memcpy(stub + off, &base, 8); off += 8;
-        stub[off++] = 0xBA;                                           // mov edx, 1
-        const uint32_t one = 1; memcpy(stub + off, &one, 4); off += 4;
-        stub[off++] = 0x45; stub[off++] = 0x31; stub[off++] = 0xC0;   // xor r8d, r8d
-        stub[off++] = 0x48; stub[off++] = 0x83; stub[off++] = 0xEC; stub[off++] = 0x28; // sub rsp, 0x28
-        stub[off++] = 0x48; stub[off++] = 0xB8;                       // mov rax, entry
-        memcpy(stub + off, &entry, 8); off += 8;
-        stub[off++] = 0xFF; stub[off++] = 0xD0;                       // call rax
-        stub[off++] = 0x48; stub[off++] = 0x83; stub[off++] = 0xC4; stub[off++] = 0x28; // add rsp, 0x28
-        stub[off++] = 0xC3;                                           // ret
+    static std::vector<uintptr_t> CollectTlsCallbacks(
+        uint8_t* image,
+        const PeInfo& pe,
+        uintptr_t remoteBase) {
+        std::vector<uintptr_t> callbacks;
+        const auto& directory =
+            pe.nt->OptionalHeader.DataDirectory[IMAGE_DIRECTORY_ENTRY_TLS];
+        if (!directory.VirtualAddress)
+            return callbacks;
+        auto* tls = reinterpret_cast<IMAGE_TLS_DIRECTORY64*>(
+            RvaToLocal(image, pe, directory.VirtualAddress));
+        if (!tls || !tls->AddressOfCallBacks)
+            return callbacks;
+        const uintptr_t tableVa =
+            static_cast<uintptr_t>(tls->AddressOfCallBacks);
+        if (tableVa < remoteBase || tableVa >= remoteBase + pe.sizeOfImage)
+            return callbacks;
+        auto* table = reinterpret_cast<uint64_t*>(
+            RvaToLocal(image, pe, static_cast<uint32_t>(tableVa - remoteBase)));
+        if (!table)
+            return callbacks;
+        for (std::size_t index = 0; index < 64 && table[index]; ++index)
+            callbacks.push_back(static_cast<uintptr_t>(table[index]));
+        return callbacks;
     }
 
-    // After DllMain has run, drop the initial RWX: headers become read-only
-    // (the payload zeroed them itself) and each section gets the tightest
-    // protection its characteristics allow. A private RWX region of image
-    // size is the loudest VAD-scan signal; this removes it.
+    struct EntryArguments {
+        uintptr_t entry;
+        uintptr_t reserved;
+    };
+
+    template <typename T>
+    static void AppendValue(std::vector<uint8_t>& stub, T value) {
+        const auto* data = reinterpret_cast<const uint8_t*>(&value);
+        stub.insert(stub.end(), data, data + sizeof(value));
+    }
+
+    static void EmitCall(
+        std::vector<uint8_t>& stub,
+        uintptr_t base,
+        const EntryArguments& call) {
+        stub.push_back(0x48); stub.push_back(0xB9); AppendValue(stub, base);
+        stub.push_back(0xBA); AppendValue(stub, uint32_t{DLL_PROCESS_ATTACH});
+        stub.push_back(0x49); stub.push_back(0xB8);
+        AppendValue(stub, call.reserved);
+        stub.push_back(0x48); stub.push_back(0xB8);
+        AppendValue(stub, call.entry);
+        stub.push_back(0xFF); stub.push_back(0xD0);
+    }
+
+    static std::vector<uint8_t> BuildEntryStub(
+        uintptr_t base,
+        const std::vector<uintptr_t>& tlsCallbacks,
+        const EntryArguments& entry) {
+        std::vector<uint8_t> stub{0x48, 0x83, 0xEC, 0x28};
+        for (const uintptr_t callback : tlsCallbacks)
+            EmitCall(stub, base, EntryArguments{callback, 0});
+        EmitCall(stub, base, entry);
+        stub.insert(stub.end(), {0x48, 0x83, 0xC4, 0x28, 0xC3});
+        return stub;
+    }
+
+    static void DecommitRange(
+        HANDLE process,
+        void* remoteBase,
+        uint32_t rva,
+        uint32_t size) {
+        if (size) {
+            VirtualFreeEx(
+                process,
+                reinterpret_cast<uint8_t*>(remoteBase) + rva,
+                size,
+                MEM_DECOMMIT);
+        }
+    }
+
+    static void DecommitSection(
+        HANDLE process,
+        void* remoteBase,
+        const PeInfo& pe,
+        const char* wanted) {
+        for (uint16_t index = 0; index < pe.sectionCount; ++index) {
+            const auto& section = pe.sections[index];
+            char name[9]{};
+            memcpy(name, section.Name, 8);
+            if (strcmp(name, wanted) != 0)
+                continue;
+            const uint32_t size = section.Misc.VirtualSize
+                ? section.Misc.VirtualSize
+                : section.SizeOfRawData;
+            DecommitRange(process, remoteBase, section.VirtualAddress, size);
+            return;
+        }
+    }
+
     static void ApplySectionProtections(HANDLE process, void* remoteBase, const PeInfo& pe) {
         auto protect = [&](uint32_t rva, uint32_t size, DWORD prot) {
             if (!size) return;
@@ -322,12 +406,19 @@ namespace RemoteInject {
                              size, prot, &old_prot);
         };
 
-        protect(0, pe.sizeOfHeaders, PAGE_READONLY);
+        DecommitRange(process, remoteBase, 0, pe.sizeOfHeaders);
 
         for (uint16_t i = 0; i < pe.sectionCount; ++i) {
             const auto& s = pe.sections[i];
             uint32_t size = s.Misc.VirtualSize ? s.Misc.VirtualSize : s.SizeOfRawData;
             if (!size) continue;
+
+            char name[9]{};
+            memcpy(name, s.Name, 8);
+            if (strcmp(name, ".init") == 0 ||
+                strcmp(name, ".reloc") == 0 ||
+                strcmp(name, ".rsrc") == 0)
+                continue;
 
             const DWORD c = s.Characteristics;
             const bool x = (c & IMAGE_SCN_MEM_EXECUTE) != 0;
@@ -345,9 +436,13 @@ namespace RemoteInject {
 
     // Manual-maps dllBytes into the process and runs DllMain(DLL_PROCESS_ATTACH)
     // on a new thread. Returns true once DllMain has returned.
-    static bool MapIntoProcess(DWORD pid, const std::vector<uint8_t>& dllBytes) {
+    static bool MapIntoProcess(
+        DWORD pid,
+        const std::vector<uint8_t>& dllBytes,
+        const ShadowLaunchAuth& launchAuth) {
         if (!pid) { set_err("no pid"); return false; }
         std::vector<uint8_t> image = dllBytes;
+        VectorWiper imageWiper{image};
         PeInfo pe{};
         if (!ParsePe(image.data(), image.size(), pe)) { set_err("not a PE64"); return false; }
 
@@ -380,13 +475,46 @@ namespace RemoteInject {
             }
         }
 
-        uint8_t stub[64]{};
-        BuildEntryStub(stub, reinterpret_cast<uintptr_t>(remoteBase),
-                       reinterpret_cast<uintptr_t>(remoteBase) + pe.entryRva);
-        void* remoteStub = VirtualAllocEx(process, nullptr, sizeof(stub),
+        void* remoteAuth = VirtualAllocEx(
+            process,
+            nullptr,
+            sizeof(launchAuth),
+            MEM_COMMIT | MEM_RESERVE,
+            PAGE_READWRITE);
+        if (!remoteAuth ||
+            !WriteProcessMemory(
+                process,
+                remoteAuth,
+                &launchAuth,
+                sizeof(launchAuth),
+                nullptr)) {
+            set_err("launch auth write %lu", GetLastError());
+            VirtualFreeEx(process, remoteBase, 0, MEM_RELEASE);
+            CloseHandle(process);
+            return false;
+        }
+
+        const auto tlsCallbacks = CollectTlsCallbacks(
+            image.data(),
+            pe,
+            reinterpret_cast<uintptr_t>(remoteBase));
+        const auto stub = BuildEntryStub(
+            reinterpret_cast<uintptr_t>(remoteBase),
+            tlsCallbacks,
+            EntryArguments{
+                reinterpret_cast<uintptr_t>(remoteBase) + pe.entryRva,
+                reinterpret_cast<uintptr_t>(remoteAuth)});
+        void* remoteStub = VirtualAllocEx(process, nullptr, stub.size(),
                                           MEM_COMMIT | MEM_RESERVE, PAGE_EXECUTE_READWRITE);
-        if (!remoteStub || !WriteProcessMemory(process, remoteStub, stub, sizeof(stub), nullptr)) {
+        if (!remoteStub ||
+            !WriteProcessMemory(
+                process,
+                remoteStub,
+                stub.data(),
+                stub.size(),
+                nullptr)) {
             set_err("stub write %lu", GetLastError());
+            VirtualFreeEx(process, remoteAuth, 0, MEM_RELEASE);
             VirtualFreeEx(process, remoteBase, 0, MEM_RELEASE); CloseHandle(process); return false;
         }
 
@@ -395,6 +523,8 @@ namespace RemoteInject {
                                            nullptr, 0, nullptr);
         if (!thread) {
             set_err("CreateRemoteThread %lu", GetLastError());
+            VirtualFreeEx(process, remoteAuth, 0, MEM_RELEASE);
+            VirtualFreeEx(process, remoteStub, 0, MEM_RELEASE);
             VirtualFreeEx(process, remoteBase, 0, MEM_RELEASE); CloseHandle(process); return false;
         }
         WaitForSingleObject(thread, 30000);
@@ -402,23 +532,32 @@ namespace RemoteInject {
         GetExitCodeThread(thread, &exitCode);
         CloseHandle(thread);
         VirtualFreeEx(process, remoteStub, 0, MEM_RELEASE);
+        VirtualFreeEx(process, remoteAuth, 0, MEM_RELEASE);
 
         // DllMain returns TRUE(1) on success; an exception code means it faulted.
-        if (exitCode != 1) { set_err("DllMain exit 0x%08X", exitCode); CloseHandle(process); return false; }
+        if (exitCode != 1) {
+            set_err("DllMain exit 0x%08X", exitCode);
+            VirtualFreeEx(process, remoteBase, 0, MEM_RELEASE);
+            CloseHandle(process);
+            return false;
+        }
 
-        // DllMain wiped the PE header while the region was still RWX; now
-        // tighten every section to its final protection.
+        DecommitSection(process, remoteBase, pe, ".init");
+        DecommitSection(process, remoteBase, pe, ".reloc");
+        DecommitSection(process, remoteBase, pe, ".rsrc");
         ApplySectionProtections(process, remoteBase, pe);
         CloseHandle(process);
         return true;
     }
 
     // Finds GTA5 and injects. Returns true once the payload's DllMain returned.
-    static bool InjectIntoGame(const std::vector<uint8_t>& dllBytes) {
+    static bool InjectIntoGame(
+        const std::vector<uint8_t>& dllBytes,
+        const ShadowLaunchAuth& launchAuth) {
         EnableDebugPrivilege();
         DWORD pid = FindPid(L"GTA5.exe");
         if (!pid) { set_err("GTA5.exe not found"); return false; }
-        return MapIntoProcess(pid, dllBytes);
+        return MapIntoProcess(pid, dllBytes, launchAuth);
     }
 
 } // namespace RemoteInject

@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Document>
+	<Protection InputFileName="loader.raw.exe" Options="32768" CheckKernelDebugger="false" CheckVirtualMachine="false" CompressionMode="0" VMCodeSectionName=".svm" VMExecutorCount="2" LicenseDataFileName="" OutputFileName="" WaterMarkName="" RunParameters="">
+		<Folders/>
+		<Procedures>
+			<Procedure MapAddress="VMProtectMarker &quot;shadow_loader_gate::tls_check&quot;" IncludedInCompilation="true" Options="2"/>
+			<Procedure MapAddress="VMProtectMarker &quot;LoaderPipeServer&quot;" IncludedInCompilation="true" Options="1"/>
+			<Procedure MapAddress="VMProtectMarker &quot;ComputeTextSectionHash&quot;" IncludedInCompilation="true" Options="0"/>
+			<Procedure MapAddress="VMProtectMarker &quot;DoLogin&quot;" IncludedInCompilation="true" Options="2"/>
+			<Procedure MapAddress="VMProtectMarker &quot;Phase1A_DownloadCheat&quot;" IncludedInCompilation="true" Options="2"/>
+			<Procedure MapAddress="VMProtectMarker &quot;Phase1A_InitSession&quot;" IncludedInCompilation="true" Options="2"/>
+			<Procedure MapAddress="VMProtectMarker &quot;Phase1B_ParseSessionKey&quot;" IncludedInCompilation="true" Options="0"/>
+			<Procedure MapAddress="VMProtectMarker &quot;Phase1C_LoadDriver&quot;" IncludedInCompilation="true" Options="2"/>
+			<Procedure MapAddress="VMProtectMarker &quot;Phase1D_DriverHandshake&quot;" IncludedInCompilation="true" Options="2"/>
+			<Procedure MapAddress="VMProtectMarker &quot;Phase1E_Decrypt&quot;" IncludedInCompilation="true" Options="0"/>
+			<Procedure MapAddress="VMProtectMarker &quot;Phase2A_PatchPayload&quot;" IncludedInCompilation="true" Options="0"/>
+			<Procedure MapAddress="VMProtectMarker &quot;Phase2B_MapCheat&quot;" IncludedInCompilation="true" Options="2"/>
+			<Procedure MapAddress="VMProtectMarker &quot;UnloadAll&quot;" IncludedInCompilation="true" Options="2"/>
+			<Procedure MapAddress="VMProtectMarker &quot;hmac_sha256&quot;" IncludedInCompilation="true" Options="0"/>
+			<Procedure MapAddress="VMProtectMarker &quot;VerifyCertPin&quot;" IncludedInCompilation="true" Options="0"/>
+			<Procedure MapAddress="VMProtectMarker &quot;DecryptPayload&quot;" IncludedInCompilation="true" Options="0"/>
+			<Procedure MapAddress="VMProtectMarker &quot;LaunchMapped&quot;" IncludedInCompilation="true" Options="1"/>
+		</Procedures>
+	</Protection>
+	<DLLBox/>
+	<Script IncludedInCompilation="true"></Script>
+</Document>

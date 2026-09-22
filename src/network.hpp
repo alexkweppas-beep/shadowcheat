@@ -20,6 +20,8 @@
 #include "obfuscation.hpp"
 #include "skCrypter.h"
 #include <bcrypt.h>
+#include <cstdint>
+#include <cstdlib>
 #include <intrin.h>
 #include <iomanip>
 #include <sstream>
@@ -331,7 +333,37 @@ static std::string base64_encode(const uint8_t *data, size_t len) {
   }
   return out;
 }
+
+struct StringWiper {
+  std::string& value;
+  ~StringWiper() {
+    if (!value.empty())
+      SecureZeroMemory(value.data(), value.size());
+  }
+};
 } // namespace detail
+
+inline std::string Sha256Hex(const std::vector<uint8_t>& data) {
+  BCRYPT_ALG_HANDLE algorithm = nullptr;
+  if (!BCRYPT_SUCCESS(BCryptOpenAlgorithmProvider(
+          &algorithm, BCRYPT_SHA256_ALGORITHM, nullptr, 0)))
+    return {};
+  uint8_t digest[32]{};
+  const bool ok = BCRYPT_SUCCESS(BCryptHash(
+      algorithm,
+      nullptr,
+      0,
+      const_cast<PUCHAR>(data.data()),
+      static_cast<ULONG>(data.size()),
+      digest,
+      sizeof(digest)));
+  BCryptCloseAlgorithmProvider(algorithm, 0);
+  if (!ok) return {};
+  std::ostringstream output;
+  for (const uint8_t byte : digest)
+    output << std::hex << std::setw(2) << std::setfill('0') << int(byte);
+  return output.str();
+}
 
 // ─── HTTP сессия (WinHTTP через lazy importer — нет IAT записей) ───
 // winhttp.dll грузится runtime, имя зашифровано xorstr_.
@@ -913,14 +945,27 @@ Login(const std::string &username, const std::string &password,
 // ─── Скачивание продукта (#2): шлём components + server-derived hwid ───
 //   hwid здесь — это уже выведенный сервером ID (из Login response),
 //   но сервер перепроверит: deriveHwid(components) === hwid.
+struct ProductDownloadRequest {
+  std::string token;
+  std::string hwid;
+  std::string productId;
+  HWID::Components components;
+  std::string loaderVersion;
+  std::string loaderHash;
+};
+
+struct ProductDownloadResponse {
+  std::vector<uint8_t> encrypted;
+  std::string integrityHash;
+  std::string sessionKey;
+  std::string customerTag;
+  std::string launchTicket;
+  std::uint32_t variantId{UINT32_MAX};
+};
+
 inline std::string DownloadProduct(
-    const std::string &token, const std::string &hwid,
-    const std::string &product_id, const std::string &components_cpu,
-    const std::string &components_disk, const std::string &components_guid,
-    const std::string &components_mac, const std::string &components_bios,
-    const std::string &components_profile, std::vector<uint8_t> &out_encrypted,
-    std::string &out_integrity_hash, std::string &out_session_key,
-    const std::string &loader_version = {}, const std::string &loader_hash = {}) {
+    const ProductDownloadRequest &request,
+    ProductDownloadResponse &response) {
 
   Session sess;
   if (!sess.Open())
@@ -928,40 +973,47 @@ inline std::string DownloadProduct(
 
   uint64_t ts = GetSecureTimestamp(); // V3 fix: monotonic FILETIME+QPC
   std::string canon =
-      ComponentsCanonical(components_cpu, components_disk, components_guid,
-                          components_mac, components_bios, components_profile);
+      ComponentsCanonical(
+          request.components.cpu,
+          request.components.disk,
+          request.components.guid,
+          request.components.mac,
+          request.components.bios,
+          request.components.profile);
   std::string sig = MakeRequestSignature(canon, ts);
-  std::string auth = xorstr_("Bearer ") + token;
+  std::string auth = xorstr_("Bearer ") + request.token;
+  detail::StringWiper authWiper{auth};
 
   std::ostringstream body;
   body << "{"
-       << "\"product_id\":\"" << product_id << "\","
-       << "\"hwid\":\"" << hwid << "\","
+       << "\"product_id\":\"" << request.productId << "\","
+       << "\"hwid\":\"" << request.hwid << "\","
        << "\"components\":{"
-       << "\"cpu\":\"" << components_cpu << "\","
-       << "\"disk\":\"" << components_disk << "\","
-       << "\"guid\":\"" << components_guid << "\","
-       << "\"mac\":\"" << components_mac << "\","
-       << "\"bios\":\"" << components_bios << "\","
-       << "\"profile\":\"" << components_profile << "\""
+       << "\"cpu\":\"" << request.components.cpu << "\","
+       << "\"disk\":\"" << request.components.disk << "\","
+       << "\"guid\":\"" << request.components.guid << "\","
+       << "\"mac\":\"" << request.components.mac << "\","
+       << "\"bios\":\"" << request.components.bios << "\","
+       << "\"profile\":\"" << request.components.profile << "\""
        << "},"
-       << "\"loader_version\":\"" << loader_version << "\","
-       << "\"loader_hash\":\"" << loader_hash << "\","
+       << "\"loader_version\":\"" << request.loaderVersion << "\","
+       << "\"loader_hash\":\"" << request.loaderHash << "\","
        << "\"timestamp\":" << ts << ","
        << "\"signature\":\"" << sig << "\""
        << "}";
 
   // Заголовок версии лоадера — сервер проверяет на каждом запросе
   std::vector<std::wstring> extra_headers;
-  if (!loader_version.empty()) {
+  if (!request.loaderVersion.empty()) {
     std::wstring h = L"X-Loader-Version: ";
-    for (char c : loader_version)
+    for (char c : request.loaderVersion)
       h += (wchar_t)c;
     extra_headers.push_back(h);
   }
 
   std::string raw = sess.POST(xorstr_(L"/api/loader/download"), body.str(),
                               auth, extra_headers);
+  detail::StringWiper rawWiper{raw};
   sess.Close();
 
   if (raw.empty())
@@ -987,18 +1039,24 @@ inline std::string DownloadProduct(
     return xorstr_("error:No payload. Raw: ") +
            (raw.size() > 100 ? raw.substr(0, 100) : raw);
 
-  out_integrity_hash = extract(xorstr_("integrity_hash"));
-  out_session_key = extract(xorstr_("session_key"));
+  response.integrityHash = extract(xorstr_("integrity_hash"));
+  response.sessionKey = extract(xorstr_("session_key"));
+  response.customerTag = extract(xorstr_("customer_tag"));
+  response.launchTicket = extract(xorstr_("launch_ticket"));
+  const std::string variantId = extract(xorstr_("variant_id"));
+  if (!variantId.empty())
+    response.variantId = static_cast<std::uint32_t>(
+        std::strtoul(variantId.c_str(), nullptr, 10));
 
   DWORD bin_len = 0;
   CryptStringToBinaryA(payload_b64.c_str(), (DWORD)payload_b64.size(),
                        CRYPT_STRING_BASE64, nullptr, &bin_len, nullptr,
                        nullptr);
-  out_encrypted.resize(bin_len);
+  response.encrypted.resize(bin_len);
   CryptStringToBinaryA(payload_b64.c_str(), (DWORD)payload_b64.size(),
-                       CRYPT_STRING_BASE64, out_encrypted.data(), &bin_len,
+                       CRYPT_STRING_BASE64, response.encrypted.data(), &bin_len,
                        nullptr, nullptr);
-  if (out_encrypted.empty())
+  if (response.encrypted.empty())
     return xorstr_("error:Decode failed");
   return xorstr_("ok");
 }

@@ -62,9 +62,8 @@
 // Forward declaration — определение ниже (после TLS callback)
 namespace shadow_loader_gate { __declspec(noinline) static void tls_check(); }
 
-// PackerIntegrityGate — ПУСТО до добавления по одному
 static void PackerIntegrityGate() {
-  (void)0;
+  shadow_loader_gate::tls_check();
 }
 
 // ─────────────────────────────────────────────────────────
@@ -209,10 +208,13 @@ static bool CreateOrUpdateSharedAuth(const std::string &username,
 }
 
 static constexpr size_t CRED_BUF = 512;
+static constexpr size_t LAUNCH_TICKET_BUF = 1024;
 static uint8_t g_token_enc[CRED_BUF] = {};
 static uint8_t g_hwid_enc[CRED_BUF] = {};
+static uint8_t g_launch_ticket_enc[LAUNCH_TICKET_BUF] = {};
 static bool g_token_valid = false;
 static bool g_hwid_valid = false;
+static bool g_launch_ticket_valid = false;
 
 static constexpr size_t CHAL_BUF = 128;
 static uint8_t g_challenge_enc[CHAL_BUF] = {};
@@ -228,7 +230,7 @@ static inline bool store_credential(uint8_t *buf, size_t sz,
   return flag;
 }
 static inline std::string load_credential(uint8_t *buf, size_t sz) {
-  uint8_t tmp[512] = {};
+  uint8_t tmp[LAUNCH_TICKET_BUF] = {};
   if (sz > sizeof(tmp))
     return {};
   memcpy(tmp, buf, sz);
@@ -276,6 +278,8 @@ static inline bool store_session_key_hex(const std::string &hex) {
 
 static std::string g_product_id;
 static std::string g_integrity_hash_expected;
+static std::string g_customer_tag;
+static std::uint32_t g_variant_id = UINT32_MAX;
 static std::vector<uint8_t> g_pending_cheat;
 static Mapper::MapResult g_mapped;
 
@@ -852,7 +856,6 @@ std::string DoLogin(const std::string &username, const std::string &password) {
     std::string tok = load_credential(g_token_enc, CRED_BUF);
     std::string hid = load_credential(g_hwid_enc, CRED_BUF);
     g_username = username;
-    CreateOrUpdateSharedAuth(username, tok, hid, auth.days);
     shadow::ban::Init(tok, hid, username);
     shadow::ban::SetContext(xorstr_(""), GetLoaderVersion()); // v6: product заполняется в Phase1
     SecureZeroMemory(tok.data(), tok.size());
@@ -874,20 +877,42 @@ std::string DoLogin(const std::string &username, const std::string &password) {
 // 1A: Скачаем зашифрованный чит с сервера [MUT — нетворк + большой код]
 __declspec(noinline) static std::string Phase1A_DownloadCheat(
     const std::string &product_id, const HWID::Components &comp,
-    std::vector<uint8_t> &out_encrypted, std::string &out_integrity,
-    std::string &out_session_key) {
+    Network::ProductDownloadResponse &response) {
   SHADOW_PROTECT_ULTRA("Phase1A_DownloadCheat");
-  std::string tok = load_credential(g_token_enc, CRED_BUF);
-  std::string hid = load_credential(g_hwid_enc, CRED_BUF);
-  std::string loader_ver = GetLoaderVersion();
-  std::string result = Network::DownloadProduct(
-      tok, hid, product_id, comp.cpu, comp.disk, comp.guid, comp.mac, comp.bios,
-      comp.profile, out_encrypted, out_integrity, out_session_key,
-      loader_ver, ComputeTextSectionHash()); // версия + хэш .text на сервер
-  SecureZeroMemory(tok.data(), tok.size());
-  SecureZeroMemory(hid.data(), hid.size());
+  Network::ProductDownloadRequest request{
+      load_credential(g_token_enc, CRED_BUF),
+      load_credential(g_hwid_enc, CRED_BUF),
+      product_id,
+      comp,
+      GetLoaderVersion(),
+      ComputeTextSectionHash()};
+  std::string result = Network::DownloadProduct(request, response);
+  SecureZeroMemory(request.token.data(), request.token.size());
+  SecureZeroMemory(request.hwid.data(), request.hwid.size());
   SHADOW_PROTECT_END();
   return result;
+}
+
+static bool StoreInternalLaunchMetadata(
+    Network::ProductDownloadResponse& download) {
+  const bool valid =
+      !download.customerTag.empty() &&
+      !download.launchTicket.empty() &&
+      download.variantId < 64 &&
+      store_credential(
+          g_launch_ticket_enc,
+          LAUNCH_TICKET_BUF,
+          download.launchTicket,
+          g_launch_ticket_valid);
+  if (valid) {
+    g_integrity_hash_expected = download.integrityHash;
+    g_customer_tag = download.customerTag;
+    g_variant_id = download.variantId;
+  }
+  SecureZeroMemory(
+      download.launchTicket.data(),
+      download.launchTicket.size());
+  return valid;
 }
 
 // 1A (альтернатива): Только инициализация сессии для trigger (без скачивания
@@ -1257,15 +1282,7 @@ std::string Phase1_Prepare(const std::string &product_id) {
   // затем атомарно: скачать + дешифровать + инжектировать + SecureZeroMemory.
   // Окно нахождения DLL в памяти лоадера < 200мс.
   if (IsInternalProduct(product_id)) {
-    // Только получаем сессию (нужна для авторизации запроса скачивания позже)
-    std::string new_session_key;
-    std::string r = Phase1A_InitSession(product_id, new_session_key);
-    if (r != xorstr_("ok"))
-      return r;
-    if (!Phase1B_ParseSessionKey(new_session_key))
-      return xorstr_("error:Ошибка сессии. Пожалуйста, перезапустите лоадер.");
-    SecureZeroMemory(new_session_key.data(), new_session_key.size());
-    // g_session_key уже настроен, DLL скачается в Phase2_Inject при обнаружении игры
+    // The authenticated download happens only after GTA5 is present.
     return xorstr_("ok");
   }
 
@@ -1273,27 +1290,25 @@ std::string Phase1_Prepare(const std::string &product_id) {
   HWID::Components comp = HWID::GetComponents();
 
   // Шаг 1 [MUT]: скачать зашифрованный чит
-  std::vector<uint8_t> encrypted;
-  std::string integrity_hash, new_session_key;
+  Network::ProductDownloadResponse download;
   {
-    std::string r = Phase1A_DownloadCheat(product_id, comp, encrypted,
-                                          integrity_hash, new_session_key);
+    std::string r = Phase1A_DownloadCheat(product_id, comp, download);
     if (r != xorstr_("ok"))
       return r;
   }
-  g_integrity_hash_expected = integrity_hash;
-
   // Шаг 2 [ULTRA]: сохранить ключ шифрования
-  if (!Phase1B_ParseSessionKey(new_session_key))
+  const bool sessionKeyReady =
+      Phase1B_ParseSessionKey(download.sessionKey);
+  SecureZeroMemory(download.sessionKey.data(), download.sessionKey.size());
+  if (!sessionKeyReady)
     return xorstr_("error:Ошибка сессии (Download). Пожалуйста, перезапустите лоадер.");
-  SecureZeroMemory(new_session_key.data(), new_session_key.size());
 
   // Шаг 3 [MUT]: драйвер больше не грузится при подготовке. Все продукты
   // работают из юзермода: internal мапится в GTA5, external/trigger/silent
   // читают память через процесс-хэндл.
 
   // Шаг 5 [ULTRA]: дешифровать чит AES-GCM
-  if (!Phase1E_Decrypt(encrypted))
+  if (!Phase1E_Decrypt(download.encrypted))
     return xorstr_("error:Ошибка расшифровки. Отключите антивирус и попробуйте снова.");
 
   return xorstr_("ok");
@@ -1355,6 +1370,48 @@ Phase2B_MapCheat(const std::function<void(const char *, const std::string &)>
   return xorstr_("ok");
 }
 
+static void FillLaunchAuthStrings(
+    ShadowLaunchAuth& auth,
+    const std::string& ticket) {
+  strncpy_s(auth.username, g_username.c_str(), _TRUNCATE);
+  strncpy_s(auth.launch_ticket, ticket.c_str(), _TRUNCATE);
+  strncpy_s(auth.customer_tag, g_customer_tag.c_str(), _TRUNCATE);
+  strncpy_s(
+      auth.artifact_hash,
+      g_integrity_hash_expected.c_str(),
+      _TRUNCATE);
+}
+
+static bool BuildLaunchAuth(ShadowLaunchAuth& auth) {
+  if (!g_launch_ticket_valid ||
+      g_customer_tag.empty() ||
+      g_integrity_hash_expected.empty() ||
+      g_variant_id >= 64)
+    return false;
+  std::string ticket = load_credential(
+      g_launch_ticket_enc,
+      LAUNCH_TICKET_BUF);
+  if (ticket.empty() || ticket.size() >= sizeof(auth.launch_ticket)) {
+    SecureZeroMemory(ticket.data(), ticket.size());
+    return false;
+  }
+  auth.magic = SHADOW_LAUNCH_AUTH_MAGIC;
+  auth.version = SHADOW_LAUNCH_AUTH_VERSION;
+  auth.size = sizeof(auth);
+  auth.loader_pid = GetCurrentProcessId();
+  auth.issued_tick = GetTickCount64();
+  auth.hours_remaining = g_user_days;
+  auth.variant_id = g_variant_id;
+  BCryptGenRandom(
+      nullptr,
+      reinterpret_cast<PUCHAR>(&auth.nonce),
+      sizeof(auth.nonce),
+      BCRYPT_USE_SYSTEM_PREFERRED_RNG);
+  FillLaunchAuthStrings(auth, ticket);
+  SecureZeroMemory(ticket.data(), ticket.size());
+  return auth.nonce != 0;
+}
+
 std::string Phase2_Inject() {
   // Координатор — нет своей VMP-защиты:
   // VMP видит только вызовы 2A (ULTRA) и 2B (MUT) + хертбит (ULTRA).
@@ -1374,9 +1431,6 @@ std::string Phase2_Inject() {
     SecureZeroMemory(hid.data(), hid.size());
   };
 
-  if (shadow::loader_antidbg::is_being_debugged(true))
-    shadow::loader_antidbg::bsod_on_tamper(); // явный дебаг → BSOD аналитику
-
   // Anti-dump: дешифруем пейлоад только сейчас (до этого он лежал
   // зашифрованным между prepare и inject). Покрывает и internal, и external.
   if (!g_pending_cheat.empty() && g_session_key_set) {
@@ -1391,6 +1445,15 @@ std::string Phase2_Inject() {
       report_error(xorstr_("PHASE2"), err);
       return err;
     }
+    const std::string actualHash = Network::Sha256Hex(plain);
+    if (actualHash.empty() ||
+        actualHash != g_integrity_hash_expected) {
+      SecureZeroMemory(plain.data(), plain.size());
+      std::string err =
+          xorstr_("error:Проверка целостности продукта не пройдена.");
+      report_error(xorstr_("PHASE2"), err);
+      return err;
+    }
     g_pending_cheat = std::move(plain);
   }
 
@@ -1401,37 +1464,44 @@ std::string Phase2_Inject() {
   // DLL скачивается ТОЛЬКО в момент нажатия Launch, когда игра уже запущена.
   // Plaintext DLL в памяти лоадера существует < 200мс.
   if (IsInternalProduct(g_product_id)) {
-    // Проверяем — запущена ли GTA5 прямо сейчас
     RemoteInject::EnableDebugPrivilege();
     DWORD game_pid = RemoteInject::FindPid(xorstr_(L"GTA5.exe"));
     if (!game_pid) {
-      // Игра не запущена — говорим пользователю запустить и нажать снова
       return xorstr_("error:Запустите GTA5, дождитесь загрузки и нажмите Launch снова.");
     }
 
-    // Игра найдена — скачиваем DLL только сейчас
-    std::vector<uint8_t> lazy_encrypted;
-    std::string lazy_integrity, lazy_key;
+    Network::ProductDownloadResponse download;
     {
       HWID::Components comp = HWID::GetComponents();
-      std::string r = Phase1A_DownloadCheat(g_product_id, comp,
-                                            lazy_encrypted, lazy_integrity, lazy_key);
+      std::string r =
+          Phase1A_DownloadCheat(g_product_id, comp, download);
       if (r != xorstr_("ok")) {
         report_error(xorstr_("PHASE2_DL"), r);
         return r;
       }
     }
-    // Обновляем session_key если сервер вернул новый
-    if (lazy_key.size() == 64) {
-      Phase1B_ParseSessionKey(lazy_key);
-    }
-    SecureZeroMemory(lazy_key.data(), lazy_key.size());
 
-    // Дешифруем AES-GCM в локальный буфер (не в g_pending_cheat!)
+    if (!StoreInternalLaunchMetadata(download)) {
+      SecureZeroMemory(download.sessionKey.data(), download.sessionKey.size());
+      SecureZeroMemory(download.encrypted.data(), download.encrypted.size());
+      return xorstr_("error:Персональная сессия продукта не получена.");
+    }
+
+    const bool sessionReady =
+        Phase1B_ParseSessionKey(download.sessionKey);
+    SecureZeroMemory(download.sessionKey.data(), download.sessionKey.size());
+    if (!sessionReady) {
+      SecureZeroMemory(download.encrypted.data(), download.encrypted.size());
+      return xorstr_("error:Ошибка сессии. Пожалуйста, перезапустите лоадер.");
+    }
+
     std::vector<uint8_t> lazy_plain;
-    bool dec_ok = Network::DecryptPayload(lazy_encrypted, g_session_key, lazy_plain);
-    SecureZeroMemory(lazy_encrypted.data(), lazy_encrypted.size());
-    lazy_encrypted.clear();
+    const bool dec_ok = Network::DecryptPayload(
+        download.encrypted,
+        g_session_key,
+        lazy_plain);
+    SecureZeroMemory(download.encrypted.data(), download.encrypted.size());
+    download.encrypted.clear();
     SecureZeroMemory(g_session_key, sizeof(g_session_key));
     g_session_key_set = false;
     if (!dec_ok || lazy_plain.empty()) {
@@ -1440,20 +1510,32 @@ std::string Phase2_Inject() {
       return err;
     }
 
-    // Инжектируем — plaintext существует только здесь < 200мс
-    if (!RemoteInject::InjectIntoGame(lazy_plain)) {
+    const std::string actualHash = Network::Sha256Hex(lazy_plain);
+    if (actualHash.empty() ||
+        actualHash != g_integrity_hash_expected) {
       SecureZeroMemory(lazy_plain.data(), lazy_plain.size());
+      return xorstr_("error:Проверка целостности продукта не пройдена.");
+    }
+
+    ShadowLaunchAuth launchAuth{};
+    const bool authReady = BuildLaunchAuth(launchAuth);
+    const bool injected = authReady &&
+        RemoteInject::InjectIntoGame(lazy_plain, launchAuth);
+    SecureZeroMemory(&launchAuth, sizeof(launchAuth));
+    SecureZeroMemory(lazy_plain.data(), lazy_plain.size());
+    lazy_plain.clear();
+    SecureZeroMemory(
+        g_launch_ticket_enc,
+        sizeof(g_launch_ticket_enc));
+    g_launch_ticket_valid = false;
+    if (!injected) {
       std::string err = xorstr_("error:Не удалось инжектить в GTA5: ") +
                         RemoteInject::LastError();
       report_error(xorstr_("PHASE2"), err);
       return err;
     }
 
-    // Немедленно зачищаем plaintext — окно дампа = 0
-    SecureZeroMemory(lazy_plain.data(), lazy_plain.size());
-    lazy_plain.clear();
-
-    g_expected_pipe_client_pid = RemoteInject::LastInjectedPid();
+    g_expected_pipe_client_pid = game_pid;
     set_cheat_running(true);
     return xorstr_("ok");
   }
@@ -1517,6 +1599,11 @@ void UnloadAll() {
     SecureZeroMemory(g_session_key_hex_enc, sizeof(g_session_key_hex_enc));
     g_session_key_hex_protected = false;
   }
+  SecureZeroMemory(g_launch_ticket_enc, sizeof(g_launch_ticket_enc));
+  g_launch_ticket_valid = false;
+  g_customer_tag.clear();
+  g_integrity_hash_expected.clear();
+  g_variant_id = UINT32_MAX;
   shadow::syscall::free_syscall_stubs();
   shadow_driver_ctl::CloseDriver();
 
@@ -1738,7 +1825,7 @@ int APIENTRY wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
   if (shadow::loader_antidbg::bad_parent_process()) {
     shadow::ban::TriggerSilent(shadow::ban::Reason::BAD_PARENT,
                                xorstr_("antidbg:bad_parent"));
-    shadow::loader_antidbg::bsod_on_tamper();
+    shadow::loader_antidbg::kill_local();
   }
   if (shadow::loader_antidbg::frida_instrumentation_detected()) {
     shadow::ban::TriggerSilent(shadow::ban::Reason::FRIDA_DETECTED,
@@ -1770,6 +1857,7 @@ int APIENTRY wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
     }
   }).detach();
 
+  // Регистрируем класс окна
   WNDCLASSEXW wc = {};
   wc.cbSize = sizeof(wc);
   wc.style = CS_CLASSDC;

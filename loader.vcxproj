@@ -17,7 +17,7 @@
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'" Label="Configuration">
     <ConfigurationType>Application</ConfigurationType>
     <UseDebugLibraries>false</UseDebugLibraries>
-    <PlatformToolset>v145</PlatformToolset>
+    <PlatformToolset>v143</PlatformToolset>
     <WholeProgramOptimization>true</WholeProgramOptimization>
     <CharacterSet>Unicode</CharacterSet>
   </PropertyGroup>
@@ -34,6 +34,9 @@
     <LinkIncremental>false</LinkIncremental>
     <OutDir>$(SolutionDir)build\</OutDir>
     <IntDir>$(SolutionDir)build\obj\</IntDir>
+    <TargetName>loader.raw</TargetName>
+    <ShadowVmpRoot Condition="'$(ShadowVmpRoot)'==''">$(SHADOW_VMP_ROOT)</ShadowVmpRoot>
+    <ShadowVmpWatermark Condition="'$(ShadowVmpWatermark)'==''">$(SHADOW_VMP_WATERMARK)</ShadowVmpWatermark>
   </PropertyGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
     <ClCompile>
@@ -52,7 +55,7 @@
       <PreprocessorDefinitions>SHADOW_PACKER=1;SHADOW_PACKER_VMP=1;SHADOW_HAVE_VMP_SDK=1;NDEBUG;_WINDOWS;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <ConformanceMode>true</ConformanceMode>
       <LanguageStandard>stdcpp20</LanguageStandard>
-      <AdditionalIncludeDirectories>$(ProjectDir)src;$(ProjectDir)src\imgui;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>$(ShadowVmpRoot)\Include\C;$(ProjectDir)src;$(ProjectDir)src\imgui;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
       <RuntimeLibrary>MultiThreaded</RuntimeLibrary>
     </ClCompile>
     <Link>
@@ -63,9 +66,12 @@
       <!-- LTCG УБРАН: продуцирует нестандартные структуры кода которые VMP не обрабатывает -->
       <!-- /GUARD:NO УБРАН: конфликтует с VMP CFG -->
       <!-- /MERGE:.rdata=.text УБРАН: ломает TLS callbacks -->
-      <AdditionalDependencies>d3d11.lib;dxgi.lib;dwmapi.lib;crypt32.lib;advapi32.lib;gdi32.lib;ole32.lib;shell32.lib;shlwapi.lib;user32.lib;version.lib;%(AdditionalDependencies)VMProtectSDK64.lib;</AdditionalDependencies>
+      <AdditionalLibraryDirectories>$(ShadowVmpRoot)\Lib\Windows;%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
+      <AdditionalDependencies>d3d11.lib;dxgi.lib;dwmapi.lib;crypt32.lib;advapi32.lib;gdi32.lib;ole32.lib;shell32.lib;shlwapi.lib;user32.lib;version.lib;VMProtectSDK64.lib;%(AdditionalDependencies)</AdditionalDependencies>
     </Link>
-
+    <PostBuildEvent>
+      <Command>powershell.exe -NoProfile -ExecutionPolicy Bypass -File "$(ProjectDir)tools\Protect-Loader.ps1" -InputFile "$(TargetPath)" -OutputFile "$(OutDir)loader.exe" -VmpRoot "$(ShadowVmpRoot)" -ProjectFile "$(ProjectDir)protection\loader.vmp" -Watermark "$(ShadowVmpWatermark)"</Command>
+    </PostBuildEvent>
   </ItemDefinitionGroup>
   <ItemGroup>
     <ClCompile Include="src\main.cpp" />
@@ -122,6 +128,12 @@
     <ResourceCompile Include="loader.rc" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
+  <Target Name="ValidateShadowVmpRoot" BeforeTargets="PrepareForBuild">
+    <Error Condition="'$(ShadowVmpRoot)'==''" Text="Set ShadowVmpRoot or SHADOW_VMP_ROOT to the VMProtect directory." />
+    <Error Condition="!Exists('$(ShadowVmpRoot)\VMProtect_Con.exe')" Text="VMProtect_Con.exe is missing under $(ShadowVmpRoot)." />
+    <Error Condition="!Exists('$(ShadowVmpRoot)\Include\C\VMProtectSDK.h')" Text="VMProtectSDK.h is missing under $(ShadowVmpRoot)." />
+    <Error Condition="!Exists('$(ShadowVmpRoot)\Lib\Windows\VMProtectSDK64.lib')" Text="VMProtectSDK64.lib is missing under $(ShadowVmpRoot)." />
+  </Target>
   <ImportGroup Label="ExtensionTargets">
   </ImportGroup>
 </Project>

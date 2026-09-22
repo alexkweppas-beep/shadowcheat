@@ -33,7 +33,7 @@
 
 #elif defined(SHADOW_PACKER_VMP)
     // ─── VMP backend (оригинал из старого vmp_markers.hpp, ниже) ───
-    #include "VMProtectSDK.h"
+    #include <VMProtectSDK.h>
 
     #define SHADOW_PROTECT_ULTRA(name) \
         VMProtectBeginUltra(name); \
