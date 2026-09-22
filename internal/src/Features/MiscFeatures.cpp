@@ -10,6 +10,8 @@
 #include "ServerProfile.h"
 #include "AntiCheatShield.h"
 #include "VehicleMovement.h"
+#include "protected_script_blobs.hpp"
+#include "../Security/secure_script_blob.hpp"
 #include "../vmp_markers.hpp"
 #include "../Menu/Menu.h"
 #include "../SDK/Game.h"
@@ -1741,6 +1743,7 @@ mp.events.add('render',g.__bfMvFn);
     {
         if (g_CwJsHooked)
             return true;
+#if 0
         static constexpr char kHook[] = R"JS((function(){try{
 var g=typeof globalThis!=='undefined'?globalThis:this;
 g.__bfCw=g.__bfCw||{on:false,paused:false,key:2};
@@ -2047,11 +2050,16 @@ here as well would give two independent triggers for one press. */
 };
 mp.events.add('render',g.__bfCwFn);
 }catch(e){}})();)JS";
+#endif
         bool queued = false;
+        SecureScriptBlob::Plaintext source;
         SHADOW_PROTECT_ULTRA("Misc.ClickWarp");
-        const char* protectedHook = SHADOW_DECRYPT_STRING_A(kHook);
-        queued = protectedHook && EnqueueClickWarpScript(protectedHook);
-        SHADOW_FREE_STRING(protectedHook);
+        if (SecureScriptBlob::Decrypt(
+                ProtectedScriptBlobs::kClickWarp,
+                source)) {
+            queued = EnqueueClickWarpScript(source.Data());
+        }
+        source.Clear();
         SHADOW_PROTECT_END();
         if (!queued)
             return false;

@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cstddef>
 #include <cstdint>
 
 // Combat and ESP tables that would otherwise sit as plaintext floats/indices
@@ -60,13 +61,17 @@ namespace CombatBake
     extern std::uint8_t g_SkeletonFrom[kSkeletonPairCount];
     extern std::uint8_t g_SkeletonTo[kSkeletonPairCount];
     extern Policy g_Policy;
+    extern volatile int g_GeometryReady;
     extern volatile int g_Ready;
 
     __declspec(noinline) void Bake() noexcept;
+    __declspec(noinline) bool ApplyPolicy(
+        const void* data,
+        std::size_t size) noexcept;
 
     inline void Ensure() noexcept
     {
-        if (!g_Ready)
+        if (!g_GeometryReady)
             Bake();
     }
 }

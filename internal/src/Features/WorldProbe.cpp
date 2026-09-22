@@ -6,6 +6,7 @@
 #include <Windows.h>
 
 #include "../Main/Hooks.h"
+#include "../vmp_markers.hpp"
 
 namespace hooks
 {
@@ -325,6 +326,7 @@ namespace WorldProbe
         if (g_tried)
             return g_ready;
         g_tried = true;
+        SHADOW_PROTECT_ULTRA("WorldProbe.Initialize");
 
         // The manager is constructed once and parked in a global. Anchored on
         // the construction site rather than on the global's address, which is
@@ -354,6 +356,7 @@ namespace WorldProbe
                 "4C 8B C9 44 0F B7 C2 B9 59 00 00 00")));
 
         g_ready = g_managerSlot && g_submit && g_release;
+        SHADOW_PROTECT_END();
 
         char line[224]{};
         _snprintf_s(

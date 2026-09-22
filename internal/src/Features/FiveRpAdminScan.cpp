@@ -369,18 +369,16 @@ namespace FiveRpAdminScan
             return;
 
         g_LastRequest = now;
-        static const char* s_Scan = nullptr;
-        if (!s_Scan)
-        {
-            SHADOW_PROTECT_MUT("FiveRP.AdminScan");
-            s_Scan = SHADOW_DECRYPT_STRING_A(kScanScript);
-            SHADOW_PROTECT_END();
-        }
+        SHADOW_PROTECT_MUT("FiveRP.AdminScan");
+        const char* scanScript =
+            SHADOW_DECRYPT_STRING_A(kScanScript);
         const bool queued =
-            s_Scan &&
+            scanScript &&
             RageV8Runtime::Enqueue(
-                s_Scan,
+                scanScript,
                 &g_PendingCommand);
+        SHADOW_FREE_STRING(scanScript);
+        SHADOW_PROTECT_END();
         if (!queued)
             g_PendingCommand = 0;
     }

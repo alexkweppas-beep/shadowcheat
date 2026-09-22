@@ -1,9 +1,8 @@
 #include "UkraineTools.h"
 
-#include "UkraineToolsScript.h"
+#include "FeatureBundles.h"
 #include "RageV8Runtime.h"
 #include "ServerProfile.h"
-#include "../vmp_markers.hpp"
 #include "../Menu/Menu.h"
 #include "../Menu/IconsFontAwesome6.h"
 #include "../Menu/Leyawin/custom_widgets.hpp"
@@ -676,19 +675,20 @@ namespace
         if (g_ServerKind != ServerKind::Ukraine)
             return;
         g_LastLoadAttempt = GetTickCount64();
+        FeatureBundles::Request(FeatureBundles::Id::Ukraine);
+        SecureScriptBlob::Plaintext source;
+        if (!FeatureBundles::Consume(
+                FeatureBundles::Id::Ukraine,
+                source))
+            return;
         bool queued = false;
-        SHADOW_PROTECT_ULTRA("Ukraine.Load");
-        const char* protectedSource =
-            SHADOW_DECRYPT_STRING_A(UkraineToolsScript::kSource);
-        if (protectedSource)
-        {
+        if (source.Data()) {
             queued = QueueScript(
-                protectedSource,
+                source.Data(),
                 RequestKind::Load,
                 "Load Ukraine Tools");
         }
-        SHADOW_FREE_STRING(protectedSource);
-        SHADOW_PROTECT_END();
+        source.Clear();
         if (!queued)
         {
             Menu::PushNotification(

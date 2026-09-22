@@ -2,13 +2,10 @@
 #include <windows.h>
 #include <cstdint>
 
-namespace ShadowSecurity {
-    // Проверяет, что IPC секция создана лоадером. Если нет - краш.
-    void VerifySharedMemory();
+struct ShadowLaunchAuth;
 
-    // Проверяет, что процесс лоадера жив (сверяет PID из Shared Memory).
-    // Должно вызываться 1 раз при инжекте.
-    void VerifyLoaderPidOnce();
+namespace ShadowSecurity {
+    bool VerifyLaunchAuth(const ShadowLaunchAuth* auth) noexcept;
 
     // Запускает фоновый поток, который проверяет подписку (через 1 мин, затем каждые 5 мин)
     void StartPeriodicSubscriptionCheck();

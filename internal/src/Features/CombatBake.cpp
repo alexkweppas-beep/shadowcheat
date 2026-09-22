@@ -1,6 +1,12 @@
 #include "CombatBake.h"
 #include "../vmp_markers.hpp"
 
+#define WIN32_LEAN_AND_MEAN
+#include <Windows.h>
+
+#include <array>
+#include <cmath>
+#include <cstring>
 #include <cstdint>
 
 namespace
@@ -99,69 +105,33 @@ namespace
         PackPair(14, 15, 14),
     };
 
-    constexpr std::uint32_t PackSlot(
-        std::uint32_t value,
-        int slot) noexcept
+    bool ValidPolicy(const CombatBake::Policy& policy) noexcept
     {
-        return value ^ MixKey() ^
-            (static_cast<std::uint32_t>(slot) * 0x9E3779B9u);
+        static_assert(
+            sizeof(CombatBake::Policy) == 116,
+            "server policy wire layout changed");
+        std::array<float, 22> values{};
+        std::memcpy(
+            values.data(),
+            &policy,
+            sizeof(values));
+        for (const float value : values)
+        {
+            if (!std::isfinite(value) ||
+                value < 0.f ||
+                value > 10000.f)
+                return false;
+        }
+        return policy.silentTargetAgeMs <= 5000 &&
+            policy.visFreshMs <= 5000 &&
+            policy.visIdleMs <= 60000 &&
+            policy.visFallbackFailures <= 1000 &&
+            policy.visFallbackHoldMs <= 60000 &&
+            policy.visSwitchMs <= 5000 &&
+            policy.visMaxProbes > 0 &&
+            policy.visMaxProbes <= 64;
     }
 
-    // Thousandths of the runtime float (1.35 → 1350).
-    constexpr std::uint32_t kPackedMilli[] = {
-        PackSlot(1350u, 0),     // hitboxStick
-        PackSlot(260000u, 1),   // coarseFovPad
-        PackSlot(200u, 2),      // minBoneSpanMetres
-        PackSlot(500u, 3),      // minPixelsPerMetre
-        PackSlot(500u, 4),      // minCapsulePixels
-        PackSlot(420u, 5),      // velocityBlend
-        PackSlot(500u, 6),      // damagerOriginLead
-        PackSlot(40000u, 7),    // hitchanceFallbackMetres
-        PackSlot(350u, 8),      // velocitySampleMaxDt
-        PackSlot(7500u, 9),     // silentMaxLead
-        PackSlot(600u, 10),     // silentOvershoot
-        PackSlot(750u, 11),     // silentBackoff
-        PackSlot(50u, 12),      // silentMinRay
-        PackSlot(1200u, 13),    // silentWallshotMinLength
-        PackSlot(80u, 14),      // missBiasScale
-        PackSlot(250u, 15),     // visDepthTolerance
-        PackSlot(130u, 16),     // espHeadToCrown
-        PackSlot(90u, 17),      // espFootToSole
-        PackSlot(760u, 18),     // espTypicalHead
-        PackSlot(1000u, 19),    // espTypicalFeet
-        PackSlot(850u, 20),     // boneVelPrefer
-        PackSlot(120000u, 21),  // maxTrackedSpeed
-    };
-
-    constexpr std::uint32_t kPackedRaw[] = {
-        PackSlot(200u, 0),      // silentTargetAgeMs
-        PackSlot(400u, 1),      // visFreshMs
-        PackSlot(4000u, 2),     // visIdleMs
-        PackSlot(45u, 3),       // visFallbackFailures
-        PackSlot(1500u, 4),     // visFallbackHoldMs
-        PackSlot(120u, 5),      // visSwitchMs
-        PackSlot(16u, 6),       // visMaxProbes
-    };
-
-    constexpr float DecodeMilli(
-        std::uint32_t packed,
-        int slot,
-        std::uint32_t key) noexcept
-    {
-        const std::uint32_t milles =
-            packed ^ key ^
-            (static_cast<std::uint32_t>(slot) * 0x9E3779B9u);
-        return static_cast<float>(milles) * 0.001f;
-    }
-
-    constexpr std::uint32_t DecodeRaw(
-        std::uint32_t packed,
-        int slot,
-        std::uint32_t key) noexcept
-    {
-        return packed ^ key ^
-            (static_cast<std::uint32_t>(slot) * 0x9E3779B9u);
-    }
 }
 
 namespace CombatBake
@@ -173,11 +143,12 @@ namespace CombatBake
     std::uint8_t g_SkeletonFrom[kSkeletonPairCount]{};
     std::uint8_t g_SkeletonTo[kSkeletonPairCount]{};
     Policy g_Policy{};
+    volatile int g_GeometryReady = 0;
     volatile int g_Ready = 0;
 
     __declspec(noinline) void Bake() noexcept
     {
-        if (g_Ready)
+        if (g_GeometryReady)
             return;
 
         SHADOW_PROTECT_MUT("Combat.Bake");
@@ -227,43 +198,29 @@ namespace CombatBake
             g_SkeletonTo[i] = static_cast<std::uint8_t>(word >> 8);
         }
 
-        g_Policy.hitboxStick = DecodeMilli(kPackedMilli[0], 0, key);
-        g_Policy.coarseFovPad = DecodeMilli(kPackedMilli[1], 1, key);
-        g_Policy.minBoneSpanMetres = DecodeMilli(kPackedMilli[2], 2, key);
-        g_Policy.minPixelsPerMetre = DecodeMilli(kPackedMilli[3], 3, key);
-        g_Policy.minCapsulePixels = DecodeMilli(kPackedMilli[4], 4, key);
-        g_Policy.velocityBlend = DecodeMilli(kPackedMilli[5], 5, key);
-        g_Policy.damagerOriginLead = DecodeMilli(kPackedMilli[6], 6, key);
-        g_Policy.hitchanceFallbackMetres =
-            DecodeMilli(kPackedMilli[7], 7, key);
-        g_Policy.velocitySampleMaxDt =
-            DecodeMilli(kPackedMilli[8], 8, key);
-        g_Policy.silentMaxLead = DecodeMilli(kPackedMilli[9], 9, key);
-        g_Policy.silentOvershoot = DecodeMilli(kPackedMilli[10], 10, key);
-        g_Policy.silentBackoff = DecodeMilli(kPackedMilli[11], 11, key);
-        g_Policy.silentMinRay = DecodeMilli(kPackedMilli[12], 12, key);
-        g_Policy.silentWallshotMinLength =
-            DecodeMilli(kPackedMilli[13], 13, key);
-        g_Policy.missBiasScale = DecodeMilli(kPackedMilli[14], 14, key);
-        g_Policy.visDepthTolerance =
-            DecodeMilli(kPackedMilli[15], 15, key);
-        g_Policy.espHeadToCrown = DecodeMilli(kPackedMilli[16], 16, key);
-        g_Policy.espFootToSole = DecodeMilli(kPackedMilli[17], 17, key);
-        g_Policy.espTypicalHead = DecodeMilli(kPackedMilli[18], 18, key);
-        g_Policy.espTypicalFeet = DecodeMilli(kPackedMilli[19], 19, key);
-        g_Policy.boneVelPrefer = DecodeMilli(kPackedMilli[20], 20, key);
-        g_Policy.maxTrackedSpeed = DecodeMilli(kPackedMilli[21], 21, key);
-
-        g_Policy.silentTargetAgeMs = DecodeRaw(kPackedRaw[0], 0, key);
-        g_Policy.visFreshMs = DecodeRaw(kPackedRaw[1], 1, key);
-        g_Policy.visIdleMs = DecodeRaw(kPackedRaw[2], 2, key);
-        g_Policy.visFallbackFailures = DecodeRaw(kPackedRaw[3], 3, key);
-        g_Policy.visFallbackHoldMs = DecodeRaw(kPackedRaw[4], 4, key);
-        g_Policy.visSwitchMs = DecodeRaw(kPackedRaw[5], 5, key);
-        g_Policy.visMaxProbes =
-            static_cast<int>(DecodeRaw(kPackedRaw[6], 6, key));
-
-        g_Ready = 1;
+        g_GeometryReady = 1;
         SHADOW_PROTECT_END();
+    }
+
+    __declspec(noinline) bool ApplyPolicy(
+        const void* data,
+        std::size_t size) noexcept
+    {
+        if (!data || size < sizeof(Policy))
+            return false;
+        Bake();
+        bool accepted = false;
+        SHADOW_PROTECT_MUT("Combat.Policy");
+        Policy candidate{};
+        std::memcpy(&candidate, data, sizeof(candidate));
+        if (ValidPolicy(candidate))
+        {
+            g_Policy = candidate;
+            g_Ready = 1;
+            accepted = true;
+        }
+        SecureZeroMemory(&candidate, sizeof(candidate));
+        SHADOW_PROTECT_END();
+        return accepted;
     }
 }

@@ -36,6 +36,7 @@
 #include "../Features/MiscFeatures.h"
 #include "../Features/ScriptBridge.h"
 #include "../Features/CloudStorage.h"
+#include "../Features/FeatureBundles.h"
 #include "../Features/RageV8Runtime.h"
 #include "../Features/FeatureBinds.h"
 #include "../Features/EventLogger.h"
@@ -854,7 +855,7 @@ namespace hooks
         NotifyInjectReady();
         MenuTexture::Initialize(dev);
 
-        // Запуск периодической серверной проверки подписки (через 1 минуту, затем каждые 5 мин)
+        // Verify immediately off the render thread, then renew every 5 minutes.
         ShadowSecurity::StartPeriodicSubscriptionCheck();
 
         // Install WndProc hook so ImGui receives input.
@@ -1143,6 +1144,7 @@ namespace hooks
         PedPreview::Shutdown();
         ModelPreview::Shutdown();
         SilentAim::Shutdown();
+        FeatureBundles::Shutdown();
         CloudStorage::Shutdown();
 
         if (g_ImGuiInit && ImGui::GetCurrentContext())
@@ -1386,6 +1388,49 @@ namespace hooks
     //  Shared frame-rendering logic — called from both hkPresent
     //  and hkPresent1 to avoid code duplication.
     // ------------------------------------------------------------
+    static void DrawAuthorizationGate(
+        CloudStorage::AuthorizationState state,
+        bool policyPending) noexcept
+    {
+        const ImGuiIO& io = ImGui::GetIO();
+        ImGui::SetNextWindowPos(
+            ImVec2(io.DisplaySize.x * 0.5f, io.DisplaySize.y * 0.5f),
+            ImGuiCond_Always,
+            ImVec2(0.5f, 0.5f));
+        ImGui::SetNextWindowBgAlpha(0.92f);
+        constexpr ImGuiWindowFlags flags =
+            ImGuiWindowFlags_AlwaysAutoResize |
+            ImGuiWindowFlags_NoDecoration |
+            ImGuiWindowFlags_NoInputs |
+            ImGuiWindowFlags_NoSavedSettings;
+        ImGui::Begin("##authorization_gate", nullptr, flags);
+        const char* message = policyPending
+            ? "Loading protected policy..."
+            : (state == CloudStorage::AuthorizationState::Denied
+                ? "Access denied"
+                : "Checking subscription...");
+        ImGui::TextUnformatted(message);
+        if (state == CloudStorage::AuthorizationState::Pending)
+            ImGui::TextDisabled("%s", CloudStorage::LastError());
+        ImGui::End();
+    }
+
+    static void UpdateSessionPolicy(bool sessionAvailable) noexcept
+    {
+        if (!sessionAvailable || CombatBake::g_Ready)
+            return;
+        FeatureBundles::Request(FeatureBundles::Id::Policy);
+        SecureScriptBlob::Plaintext policy;
+        if (!FeatureBundles::Consume(
+                FeatureBundles::Id::Policy,
+                policy))
+            return;
+        CombatBake::ApplyPolicy(
+            policy.Data(),
+            policy.Size());
+        policy.Clear();
+    }
+
     static void RenderFrame(IDXGISwapChain* pSwap, const char* caller)
     {
         const std::int64_t profileFrame =
@@ -1411,6 +1456,17 @@ namespace hooks
         if (!EnsureImGuiDevice(pSwap))
             return;
 
+        const auto authorizationState =
+            CloudStorage::GetAuthorizationState();
+        const bool authorized =
+            authorizationState ==
+            CloudStorage::AuthorizationState::Authorized;
+        UpdateSessionPolicy(
+            authorizationState !=
+            CloudStorage::AuthorizationState::Denied);
+        const bool featuresReady =
+            authorized && CombatBake::g_Ready;
+
         // After Present/device fault: do not NewFrame/draw/V8 on a stale
         // device — avoids menu ghost on black screen and CEF races.
         if (InRecoverCooldown()) {
@@ -1424,7 +1480,7 @@ namespace hooks
 
         // Grab pause-menu ped into private RT and scrub BB (OBS-safe).
         // Skip during CEF dump — Present must stay light (renderer AV).
-        if (!cefDumpBusy) {
+        if (featuresReady && !cefDumpBusy) {
             __try {
                 PedPreview::CaptureAndSanitizeBackbuffer(
                     g_Device, g_Context, pSwap);
@@ -1467,6 +1523,13 @@ namespace hooks
         }
 
         if (newFrameOk) {
+            if (!featuresReady) {
+                g_MenuOpen = false;
+                ImGui::GetIO().MouseDrawCursor = false;
+                DrawAuthorizationGate(
+                    authorizationState,
+                    authorized && !CombatBake::g_Ready);
+            } else {
             std::int64_t profileStart = 0;
             // Set while a keybind row is capturing, so the key being assigned
             // does not also fire the action it is being assigned to.
@@ -1819,6 +1882,7 @@ namespace hooks
             RuntimeProfiler::End(
                 RuntimeProfiler::Scope::PlayersOverlay,
                 profileStart);
+            }
         } // end newFrameOk
 
         const std::int64_t profileRender =

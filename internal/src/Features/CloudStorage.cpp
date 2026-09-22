@@ -4,8 +4,8 @@
  * Replaces the Supabase edge-function transport with our own
  * Express backend (api.shadowcheats.cc).
  *
- * Token source: reads JWT from the loader's shared memory
- * (ShadowSharedAuth::token) instead of cloud.session.
+ * Token source: consumes a one-shot launch bootstrap passed through
+ * DllMain::lpReserved by the manual mapper.
  *
  * Endpoint mapping:
  *   kind="config"  → /api/configs/{list|save|load|delete}  (product=ragemp)
@@ -29,33 +29,17 @@
 #include <cstdlib>
 #include <cstring>
 #include <ctime>
+#include <wincrypt.h>
 #include <winhttp.h>
 #include <new>
+#include <string>
 
+#include "../shared_ipc.hpp"
 #include "../xorstr.hpp"
 #include "../vmp_markers.hpp"
 #include "CloudStorage.h"
 
 #pragma comment(lib, "winhttp.lib")
-
-// ── Shared memory layout (keep in sync with launcher/src/shared_ipc.hpp) ──
-#pragma pack(push, 1)
-struct ShadowSharedAuth {
-  uint32_t magic;
-  uint32_t version;
-  uint64_t timestamp;
-  char username[64];
-  char token[512];
-  char hwid[128];
-  int32_t days_remaining;
-  uint32_t pid;
-};
-#pragma pack(pop)
-
-#define SHADOW_SHARED_MAGIC 0x53484457u
-
-// NOTE: SHADOW_SHARED_MEMORY_NAME is now inlined via xorstr_ at each use site
-// to prevent the string from appearing in .rdata
 
 namespace CloudStorage {
 namespace {
@@ -76,6 +60,8 @@ constexpr char kConfigProduct[] = "ragemp";
 alignas(CRYPTPROTECTMEMORY_BLOCK_SIZE)
 unsigned char g_ProtectedToken[512]{};
 volatile LONG g_HasToken = 0;
+volatile LONG g_AuthorizationState =
+    static_cast<LONG>(AuthorizationState::Pending);
 char g_Error[128] = "Cloud unavailable";
 
 // Unix timestamp of subscription expiry (0 = unknown/expired).
@@ -91,6 +77,12 @@ void ClearToken() noexcept {
 
 bool HasToken() noexcept {
   return InterlockedCompareExchange(&g_HasToken, 0, 0) != 0;
+}
+
+void SetAuthorizationState(AuthorizationState state) noexcept {
+  InterlockedExchange(
+      &g_AuthorizationState,
+      static_cast<LONG>(state));
 }
 
 __declspec(noinline) bool StoreToken(const char* value) noexcept {
@@ -259,8 +251,13 @@ static __declspec(noinline) bool BuildAuthHeader(
   return ok;
 }
 
-// ── Generic HTTPS POST to our backend ──
-static bool Request(const wchar_t *path,
+enum class HttpMethod : std::uint8_t {
+  Get,
+  Post
+};
+
+static bool Request(HttpMethod httpMethod,
+                    const wchar_t *path,
                     const char *bodyPayload, // may be nullptr for list endpoint
                     bool isJson,
                     char *response, std::size_t responseCapacity,
@@ -290,7 +287,8 @@ static bool Request(const wchar_t *path,
     return false;
   }
 
-  const wchar_t *method = bodyPayload ? L"POST" : L"GET";
+  const wchar_t *method =
+      httpMethod == HttpMethod::Post ? L"POST" : L"GET";
   HINTERNET hReq =
       WinHttpOpenRequest(hConn, method, path, nullptr, WINHTTP_NO_REFERER,
                          WINHTTP_DEFAULT_ACCEPT_TYPES, WINHTTP_FLAG_SECURE);
@@ -394,59 +392,46 @@ static bool Request(const wchar_t *path,
   return true;
 }
 
-// ── Try to refresh token from shared memory ──
-static __declspec(noinline) bool RefreshTokenFromSharedMem() {
+static __declspec(noinline) bool ConsumeLaunchAuth(
+    const ShadowLaunchAuth* auth) {
   bool ok = false;
   SHADOW_PROTECT_ULTRA("Cloud.Session");
   do {
-    bool writable = true;
-    HANDLE hMap = OpenFileMappingA(
-        FILE_MAP_READ | FILE_MAP_WRITE,
-        FALSE,
-        xorstr_("Local\\SHADOW_IPC_AUTH_SECTION"));
-    if (!hMap) {
-      writable = false;
-      hMap = OpenFileMappingA(
-          FILE_MAP_READ,
-          FALSE,
-          xorstr_("Local\\SHADOW_IPC_AUTH_SECTION"));
-    }
-    if (!hMap)
+    if (!auth ||
+        auth->magic != SHADOW_LAUNCH_AUTH_MAGIC ||
+        auth->version != SHADOW_LAUNCH_AUTH_VERSION ||
+        auth->size != sizeof(ShadowLaunchAuth))
       break;
-
-    auto* auth = static_cast<ShadowSharedAuth*>(
-        MapViewOfFile(
-            hMap,
-            writable ? FILE_MAP_READ | FILE_MAP_WRITE : FILE_MAP_READ,
-            0,
-            0,
-            sizeof(ShadowSharedAuth)));
-    if (auth && auth->magic == SHADOW_SHARED_MAGIC && auth->version == 1 &&
-        auth->token[0]) {
-      ok = StoreToken(auth->token);
-      if (ok) {
-        lstrcpynA(g_Username, auth->username, sizeof(g_Username));
-        // days_remaining actually stores HOURS remaining, not days
-        const int32_t hoursLeft = auth->days_remaining;
-        if (hoursLeft > 0) {
-          const std::int64_t now = static_cast<std::int64_t>(time(nullptr));
-          g_ExpiresAt = now + static_cast<std::int64_t>(hoursLeft) * 3600;
-        } else {
-          g_ExpiresAt = 0;
-        }
-      }
-      // NOTE: Do NOT wipe the token from shared memory here.
-      // The shared memory section is owned by the loader process; when the
-      // loader closes g_hSharedMemory the OS releases the backing store.
-      // Wiping early causes EnsureSession() re-reads to find an empty token
-      // and fail, breaking config/script load after the first Initialize().
+    ok = StoreToken(auth->launch_ticket);
+    if (ok) {
+      lstrcpynA(g_Username, auth->username, sizeof(g_Username));
+      const int32_t hoursLeft = auth->hours_remaining;
+      g_ExpiresAt = hoursLeft > 0
+          ? static_cast<std::int64_t>(time(nullptr)) +
+              static_cast<std::int64_t>(hoursLeft) * 3600
+          : 0;
     }
-    if (auth)
-      UnmapViewOfFile(auth);
-    CloseHandle(hMap);
   } while (false);
   SHADOW_PROTECT_END();
   return ok;
+}
+
+static VerificationResult RenewLaunchTicket() {
+  char response[2048]{};
+  DWORD status = 0;
+  const bool renewed = Request(
+      HttpMethod::Post,
+      L"/api/cheat/renew",
+      "",
+      false,
+      response,
+      sizeof(response),
+      status);
+  if (renewed && StoreToken(response))
+    return VerificationResult::Authorized;
+  if (status == 401 || status == 403)
+    return VerificationResult::Denied;
+  return VerificationResult::Retry;
 }
 
 // ── Parse comma-separated list response into Item array ──
@@ -486,7 +471,102 @@ bool RequestJsonPost(
     const char *body,
     DWORD &status) {
   char response[2048]{};
-  return Request(path, body, true, response, sizeof(response), status);
+  return Request(
+      HttpMethod::Post,
+      path,
+      body,
+      true,
+      response,
+      sizeof(response),
+      status);
+}
+
+bool ExtractJsonString(
+    const char* json,
+    const char* key,
+    std::string& value) {
+  if (!json || !key)
+    return false;
+  const std::string marker =
+      std::string("\"") + key + "\":\"";
+  const char* start = strstr(json, marker.c_str());
+  if (!start)
+    return false;
+  start += marker.size();
+  const char* finish = strchr(start, '"');
+  if (!finish)
+    return false;
+  value.assign(start, finish);
+  return true;
+}
+
+bool DecodeHexKey(
+    const std::string& hex,
+    std::array<std::uint8_t, 32>& key) {
+  if (hex.size() != key.size() * 2)
+    return false;
+  for (std::size_t index = 0; index < key.size(); ++index) {
+    unsigned int value = 0;
+    if (sscanf_s(hex.c_str() + index * 2, "%2x", &value) != 1)
+      return false;
+    key[index] = static_cast<std::uint8_t>(value);
+  }
+  return true;
+}
+
+bool DecodeBase64(
+    const std::string& encoded,
+    std::vector<std::uint8_t>& output) {
+  DWORD size = 0;
+  if (!CryptStringToBinaryA(
+          encoded.c_str(),
+          static_cast<DWORD>(encoded.size()),
+          CRYPT_STRING_BASE64,
+          nullptr,
+          &size,
+          nullptr,
+          nullptr))
+    return false;
+  output.resize(size);
+  return CryptStringToBinaryA(
+             encoded.c_str(),
+             static_cast<DWORD>(encoded.size()),
+             CRYPT_STRING_BASE64,
+             output.data(),
+             &size,
+             nullptr,
+             nullptr) != FALSE;
+}
+
+bool ParseFeatureBundle(
+    const char* response,
+    EncryptedFeatureBundle& bundle) {
+  std::string payload;
+  std::string key;
+  std::string canary;
+  bool ok =
+      ExtractJsonString(response, "payload", payload) &&
+      ExtractJsonString(response, "key", key) &&
+      ExtractJsonString(response, "canary", canary) &&
+      canary.size() == 64 &&
+      DecodeHexKey(key, bundle.key) &&
+      DecodeBase64(payload, bundle.payload);
+  if (ok)
+    lstrcpynA(bundle.canary, canary.c_str(), sizeof(bundle.canary));
+  SecureZeroMemory(key.data(), key.size());
+  if (!ok) {
+    SecureZeroMemory(bundle.key.data(), bundle.key.size());
+    bundle.payload.clear();
+  }
+  return ok;
+}
+
+bool IsSafeFeatureId(const char* value) noexcept {
+  return value &&
+      (!lstrcmpA(value, "quant") ||
+       !lstrcmpA(value, "five_rp") ||
+       !lstrcmpA(value, "ukraine") ||
+       !lstrcmpA(value, "policy"));
 }
 
 } // anonymous namespace
@@ -495,35 +575,49 @@ bool RequestJsonPost(
 //  Public API
 // ────────────────────────────────────────────────────────────
 
-void Initialize() {
+bool Initialize(const ShadowLaunchAuth* auth) {
   ClearToken();
-  RefreshTokenFromSharedMem();
+  SetAuthorizationState(AuthorizationState::Pending);
+  const bool initialized = ConsumeLaunchAuth(auth);
+  if (!initialized)
+    SetAuthorizationState(AuthorizationState::Denied);
+  return initialized;
 }
 
 bool EnsureSession() {
-  if (HasToken())
-    return true;
-  return RefreshTokenFromSharedMem();
+  return HasToken();
 }
 
 void Shutdown() {
+  SetAuthorizationState(AuthorizationState::Denied);
   ClearToken();
   SecureZeroMemory(g_Username, sizeof(g_Username));
 }
 
 bool IsAvailable() {
-  if (HasToken())
-    return true;
-  return RefreshTokenFromSharedMem();
+  return HasToken();
 }
 
 const char *LastError() { return g_Error; }
 
 // Returns Unix timestamp of subscription expiry.
-// Populated from the loader's shared memory (days_remaining field = hours).
+// Populated from the one-shot launch bootstrap.
 std::int64_t SubscriptionEndsAt() noexcept { return g_ExpiresAt; }
 
 const char* GetUsername() noexcept { return g_Username; }
+
+AuthorizationState GetAuthorizationState() noexcept {
+  return static_cast<AuthorizationState>(
+      InterlockedCompareExchange(
+          &g_AuthorizationState,
+          0,
+          0));
+}
+
+bool IsAuthorized() noexcept {
+  return GetAuthorizationState() ==
+      AuthorizationState::Authorized;
+}
 
 bool PostJson(const wchar_t *path, const char *body, unsigned long &status) {
   status = 0;
@@ -537,31 +631,50 @@ bool PostJson(const wchar_t *path, const char *body, unsigned long &status) {
   return ok;
 }
 
-bool VerifySubscription() {
+bool DownloadFeatureBundle(
+    const char* featureId,
+    EncryptedFeatureBundle& bundle) {
+  bundle = {};
+  if (!EnsureSession() || !IsSafeFeatureId(featureId))
+    return false;
+  char body[128]{};
+  _snprintf_s(
+      body,
+      sizeof(body),
+      _TRUNCATE,
+      "{\"product\":\"ragemp\",\"feature\":\"%s\"}",
+      featureId);
+  constexpr std::size_t responseCapacity = 4 * 1024 * 1024;
+  std::vector<char> response(responseCapacity, 0);
+  DWORD status = 0;
+  const bool downloaded = Request(
+      HttpMethod::Post,
+      L"/api/product/blob",
+      body,
+      true,
+      response.data(),
+      response.size(),
+      status);
+  const bool parsed = downloaded &&
+      ParseFeatureBundle(response.data(), bundle);
+  SecureZeroMemory(response.data(), response.size());
+  SecureZeroMemory(body, sizeof(body));
+  return parsed;
+}
+
+VerificationResult VerifySubscription() {
   if (!EnsureSession()) {
     SetError("Cloud session unavailable");
-    return false; // Wait, we should return true if it's just unavailable? No, if session is entirely missing, that's bad.
+    SetAuthorizationState(AuthorizationState::Denied);
+    return VerificationResult::Denied;
   }
-  
-  wchar_t path[128]{};
-  swprintf_s(path, L"/api/configs/list?product=%S", kConfigProduct);
-
-  char response[2048]{};
-  DWORD status = 0;
-  bool ok = Request(path, nullptr, false, response, sizeof(response), status);
-  
-  // If request failed but status is 0, it means it's a network error (internet disconnected)
-  // We do not want to crash the user for bad internet.
-  if (!ok && status == 0) {
-      return true; // Network error, pretend it's fine for now
+  const VerificationResult result = RenewLaunchTicket();
+  if (result == VerificationResult::Authorized) {
+    SetAuthorizationState(AuthorizationState::Authorized);
+  } else if (result == VerificationResult::Denied) {
+    SetAuthorizationState(AuthorizationState::Denied);
   }
-  
-  // If status is 401/403 or similar unauthorized, subscription is invalid
-  if (status == 401 || status == 403) {
-      return false; // Explicitly rejected
-  }
-  
-  return true; // Valid or other non-fatal error
+  return result;
 }
 
 // ── List: GET /api/configs/list?product=ragemp  or  GET /api/scripts/list ──
@@ -584,7 +697,14 @@ bool List(const char *kind, Item *items, int capacity, int &count) {
 
   char response[65536]{};
   DWORD status = 0;
-  if (!Request(path, nullptr, false, response, sizeof(response), status))
+  if (!Request(
+          HttpMethod::Get,
+          path,
+          nullptr,
+          false,
+          response,
+          sizeof(response),
+          status))
     return false;
 
   count = ParseListResponse(response, items, capacity);
@@ -630,7 +750,14 @@ bool Get(const char *kind,
     return false;
   }
   DWORD status = 0;
-  if (!Request(path, body, true, raw, kRawCap, status)) {
+  if (!Request(
+          HttpMethod::Post,
+          path,
+          body,
+          true,
+          raw,
+          kRawCap,
+          status)) {
     delete[] raw;
     return false;
   }
@@ -703,7 +830,14 @@ bool Upsert(const char *kind, const char *name, const char *content) {
                kConfigProduct, wName);
     char response[128]{};
     DWORD status = 0;
-    return Request(path, content, false, response, sizeof(response), status);
+    return Request(
+        HttpMethod::Post,
+        path,
+        content,
+        false,
+        response,
+        sizeof(response),
+        status);
   }
 
   // Scripts: keep JSON body
@@ -723,7 +857,14 @@ bool Upsert(const char *kind, const char *name, const char *content) {
   if (ok) {
     char response[128]{};
     DWORD status = 0;
-    ok = Request(path, body, true, response, sizeof(response), status);
+    ok = Request(
+        HttpMethod::Post,
+        path,
+        body,
+        true,
+        response,
+        sizeof(response),
+        status);
   } else {
     SetError("Failed to build JSON");
   }
@@ -760,7 +901,14 @@ bool Delete(const char *kind, const char *id) {
 
   char response[64]{};
   DWORD status = 0;
-  return Request(path, body, true, response, sizeof(response), status);
+  return Request(
+      HttpMethod::Post,
+      path,
+      body,
+      true,
+      response,
+      sizeof(response),
+      status);
 }
 
 } // namespace CloudStorage

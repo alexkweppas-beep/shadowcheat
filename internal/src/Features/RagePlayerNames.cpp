@@ -244,9 +244,7 @@ namespace
             return true;
 
         SHADOW_PROTECT_MUT("Names.Snapshot");
-        static const char* s_Format = nullptr;
-        if (!s_Format)
-            s_Format = SHADOW_DECRYPT_STRING_A(
+        const char* snapshotFormat = SHADOW_DECRYPT_STRING_A(
             "const rows=[],seen={};"
             "const adminKey='%s';"
             "const adminVars=[%s];"
@@ -786,12 +784,12 @@ namespace
             "0,0,0,0].join('\\t'));"
             "return rows.join('\\n');");
         SHADOW_PROTECT_END();
-        if (!s_Format)
+        if (!snapshotFormat)
             return false;
         const int length = std::snprintf(
             g_SnapshotScript,
             sizeof(g_SnapshotScript),
-            s_Format,
+            snapshotFormat,
                 adminKey,
                 adminVars,
                 identity,
@@ -801,6 +799,7 @@ namespace
                 includeNonPlayers ? 1 : 0,
                 familyLookupDemand ? 1 : 0,
                 greenZoneDemand ? 1 : 0);
+        SHADOW_FREE_STRING(snapshotFormat);
         const bool ok = length > 0 &&
             length < static_cast<int>(
                 sizeof(g_SnapshotScript));
@@ -1895,8 +1894,10 @@ namespace RagePlayerNames
                             visibilityDemand
                                 ? 24u : 0u);
                 }
-                // Keep the built script. Enqueue copies it; wiping the buffer
-                // forced a Ultra decrypt + snprintf on every 400 ms refresh.
+                SecureZeroMemory(
+                    g_SnapshotScript,
+                    sizeof(g_SnapshotScript));
+                g_ScriptKey.built = false;
             }
         }
     }

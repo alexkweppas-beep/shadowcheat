@@ -708,14 +708,6 @@ return 'RWE1\t'+String(rows.length)+(body?'\n'+body:'');
             return;
 
         g_LastRequest = now;
-        static const char* s_SnapshotTemplate = nullptr;
-        if (!s_SnapshotTemplate)
-        {
-            SHADOW_PROTECT_MUT("World.Snapshot");
-            s_SnapshotTemplate = SHADOW_DECRYPT_STRING_A(kSnapshotScript);
-            SHADOW_PROTECT_END();
-        }
-        
         static char s_ScriptBuffer[16384]{};
         bool forceAll = false;
         if (Menu::s_ForceItemsRefresh)
@@ -724,13 +716,26 @@ return 'RWE1\t'+String(rows.length)+(body?'\n'+body:'');
             Menu::s_ForceItemsRefresh = false;
         }
 
-        std::snprintf(s_ScriptBuffer, sizeof(s_ScriptBuffer), s_SnapshotTemplate, forceAll ? "true" : "false", forceAll ? "true" : "false");
+        SHADOW_PROTECT_MUT("World.Snapshot");
+        const char* snapshotTemplate =
+            SHADOW_DECRYPT_STRING_A(kSnapshotScript);
+        if (snapshotTemplate) {
+            std::snprintf(
+                s_ScriptBuffer,
+                sizeof(s_ScriptBuffer),
+                snapshotTemplate,
+                forceAll ? "true" : "false",
+                forceAll ? "true" : "false");
+        }
+        SHADOW_FREE_STRING(snapshotTemplate);
+        SHADOW_PROTECT_END();
 
         const bool queued =
             s_ScriptBuffer[0] &&
             SafeEnqueue(
                 s_ScriptBuffer,
                 &g_PendingCommand);
+        SecureZeroMemory(s_ScriptBuffer, sizeof(s_ScriptBuffer));
         if (!queued)
             g_PendingCommand = 0;
     }

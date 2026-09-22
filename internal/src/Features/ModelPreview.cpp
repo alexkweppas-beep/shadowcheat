@@ -24,13 +24,15 @@ extern "C" IMAGE_DOS_HEADER __ImageBase;
 // The payload wipes its PE header at the end of DllMain, after which
 // FindResourceW can no longer locate RCDATA in this image. DllMain primes
 // this cache first; LoadDefaultAsset reads from it.
-static const uint8_t* g_baked_res_data = nullptr;
+static uint8_t*       g_baked_res_data = nullptr;
 static size_t         g_baked_res_size = 0;
 
 namespace ModelPreview
 {
 	void CacheEmbeddedMeshResource()
 	{
+		if (g_baked_res_data)
+			return;
 		const HMODULE self = reinterpret_cast<HMODULE>(&__ImageBase);
 		const HRSRC res = FindResourceW(
 			self, MAKEINTRESOURCEW(IDR_MODEL_PREVIEW_MESH), RT_RCDATA);
@@ -41,7 +43,12 @@ namespace ModelPreview
 		const auto* bytes = static_cast<const uint8_t*>(LockResource(loaded));
 		if (!bytes || !size_dw)
 			return;
-		g_baked_res_data = bytes;
+		auto* owned = static_cast<uint8_t*>(
+			HeapAlloc(GetProcessHeap(), 0, size_dw));
+		if (!owned)
+			return;
+		CopyMemory(owned, bytes, size_dw);
+		g_baked_res_data = owned;
 		g_baked_res_size = size_dw;
 	}
 }
