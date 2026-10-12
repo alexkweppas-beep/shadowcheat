@@ -1436,7 +1436,7 @@ void BeginInspectorIsland(
                 subSize, FLT_MAX, 0.f, subtitle);
             blockH += 2.f * scale + subSz.y;
         }
-        ImGui::Dummy(ImVec2(0.f, blockH + metrics.space3 * scale));
+        ImGui::Dummy(ImVec2(0.f, blockH + metrics.space2 * scale));
     }
 }
 
@@ -1708,6 +1708,14 @@ FeatureRowResult FeatureRow(
             1.f),
         label);
     draw->PopClipRect();
+
+    if (desc.tipEn)
+    {
+        ImGui::SetCursorScreenPos(ImVec2(
+            min.x + pad + iconSz + metrics.space2 * scale + textSize.x + 6.f * scale,
+            min.y + (rowH - ImGui::GetTextLineHeight()) * 0.5f));
+        HelpIcon(desc.tipEn, desc.tipRu ? desc.tipRu : desc.tipEn, desc.tipUa ? desc.tipUa : desc.tipEn, false);
+    }
 
     if (desc.color)
     {

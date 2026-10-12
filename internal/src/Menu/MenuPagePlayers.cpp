@@ -111,6 +111,11 @@ namespace Menu
             ICON_FA_LIST,
             T("Admin list", "Список админов", "Список адмінів"),
             pShowAdminList);
+//         MiscRow(
+//             "players_spec_detect",
+//             ICON_FA_EYE,
+//             T("Detect admin spec", "Детект админ. спека", "Детект адмін. спека"),
+//             &s.specDetect);
         gui->slider_float_icon(
             ICON_FA_RULER,
             T("Overlay range###players_overlay_distance",
@@ -156,12 +161,43 @@ namespace Menu
                 _snprintf(rowId, sizeof(rowId) - 1, "admin_%d", i);
                 MenuUi::ListRowDesc row{};
                 row.title = admin.name[0] ? admin.name : "?";
-                row.meta = admin.streamed
-                    ? T("nearby", "рядом", "поруч")
-                    : T("on server", "на сервере", "на сервері");
+                char metaText[64]{};
+                _snprintf(metaText, sizeof(metaText) - 1, "%s · dimension: %d", 
+                    admin.streamed ? T("nearby", "рядом", "поруч") : T("on server", "на сервере", "на сервері"),
+                    admin.dimension);
+                row.meta = metaText;
                 row.accentDot = admin.streamed;
                 row.height = 40.f;
-                MenuUi::DrawListRow(rowId, row);
+                const float rowW = ImMax(100.f, ImGui::GetContentRegionAvail().x);
+                ImGui::BeginChild(rowId, ImVec2(rowW, 40.f), ImGuiChildFlags_None, ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse);
+                ImGui::SetNextItemAllowOverlap();
+                MenuUi::DrawListRow("bg", row);
+                
+                const float btnW = 38.f;
+                const float rightPadding = admin.streamed ? 32.f : 4.f;
+                ImGui::SetCursorPos(ImVec2(rowW - btnW - rightPadding, 0.f));
+                
+                if (admin.streamed) {
+                    char btnId[32]{};
+                    _snprintf(btnId, sizeof(btnId) - 1, "admin_wp_%d", i);
+                    if (MenuUi::GhostIconButton(btnId, ICON_FA_LOCATION_DOT, ImVec2(btnW, 40.f), true)) {
+                        char wpScript[256]{};
+                        _snprintf(wpScript, sizeof(wpScript) - 1,
+                            "try{var _tgt=mp.players.atRemoteId(%d);"
+                            "if(_tgt&&_tgt.position&&mp&&mp.game&&mp.game.ui)"
+                            "mp.game.ui.setNewWaypoint(_tgt.position.x,_tgt.position.y);"
+                            "}catch(e){}",
+                            admin.remoteId);
+                        RageV8Runtime::EnqueueFireAndForget(wpScript);
+                        
+                        char notif[128]{};
+                        _snprintf(notif, sizeof(notif) - 1, "%s: %s",
+                            T("Waypoint set", "Метка установлена", "Мітка встановлена"),
+                            admin.name[0] ? admin.name : "?");
+                        PushNotification(T("Admins", "Админы", "Адміни"), notif, true, 2500);
+                    }
+                }
+                ImGui::EndChild();
             }
         }
         MenuUi::EndInspectorIsland();
@@ -230,7 +266,7 @@ namespace Menu
         float scale) noexcept
     {
         static char s_FriendInput[48]{};
-        static float s_AddRadius = 50.f;
+        MiscFeatures::FriendRadiusState& frs = MiscFeatures::GetFriendRadiusState();
         EnsureAimProfilesInitialized();
 
         AimWeaponProfile& general = GetAimProfile(0);
@@ -277,7 +313,7 @@ namespace Menu
                 if (localFound)
                 {
                     const float radiusSq =
-                        s_AddRadius * s_AddRadius;
+                        frs.radius * frs.radius;
                     for (int i = 0; i < count; ++i)
                     {
                         const auto& entry = entries[i];
@@ -321,10 +357,28 @@ namespace Menu
                 T("Add radius###friends_radius",
                   "Радиус добавления###friends_radius",
                   "Радіус додавання###friends_radius"),
-                &s_AddRadius,
+                &frs.radius,
                 1.f,
                 250.f,
                 "%.0f m");
+
+            gui->checkbox(
+                T("Show radius###friends_show_radius",
+                  "Показывать радиус###friends_show_radius",
+                  "Показувати радіус###friends_show_radius"),
+                &frs.showRadius);
+            if (frs.showRadius)
+            {
+                gui->color_edit(
+                    T("Radius color###friends_radius_color",
+                      "Цвет радиуса###friends_radius_color",
+                      "Колір радіусу###friends_radius_color"),
+                    frs.color);
+            }
+            
+            gui->checkbox(
+                T("Custom Colors", "Свои цвета", "Свої кольори"),
+                &Friends::UseCustomColors);
         }
         MenuUi::EndGlassPanel();
 
@@ -422,11 +476,10 @@ namespace Menu
                     ImGui::PushStyleVar(
                         ImGuiStyleVar_Alpha,
                         ImGui::GetStyle().Alpha * presence);
-                    const float removeW = 38.f * scale;
-                    const float rowW = ImMax(
-                        100.f * scale,
-                        ImGui::GetContentRegionAvail().x -
-                            removeW - 6.f * scale);
+                    const float btnW = 38.f * scale;
+                    const float rightW = (btnW * 3.f);
+                    const float rowW = ImMax(100.f * scale, ImGui::GetContentRegionAvail().x);
+                    
                     MenuUi::ListRowDesc row{};
                     row.title = name;
                     row.height = 42.f;
@@ -436,19 +489,163 @@ namespace Menu
                         ImGuiChildFlags_None,
                         ImGuiWindowFlags_NoScrollbar |
                             ImGuiWindowFlags_NoScrollWithMouse);
+                    
+                    ImGui::SetNextItemAllowOverlap();
                     MenuUi::DrawListRow("saved_friend", row);
-                    ImGui::EndChild();
-                    ImGui::SameLine(0.f, 6.f * scale);
+
+                    if (Friends::UseCustomColors) {
+                        const float colorPickerW = 120.f * scale;
+                        ImGui::SetCursorPos(ImVec2(rowW - rightW - colorPickerW - 8.f * scale, 2.f * scale));
+                        
+                        ImGui::BeginChild("##color_picker_container", ImVec2(colorPickerW, 38.f * scale), ImGuiChildFlags_None, ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse | ImGuiWindowFlags_NoBackground);
+                        
+                        float clr[4];
+                        Friends::GetColor(i, clr);
+                        
+                        char colorId[48]{};
+                        _snprintf(colorId, sizeof(colorId) - 1, "##friend_clr_%d", i);
+                        
+                        if (gui->color_edit(colorId, clr)) {
+                            Friends::SetColor(i, clr);
+                        }
+                        
+                        ImGui::EndChild();
+                    }
+
+                    ImGui::SetCursorPos(ImVec2(rowW - rightW - 4.f * scale, 0.f));
+
+                    if (MenuUi::GhostIconButton(
+                            "friend_mark",
+                            ICON_FA_LOCATION_DOT,
+                            ImVec2(btnW, rowH),
+                            true))
+                    {
+                        RagePlayerNames::SnapshotEntry pEntries[256]{};
+                        const int pCount = RagePlayerNames::CopySnapshot(pEntries, IM_ARRAYSIZE(pEntries));
+                        float px = 0.f, py = 0.f;
+                        bool foundPos = false;
+                        for (int k = 0; k < pCount; ++k) {
+                            const char* eName = pEntries[k].nickname[0] ? pEntries[k].nickname : pEntries[k].name;
+                            const char* eName2 = pEntries[k].name[0] ? pEntries[k].name : nullptr;
+                            if ((eName && lstrcmpiA(eName, name) == 0) ||
+                                (eName2 && lstrcmpiA(eName2, name) == 0)) {
+                                px = pEntries[k].x; py = pEntries[k].y;
+                                foundPos = true; break;
+                            }
+                        }
+
+                        if (foundPos) {
+#if HAS_NATIVE_INVOKE
+                            NativeInvoke::Invoke<void>(0xFE43368D2896B380ull, px, py);
+#endif
+                            char wpScript[256]{};
+                            _snprintf(wpScript, sizeof(wpScript) - 1,
+                                "if (mp && mp.game && mp.game.ui) mp.game.ui.setNewWaypoint(%f, %f);",
+                                px, py);
+                            RageV8Runtime::EnqueueFireAndForget(wpScript);
+                            
+                            char notif[128]{};
+                            _snprintf(notif, sizeof(notif) - 1, "%s: %s",
+                                T("Waypoint set", "Метка установлена", "Мітка встановлена"),
+                                name);
+                            PushNotification(T("Friends", "Друзья", "Друзі"), notif, true, 2500);
+                        } else {
+                            char wpScript[640]{};
+                            _snprintf(wpScript, sizeof(wpScript) - 1,
+                                "try{var _fn='%s'.toLowerCase();"
+                                "var _tgt=mp.players.toArray().find(function(x){if(!x||!x.name)return false;"
+                                "return x.name.toLowerCase()===_fn||(x.nameTag&&x.nameTag.toLowerCase()===_fn);});"
+                                "if(_tgt&&_tgt.position&&_tgt.handle!==0){"
+                                "if(Math.abs(_tgt.position.x)>1 || Math.abs(_tgt.position.y)>1){"
+                                "if(mp&&mp.game&&mp.game.ui)mp.game.ui.setNewWaypoint(_tgt.position.x,_tgt.position.y);"
+                                "}}"
+                                "}catch(e){}",
+                                name);
+                            RageV8Runtime::EnqueueFireAndForget(wpScript);
+
+                            char notif[128]{};
+                            _snprintf(notif, sizeof(notif) - 1, "%s",
+                                T("Attempting JS search (will fail if too far)", "Ищу через JS (отказ, если далеко)", "Шукаю через JS (відмова, якщо далеко)"));
+                            PushNotification(T("Friends", "Друзья", "Друзі"), notif, false, 3500);
+                        }
+                    }
+
+                    ImGui::SameLine(0.f, 0.f);
+                    if (MenuUi::GhostIconButton(
+                            "friend_tp",
+                            ICON_FA_BOLT,
+                            ImVec2(btnW, rowH),
+                            true))
+                    {
+                        RagePlayerNames::SnapshotEntry pEntries[256]{};
+                        const int pCount = RagePlayerNames::CopySnapshot(pEntries, IM_ARRAYSIZE(pEntries));
+                        float px = 0.f, py = 0.f, pz = 0.f;
+                        bool foundPos = false;
+                        for (int k = 0; k < pCount; ++k) {
+                            const char* eName = pEntries[k].nickname[0] ? pEntries[k].nickname : pEntries[k].name;
+                            const char* eName2 = pEntries[k].name[0] ? pEntries[k].name : nullptr;
+                            if ((eName && lstrcmpiA(eName, name) == 0) ||
+                                (eName2 && lstrcmpiA(eName2, name) == 0)) {
+                                px = pEntries[k].x; py = pEntries[k].y; pz = pEntries[k].z;
+                                foundPos = true; break;
+                            }
+                        }
+
+                        if (foundPos) {
+#if HAS_NATIVE_INVOKE
+                            int ped = NativeInvoke::PlayerPedId();
+                            if (ped) {
+                                int veh = NativeInvoke::GetVehiclePedIsIn(ped, false);
+                                int ent = veh ? veh : ped;
+                                NativeInvoke::SetEntityCoordsNoOffset(ent, px, py, pz, false, false, false);
+                            }
+#endif
+                            char tpScript[512]{};
+                            _snprintf(tpScript, sizeof(tpScript) - 1,
+                                "const me=mp.players.local;if(me){const v=me.vehicle;if(v)v.position=new mp.Vector3(%f,%f,%f);else me.position=new mp.Vector3(%f,%f,%f);}",
+                                px, py, pz + 0.5f, px, py, pz + 0.5f);
+                            RageV8Runtime::EnqueueFireAndForget(tpScript);
+                            
+                            char notif[128]{};
+                            _snprintf(notif, sizeof(notif) - 1, "%s: %s",
+                                T("Teleported to friend", "Телепортирован к другу", "Телепортовано до друга"),
+                                name);
+                            PushNotification(T("Friends", "Друзья", "Друзі"), notif, true, 2500);
+                        } else {
+                            char tpScript[768]{};
+                            _snprintf(tpScript, sizeof(tpScript) - 1,
+                                "try{var _fn='%s'.toLowerCase();"
+                                "var _tgt=mp.players.toArray().find(function(x){if(!x||!x.name)return false;"
+                                "return x.name.toLowerCase()===_fn||(x.nameTag&&x.nameTag.toLowerCase()===_fn);});"
+                                "if(_tgt&&_tgt.position&&_tgt.handle!==0){"
+                                "if(Math.abs(_tgt.position.x)>1 || Math.abs(_tgt.position.y)>1){"
+                                "var _pos=_tgt.position;var _me=mp.players.local;if(_me){var _v=_me.vehicle;"
+                                "if(_v)_v.position=new mp.Vector3(_pos.x,_pos.y,_pos.z+0.5);"
+                                "else _me.position=new mp.Vector3(_pos.x,_pos.y,_pos.z+0.5);}"
+                                "}}"
+                                "}catch(e){}",
+                                name);
+                            RageV8Runtime::EnqueueFireAndForget(tpScript);
+
+                            char notif[128]{};
+                            _snprintf(notif, sizeof(notif) - 1, "%s",
+                                T("Attempting JS search (will fail if too far)", "Ищу через JS (отказ, если далеко)", "Шукаю через JS (відмова, якщо далеко)"));
+                            PushNotification(T("Friends", "Друзья", "Друзі"), notif, false, 3500);
+                        }
+                    }
+
+                    ImGui::SameLine(0.f, 0.f);
                     if (MenuUi::GhostIconButton(
                             "remove_friend",
                             ICON_FA_XMARK,
-                            ImVec2(removeW, rowH),
+                            ImVec2(btnW, rowH),
                             true) &&
                         motion &&
                         motion->leaving <= 0.f)
                     {
                         motion->leaving = 0.001f;
                     }
+                    ImGui::EndChild();
                     ImGui::PopStyleVar();
                     ImGui::PopID();
 
@@ -630,8 +827,8 @@ namespace Menu
 
                 ImGui::PushID(i);
                 const float rowH = 40.f * scale;
+                const float availW = ImMax(100.f * scale, ImGui::GetContentRegionAvail().x);
                 const float colorPickerW = 120.f * scale;
-                const float labelW = ImMax(100.f * scale, ImGui::GetContentRegionAvail().x - colorPickerW - 8.f * scale);
 
                 MenuUi::ListRowDesc row{};
                 row.title = labelName;
@@ -640,15 +837,15 @@ namespace Menu
                 row.height = rowH;
 
                 ImGui::BeginChild(
-                    "##faction_row_title",
-                    ImVec2(labelW, rowH),
+                    "##faction_row_bg",
+                    ImVec2(availW, rowH),
                     ImGuiChildFlags_None,
                     ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse);
+                
+                ImGui::SetNextItemAllowOverlap();
                 MenuUi::DrawListRow("faction_row", row);
-                ImGui::EndChild();
 
-                ImGui::SameLine(0.f, 8.f * scale);
-                ImGui::SetCursorPosY(ImGui::GetCursorPosY() + 4.f * scale);
+                ImGui::SetCursorPos(ImVec2(availW - colorPickerW, 2.f * scale));
 
                 char colorId[48]{};
                 _snprintf(colorId, sizeof(colorId) - 1, "##f_clr_%d", i);
@@ -657,6 +854,7 @@ namespace Menu
                     entry->custom = true;
                 }
 
+                ImGui::EndChild();
                 ImGui::PopID();
                 ImGui::Dummy(ImVec2(0.f, 3.f * scale));
                 ++drawnCount;
@@ -733,6 +931,10 @@ namespace Menu
                 T("Show all (Bypass filter)", "Показывать всё (в обход фильтра)", "Показувати все (в обхід фільтра)"),
                 &visual.showAll);
 
+            gui->checkbox(
+                T("Custom Colors", "Свои цвета", "Свої кольори"),
+                &visual.useCustomColors);
+
 
             gui->slider_float_icon(
                 ICON_FA_RULER,
@@ -748,6 +950,7 @@ namespace Menu
             ImGui::SameLine(0.f, layout.gap);
 
         std::uint32_t* models = s_ObjListChoice == 0 ? visual.includeModels : visual.excludeModels;
+        float (*colors)[4] = s_ObjListChoice == 0 ? visual.includeModelColors : visual.excludeModelColors;
         int& modelCount = s_ObjListChoice == 0 ? visual.includeModelCount : visual.excludeModelCount;
 
         char objectListSubtitle[96]{};
@@ -799,10 +1002,29 @@ namespace Menu
                     char name[32]{};
                     lstrcpynA(name, ModelLabelFor(hash), sizeof(name));
 
-                    const float removeW = 34.f * scale;
+                    const float availW = ImMax(100.f * scale, ImGui::GetContentRegionAvail().x);
+                    const float rowH = 42.f * scale;
+                    const float removeW = 38.f * scale;
                     const float hashW = 96.f * scale;
-                    const float nameW = ImMax(90.f * scale, ImGui::GetContentRegionAvail().x - hashW - removeW - 14.f * scale);
 
+                    MenuUi::ListRowDesc row{};
+                    row.height = 42.f;
+
+                    ImGui::BeginChild(
+                        "##obj_row",
+                        ImVec2(availW, rowH),
+                        ImGuiChildFlags_None,
+                        ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse);
+
+                    ImGui::SetNextItemAllowOverlap();
+                    MenuUi::DrawListRow("obj_row_bg", row);
+
+                    const float colorPickerW = visual.useCustomColors ? 120.f * scale : 0.f;
+                    const float nameW = ImMax(60.f * scale, availW - hashW - removeW - colorPickerW - 32.f * scale);
+                    const float yOffset = (rowH - 32.f * scale) * 0.5f;
+
+                    ImGui::SetCursorPos(ImVec2(8.f * scale, yOffset));
+                    ImGui::PushStyleColor(ImGuiCol_FrameBg, gui->get_clr(clr->element_background, 0.75f));
                     if (gui->text_field(
                             "##obj_name",
                             T("Name", "Название", "Назва"),
@@ -812,9 +1034,10 @@ namespace Menu
                     {
                         SetModelLabel(hash, name);
                     }
+                    ImGui::PopStyleColor();
 
-                    ImGui::SameLine(0.f, 7.f * scale);
-
+                    const float hashStartX = 8.f * scale + nameW + 8.f * scale;
+                    ImGui::SetCursorPos(ImVec2(hashStartX, yOffset));
                     char hashStr[20]{};
                     _snprintf(hashStr, sizeof(hashStr) - 1, "0x%08X", static_cast<unsigned>(hash));
                     const ImVec2 hashPos = ImGui::GetCursorScreenPos();
@@ -830,18 +1053,37 @@ namespace Menu
                         gui->get_clr(clr->text),
                         hashStr);
 
-                    ImGui::SameLine(0.f, 7.f * scale);
+                    if (visual.useCustomColors) {
+                        const float colorStartX = hashStartX + hashW + 8.f * scale;
+                        ImGui::SetCursorPos(ImVec2(colorStartX, 2.f * scale));
+                        ImGui::BeginChild("##obj_color_picker_container", ImVec2(colorPickerW, 38.f * scale), ImGuiChildFlags_None, ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse | ImGuiWindowFlags_NoBackground);
+                        
+                        char colorId[48]{};
+                        _snprintf(colorId, sizeof(colorId) - 1, "##obj_clr_%d", i);
+                        
+                        gui->color_edit(colorId, colors[i]);
+                        
+                        ImGui::EndChild();
+                    }
+
+                    ImGui::SetCursorPos(ImVec2(availW - removeW - 4.f * scale, 0.f));
                     bool removed = false;
-                    if (MenuUi::GhostIconButton("remove_obj", ICON_FA_TRASH, ImVec2(removeW, 32.f * scale), false))
+                    if (MenuUi::GhostIconButton("remove_obj", ICON_FA_TRASH, ImVec2(removeW, rowH), false))
                     {
                         for (int m = i; m + 1 < modelCount; ++m)
+                        {
                             models[m] = models[m + 1];
+                            for (int c = 0; c < 4; ++c)
+                                colors[m][c] = colors[m + 1][c];
+                        }
                         models[--modelCount] = 0;
                         removed = true;
                     }
 
-                    ImGui::PopID();
+                    ImGui::EndChild();
                     ImGui::Dummy(ImVec2(0.f, 3.f * scale));
+
+                    ImGui::PopID();
 
                     if (!removed)
                         ++i;
@@ -893,7 +1135,12 @@ namespace Menu
                     }
                     if (!duplicate)
                     {
-                        models[modelCount++] = parsed;
+                        models[modelCount] = parsed;
+                        colors[modelCount][0] = 235.f / 255.f; // #EB
+                        colors[modelCount][1] = 235.f / 255.f; // #EB
+                        colors[modelCount][2] = 245.f / 255.f; // #F5
+                        colors[modelCount][3] = 1.0f;          // #FF
+                        modelCount++;
                         if (s_ObjNameInput[0])
                             SetModelLabel(parsed, s_ObjNameInput);
                         s_ObjHashInput[0] = '\0';

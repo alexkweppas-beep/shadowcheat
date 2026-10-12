@@ -10,8 +10,6 @@
 #include "ServerProfile.h"
 #include "AntiCheatShield.h"
 #include "VehicleMovement.h"
-#include "protected_script_blobs.hpp"
-#include "../Security/secure_script_blob.hpp"
 #include "../vmp_markers.hpp"
 #include "../Menu/Menu.h"
 #include "../SDK/Game.h"
@@ -41,7 +39,7 @@ namespace
     // all GTA5.exe float writers that were added for combat/FOV until a
     // verified pre-render path exists. Config/UI may still toggle flags.
     constexpr bool kAllowWeaponMemoryWrites = true;
-    constexpr bool kAllowCameraMemoryWrites = false;
+    constexpr bool kAllowCameraMemoryWrites = true;
 
     Settings g_Settings{};
     Settings g_LastSynced{};
@@ -250,6 +248,9 @@ namespace
         WeaponField reloadTimeSp{};
         WeaponField vehicleReloadTime{};
         WeaponField animReloadRate{};
+        WeaponField force{};
+        WeaponField forceHitPed{};
+        WeaponField forceHitVehicle{};
         bool valid{};
     };
 
@@ -404,6 +405,18 @@ namespace
             info,
             Offsets::WeaponInfo::AnimReloadRate,
             g_WeaponBackup.animReloadRate);
+        RestoreWeaponField(
+            info,
+            Offsets::WeaponInfo::Force,
+            g_WeaponBackup.force);
+        RestoreWeaponField(
+            info,
+            Offsets::WeaponInfo::ForceHitPed,
+            g_WeaponBackup.forceHitPed);
+        RestoreWeaponField(
+            info,
+            Offsets::WeaponInfo::ForceHitVehicle,
+            g_WeaponBackup.forceHitVehicle);
         g_WeaponBackup = {};
     }
 
@@ -447,6 +460,20 @@ namespace
             field.applied = true;
     }
 
+    void OverrideWeaponField(
+        uint8_t* info,
+        uint32_t offset,
+        WeaponField& field,
+        float lo,
+        float hi,
+        float newValue) noexcept
+    {
+        if (!EnsureWeaponField(info, offset, field, lo, hi))
+            return;
+        if (WriteWeaponFloat(info, offset, newValue))
+            field.applied = true;
+    }
+
     float Clamp01(float v) noexcept
     {
         if (v < 0.f)
@@ -468,6 +495,7 @@ namespace
         float noSpreadPct = g_Settings.noSpreadPct;
         float noRecoilPct = g_Settings.noRecoilPct;
         float reloadSpeedPct = g_Settings.reloadSpeedPct;
+        bool heavyFist = g_Settings.heavyFist;
 
         const std::uint32_t hash = Game::GetLocalWeaponHash();
         if (const Menu::WeaponOverrideSlot* ov = Menu::FindWeaponOverride(hash);
@@ -490,7 +518,8 @@ namespace
             }
         }
 
-        const bool any = noSpread || noRecoil || reloadSpeed;
+        const bool isUnarmed = hash == 0xA2719263; // WEAPON_UNARMED
+        const bool any = noSpread || noRecoil || reloadSpeed || (heavyFist && isUnarmed);
         if (!any) {
             RestoreWeaponInfo();
             return;
@@ -620,6 +649,26 @@ namespace
                 Offsets::WeaponInfo::AnimReloadRate,
                 g_WeaponBackup.animReloadRate,
                 0.05f, 10.f, 1.f + reloadT * 3.f);
+        }
+
+        if (heavyFist && isUnarmed)
+        {
+            // Set massive force for unarmed attacks.
+            OverrideWeaponField(
+                info,
+                Offsets::WeaponInfo::Force,
+                g_WeaponBackup.force,
+                -99999.f, 99999.f, 99999.f);
+            OverrideWeaponField(
+                info,
+                Offsets::WeaponInfo::ForceHitPed,
+                g_WeaponBackup.forceHitPed,
+                -99999.f, 99999.f, 99999.f);
+            OverrideWeaponField(
+                info,
+                Offsets::WeaponInfo::ForceHitVehicle,
+                g_WeaponBackup.forceHitVehicle,
+                -99999.f, 99999.f, 99999.f);
         }
     }
 
@@ -754,6 +803,13 @@ namespace
             mul = 1.f;
         if (mul > 10.f)
             mul = 10.f;
+        // Avoid exact integer multipliers — the engine freezes motion when
+        // the value is a whole number. Nudge +0.05 away from the ceiling.
+        {
+            const float floored = std::floor(mul);
+            if (mul == floored)
+                mul = (mul >= 10.f) ? mul - 0.05f : mul + 0.05f;
+        }
 
         __try {
             *reinterpret_cast<Vector3*>(
@@ -1743,7 +1799,6 @@ mp.events.add('render',g.__bfMvFn);
     {
         if (g_CwJsHooked)
             return true;
-#if 0
         static constexpr char kHook[] = R"JS((function(){try{
 var g=typeof globalThis!=='undefined'?globalThis:this;
 g.__bfCw=g.__bfCw||{on:false,paused:false,key:2};
@@ -2050,16 +2105,11 @@ here as well would give two independent triggers for one press. */
 };
 mp.events.add('render',g.__bfCwFn);
 }catch(e){}})();)JS";
-#endif
         bool queued = false;
-        SecureScriptBlob::Plaintext source;
         SHADOW_PROTECT_ULTRA("Misc.ClickWarp");
-        if (SecureScriptBlob::Decrypt(
-                ProtectedScriptBlobs::kClickWarp,
-                source)) {
-            queued = EnqueueClickWarpScript(source.Data());
-        }
-        source.Clear();
+        const char* protectedHook = SHADOW_DECRYPT_STRING_A(kHook);
+        queued = protectedHook && EnqueueClickWarpScript(protectedHook);
+        SHADOW_FREE_STRING(protectedHook);
         SHADOW_PROTECT_END();
         if (!queued)
             return false;
@@ -2450,6 +2500,7 @@ enough to touch us is worth a call, which keeps the cost independent of how
 many objects the map has streamed in. In a vehicle it is the vehicle that must
 pass through, not the ped sitting inside it. */
 if(s.ncPed||s.ncVeh||s.ncObj){
+
 var me=v||p,mh=vh||h,ncPos=null;
 try{ncPos=me.position;}catch(e){ncPos=null;}
 var ncCand=0,ncHit=0,ncErr=0,ncNear=-1,ncMsg='';
@@ -2498,15 +2549,15 @@ ncOff(mp.peds,s.ncPed);
 ncOff(mp.vehicles,s.ncVeh);
 ncOff(mp.objects,s.ncObj);
 }
+
+
 if(s.dbg)s.ncdbg=(ncPos?'':'nopos ')+'cand'+ncCand+
 ' hit'+ncHit+' err'+ncErr+
 ' near'+(ncNear<0?-1:Math.round(Math.sqrt(ncNear)))+
 ' f'+(s.ncPed?1:0)+(s.ncVeh?1:0)+(s.ncObj?1:0)+
 (ncMsg?' e:'+ncMsg:'');
 }
-else if(s.dbg)s.ncdbg='off';
-
-)JS" R"JS(
+else if(s.dbg)s.ncdbg='off';)JS" R"JS(
 /* ---- respawn on the spot ----
 Two things have to be waited out. The server refuses to finish the death while
 its own bleed-out timer runs, so the event is repeated rather than sent once;
@@ -2588,7 +2639,7 @@ g.__bfRsFreeze(true);
 covers because heading is not a coordinate. */
 try{p.heading=rs.hd;}catch(e){}
 }
-if(rs.up&&nowRs-rs.up>6000){g.__bfRsFreeze(false);g.__bfRs=null;}
+if(rs.up&&nowRs-rs.up>1500){g.__bfRsFreeze(false);g.__bfRs=null;}
 }
 if(g.__bfRs&&nowRs>rs.until){
 if(g.__bfRsFreeze)g.__bfRsFreeze(false);
@@ -2602,6 +2653,9 @@ g.__bfRsDbg='dead='+(dd?1:0)+' seen='+(rs.seen?1:0)+
 /* ---- on-foot speed ---- */
 if(s.speed&&!inVeh){
 var mul=cl(s.speedMul,1,10);
+/* Avoid whole-number multiples — the engine freezes the ped when the
+   multiplier is an exact integer. Nudge by +0.05 (or -0.05 at the cap). */
+if(mul===Math.floor(mul)){mul=mul>=10?mul-0.05:mul+0.05;}
 /* The sprint multiplier saturates around 1.49; the move-rate override is
 what actually carries values past that. */
 try{mp.game.player.setRunSprintMultiplierFor(mul>1.49?1.49:mul);}catch(e){}
@@ -2639,6 +2693,14 @@ if(mp.game.gameplay&&typeof mp.game.gameplay.setSuperJumpThisFrame==='function')
 mp.game.gameplay.setSuperJumpThisFrame(pid);jok=true;}
 }catch(e){}
 if(!jok)inv('0x57FFF03E423A4C0B',pid);
+}
+}
+if(s.fist){
+var pid=-1;try{pid=mp.game.player.playerId();}catch(e){pid=-1;}
+if(pid>=0){
+var fok=false;
+try{if(mp.game.gameplay&&typeof mp.game.gameplay.setExplosiveMeleeThisFrame==='function'){mp.game.gameplay.setExplosiveMeleeThisFrame(pid);fok=true;}}catch(e){}
+if(!fok)inv('0xFF1BED81BFDC0FE0',pid);
 }
 }
 if(s.stamina){try{mp.game.player.restoreStamina(1);}catch(e){}}
@@ -2681,6 +2743,19 @@ try{g.__bfAfkPoke();}catch(e){}
 try{if(typeof g.antiAFK_sendAFK==='function')g.antiAFK_sendAFK=function(){};}catch(e){}
 }
 }else{s._afkAt=0;}
+
+/* ---- no ragdoll ---- */
+if(s.noragdoll){
+var ro=false;try{if(mp.game.ped&&typeof mp.game.ped.setPedCanRagdoll==='function'){
+mp.game.ped.setPedCanRagdoll(h,false);ro=true;}}catch(e){}
+if(!ro)inv('0xB128377056A54E2A',h,false);
+s._ragdoll=true;
+}else if(s._ragdoll){
+s._ragdoll=false;
+try{if(mp.game.ped&&typeof mp.game.ped.setPedCanRagdoll==='function')
+mp.game.ped.setPedCanRagdoll(h,true);}catch(e){}
+inv('0xB128377056A54E2A',h,true);
+}
 
 )JS" R"JS(
 /* ---- waypoint teleport: multi-frame, on the script thread ---- */
@@ -2842,6 +2917,9 @@ if(!cok)inv('0xAAA34F8A7CB32098',h);
 if(vh&&driver){
 if(s.vSpeed){
 var vm=cl(s.vSpeedMul,1,10);
+/* Avoid whole-number multiples — engine freezes the vehicle when the
+   multiplier is an exact integer. Nudge by +0.05 (or -0.05 at the cap). */
+if(vm===Math.floor(vm)){vm=vm>=10?vm-0.05:vm+0.05;}
 var vhow='invoke';
 try{
 if(mp.game.vehicle&&typeof mp.game.vehicle.modifyVehicleTopSpeed==='function'){
@@ -2935,8 +3013,8 @@ allowed to finish accelerating. */
 var aspd=0;
 try{var asv=inv('0xD5037BA82E12416F',vh);
 if(typeof asv==='number'&&isFinite(asv))aspd=asv;}catch(e){}
-if(aspd>1.5)s._apMove=anow;
-var astuck=(anow-(s._apMove||anow))>3000;
+if(aspd>0.3)s._apMove=anow;
+var astuck=(anow-(s._apMove||anow))>7000;
 if(amoved||!s._ap||astuck){
 s._apx=ax;s._apy=ay;s._apMove=anow;
 inv('0x158BB33F920D360C',h,vh,ax,ay,az,60.0,
@@ -2946,8 +3024,6 @@ if(s.dbg)g.__bfPl.apdbg+=' z='+az.toFixed(0)+'/'+azsrc+' sent';
 }else if(s.dbg){
 g.__bfPl.apdbg+=' running v='+aspd.toFixed(1);
 }
-/* Re-asserted every cycle: the task otherwise settles back to a cruise speed
-of its own and the requested one is forgotten. */
 inv('0x5C9B84BD7D31D908',h,60.0);
 }
 }
@@ -3023,7 +3099,7 @@ mp.events.add('render',g.__bfPlFn);
             g_AntiAfkNextPokeAt = 22000 +
                 static_cast<ULONGLONG>(rand() % 13000);
 
-        char state[640]{};
+        char state[700]{};
         sprintf_s(
             state,
             "try{var g=typeof globalThis!=='undefined'?globalThis:this;"
@@ -3034,7 +3110,7 @@ mp.events.add('render',g.__bfPlFn);
             "s.ncPed=%s;s.ncVeh=%s;s.ncObj=%s;"
             "s.vSeatbelt=%s;s.vSkipAnim=%s;s.vSpeed=%s;s.vSpeedMul=%.2f;"
             "s.vGrav=%s;s.vGravMul=%.2f;"
-            "s.vAuto=%s;s.dbg=%s;}catch(e){}",
+            "s.vAuto=%s;s.dbg=%s;s.fist=%s;s.noragdoll=%s;}catch(e){}",
             g_Settings.speedhack ? "true" : "false",
             g_Settings.speedhackValue,
             g_Settings.superJump ? "true" : "false",
@@ -3060,10 +3136,12 @@ mp.events.add('render',g.__bfPlFn);
             // Off in a shipping build, so the bookkeeping strings below are not
             // assembled at all rather than merely not printed.
 #if defined(RAGEMP_DIAGNOSTICS)
-            "true"
+            "true",
 #else
-            "false"
+            "false",
 #endif
+            g_Settings.heavyFist ? "true" : "false",
+            g_Settings.noRagdoll ? "true" : "false"
         );
 
         if (g_PlJsPushed &&
@@ -3561,6 +3639,71 @@ mp.events.add('render',g.__bfPlFn);
             draw->AddCircleFilled(point, 2.f, kNode, 8);
     }
 
+    // The friend add reach, drawn as a ring on the ground around the player.
+    // Same projection technique as the auto-loot ring so it sits on the street.
+    static MiscFeatures::FriendRadiusState g_FriendRadiusState{};
+
+    void RenderFriendAddRadius() noexcept
+    {
+        if (!g_FriendRadiusState.showRadius)
+            return;
+        CPed* ped = Game::GetLocalPed();
+        if (!ped)
+            return;
+        Vector3 centre{};
+        __try {
+            centre = ped->GetPosition();
+        } __except (EXCEPTION_EXECUTE_HANDLER) {
+            return;
+        }
+        if (!std::isfinite(centre.x) ||
+            !std::isfinite(centre.y) ||
+            !std::isfinite(centre.z))
+            return;
+
+        ImDrawList* draw = Overlay::GetDrawList();
+        if (!draw)
+            return;
+
+        float radius = g_FriendRadiusState.radius;
+        if (radius < 1.f) radius = 1.f;
+        const float ringZ = centre.z - 0.85f;
+
+        const float* c = g_FriendRadiusState.color;
+        const ImU32 col = IM_COL32(
+            static_cast<int>(c[0] * 255.f),
+            static_cast<int>(c[1] * 255.f),
+            static_cast<int>(c[2] * 255.f),
+            static_cast<int>(c[3] * 200.f));
+
+        constexpr int kSegments = 72;
+        ImVec2 points[kSegments]{};
+        bool   valid[kSegments]{};
+        for (int index = 0; index < kSegments; ++index)
+        {
+            const float angle =
+                6.28318530718f *
+                (static_cast<float>(index) /
+                 static_cast<float>(kSegments));
+            const Vector3 world{
+                centre.x + std::cos(angle) * radius,
+                centre.y + std::sin(angle) * radius,
+                ringZ};
+            const auto screen = Game::WorldToScreen(world);
+            if (!screen)
+                continue;
+            points[index] = ImVec2(screen->x, screen->y);
+            valid[index]  = true;
+        }
+        for (int index = 0; index < kSegments; ++index)
+        {
+            const int next = (index + 1) % kSegments;
+            if (!valid[index] || !valid[next])
+                continue;
+            draw->AddLine(points[index], points[next], col, 1.8f);
+        }
+    }
+
     // The auto loot reach, as a ring on the ground around the player.
     //
     // Projected point by point rather than drawn as a screen circle, so it sits
@@ -3686,52 +3829,89 @@ mp.events.add('render',g.__bfPlFn);
     {
         if (!g_Settings.clickWarp || !g_CwHaveHint)
             return;
-        // Placed on this frame's ray at the probed depth, not at the point the
-        // probe returned. The probe is a V8 round trip behind, so pinning the
-        // returned point made the marker trail the crosshair while turning;
-        // only the depth actually needs the probe, and depth changes slowly.
+
         Vector3 cam{};
         Vector3 look{};
         if (!ReadViewportLook(cam, look))
             return;
-        const auto screen = Game::WorldToScreen(
-            cam + look * g_CwHintDist);
-        if (!screen)
-            return;
+
         ImDrawList* draw = Overlay::GetDrawList();
         if (!draw)
             return;
 
-        const ImVec2 p(screen->x, screen->y);
         const float time =
             static_cast<float>(GetTickCount64() % 6283) * 0.001f;
 
-        constexpr ImU32 kEdge = IM_COL32(120, 205, 255, 235);
-        constexpr ImU32 kCore = IM_COL32(226, 246, 255, 245);
-        constexpr ImU32 kGlow = IM_COL32(80, 170, 255, 60);
+        // Resolve ground hit centre
+        Vector3 target{};
+        if (g_CwHintX != 0.f || g_CwHintY != 0.f)
+            target = Vector3(g_CwHintX, g_CwHintY, g_CwHintZ);
+        else
+            target = cam + look * g_CwHintDist;
 
-        draw->AddCircleFilled(p, 14.f, kGlow, 24);
-        // Three arcs on a slow spin. Continuous motion reads as a live target;
-        // a static ring next to a moving world is what looks broken.
-        for (int arc = 0; arc < 3; ++arc)
+        // Smooth the position to hide the 16fps IPC update rate
+        static Vector3 s_smooth{};
+        if (s_smooth.x == 0.f && s_smooth.y == 0.f)
+            s_smooth = target;
+        else
         {
-            const float from =
-                time * 1.6f + static_cast<float>(arc) * 2.0944f;
-            draw->PathArcTo(p, 10.5f, from, from + 1.15f, 12);
-            draw->PathStroke(kEdge, 0, 2.2f);
+            Vector3 diff = target - s_smooth;
+            if (std::sqrt(diff.x*diff.x + diff.y*diff.y + diff.z*diff.z) > 4.f)
+                s_smooth = target; // Snap if moved far
+            else
+                s_smooth = s_smooth + diff * 0.35f; // Interpolate
         }
-        draw->AddCircleFilled(p, 3.2f, kCore, 12);
 
-        const float bob = std::sin(time * 2.4f) * 2.f;
-        const ImVec2 tip(p.x, p.y - 20.f + bob);
-        draw->AddTriangleFilled(
-            ImVec2(tip.x, tip.y + 7.f),
-            ImVec2(tip.x - 6.f, tip.y - 4.f),
-            ImVec2(tip.x + 6.f, tip.y - 4.f),
-            kEdge);
+        Vector3 centre = s_smooth;
+
+        // Subtle pulse on alpha only, 0.65..1.0
+        const float pulse = 0.65f + 0.35f * std::sin(time * 2.2f);
+        const ImU32 col = IM_COL32(220, 220, 220, static_cast<int>(220.f * pulse));
+        constexpr float kThick = 1.35f;
+
+        // ── Wireframe box (noctua draw_overlay_box style) ────────────────────
+        // Person-sized box centred at the hit point.
+        constexpr float kHX =  0.35f;
+        constexpr float kHY =  0.35f;
+        constexpr float kZ0 =  0.00f;
+        constexpr float kZ1 =  1.80f;
+
+        const Vector3 corners[8] = {
+            { centre.x - kHX, centre.y - kHY, centre.z + kZ0 },
+            { centre.x + kHX, centre.y - kHY, centre.z + kZ0 },
+            { centre.x + kHX, centre.y + kHY, centre.z + kZ0 },
+            { centre.x - kHX, centre.y + kHY, centre.z + kZ0 },
+            { centre.x - kHX, centre.y - kHY, centre.z + kZ1 },
+            { centre.x + kHX, centre.y - kHY, centre.z + kZ1 },
+            { centre.x + kHX, centre.y + kHY, centre.z + kZ1 },
+            { centre.x - kHX, centre.y + kHY, centre.z + kZ1 },
+        };
+
+        ImVec2 sc[8];
+        bool   ok[8]{};
+        for (int i = 0; i < 8; ++i)
+        {
+            const auto s = Game::WorldToScreen(corners[i]);
+            if (!s) continue;
+            sc[i] = ImVec2(s->x, s->y);
+            ok[i] = true;
+        }
+
+        constexpr int edges[12][2] = {
+            {0,1},{1,2},{2,3},{3,0},
+            {4,5},{5,6},{6,7},{7,4},
+            {0,4},{1,5},{2,6},{3,7},
+        };
+        for (const auto& e : edges)
+        {
+            if (!ok[e[0]] || !ok[e[1]]) continue;
+            draw->AddLine(sc[e[0]], sc[e[1]], col, kThick);
+        }
 
         RenderClickWarpVehicleBox(draw);
     }
+
+
 
     void ApplyClickWarp() noexcept
     {
@@ -3878,6 +4058,35 @@ mp.events.add('render',g.__bfPlFn);
             }
         }
 
+        static bool s_RagdollDisabled = false;
+        if (g_Settings.noRagdoll)
+        {
+            NativeInvoke::Invoke<void>(0xB128377056A54E2Aull, ped, false);
+            s_RagdollDisabled = true;
+        }
+        else if (s_RagdollDisabled)
+        {
+            NativeInvoke::Invoke<void>(0xB128377056A54E2Aull, ped, true);
+            s_RagdollDisabled = false;
+        }
+
+        static bool s_GodModeEnabled = false;
+        if (g_Settings.godMode)
+        {
+            NativeInvoke::Invoke<void>(0x239528EACDC3E7DEull, player, true); // SET_PLAYER_INVINCIBLE
+            NativeInvoke::Invoke<void>(0x3882114BDE571AD4ull, ped, true); // SET_ENTITY_INVINCIBLE
+            // SET_ENTITY_PROOFS(ped, bullet, fire, explosion, collision, melee, steam, p7, drown)
+            NativeInvoke::Invoke<void>(0xFAEE099C6F890BB8ull, ped, true, true, true, true, true, true, 1, true);
+            s_GodModeEnabled = true;
+        }
+        else if (s_GodModeEnabled)
+        {
+            NativeInvoke::Invoke<void>(0x239528EACDC3E7DEull, player, false);
+            NativeInvoke::Invoke<void>(0x3882114BDE571AD4ull, ped, false);
+            NativeInvoke::Invoke<void>(0xFAEE099C6F890BB8ull, ped, false, false, false, false, false, false, 0, false);
+            s_GodModeEnabled = false;
+        }
+
         // Stamina, super jump and the ammo natives are this-frame calls that
         // only land on the script thread; the V8 hook owns them. What is left
         // here is a fallback for a session where V8 never came up.
@@ -3890,6 +4099,58 @@ mp.events.add('render',g.__bfPlFn);
                 NativeInvoke::RestorePlayerStamina(player, 1.f);
             if (g_Settings.superJump)
                 NativeInvoke::SetSuperJumpThisFrame(player);
+            if (g_Settings.heavyFist)
+            {
+                NativeInvoke::SetExplosiveMeleeThisFrame(player);
+                if (NativeInvoke::GetControlNormal(0, 24) > 0.5f || NativeInvoke::GetControlNormal(0, 142) > 0.5f)
+                {
+                    static ULONGLONG s_LastPunch = 0;
+                    if (GetTickCount64() - s_LastPunch > 500)
+                    {
+                        if (NativeInvoke::GetSelectedPedWeapon(ped) == 0xA2719263)
+                        {
+                            s_LastPunch = GetTickCount64();
+                            float px = 0.f, py = 0.f, pz = 0.f;
+                            if (NativeInvoke::GetEntityCoords(ped, px, py, pz))
+                            {
+                                float heading = NativeInvoke::GetEntityHeading(ped);
+                                float radH = heading * 3.14159265f / 180.f;
+                                float dx = -std::sin(radH);
+                                float dy = std::cos(radH);
+                                
+                                float endX = px + dx * 4.0f;
+                                float endY = py + dy * 4.0f;
+                                float endZ = pz;
+                                
+                                int ray = NativeInvoke::StartExpensiveSynchronousShapeTestLosProbe(
+                                    px, py, pz + 0.5f,
+                                    endX, endY, endZ + 0.5f,
+                                    30, // Vehicles(2) | Peds(4) | Objects(8) | Water(16)
+                                    ped,
+                                    7
+                                );
+                                NativeInvoke::ShapeTestResult result;
+                                if (NativeInvoke::GetShapeTestResult(ray, result) && result.hit && result.entity)
+                                {
+                                    // Ensure network ownership if it's a networked entity
+                                    // RAGE handles this mostly, but ApplyForce works immediately on local physics.
+                                    float mass = 1000.f; // Base mass approximation
+                                    float fx = dx * mass * 50.f;
+                                    float fy = dy * mass * 50.f;
+                                    float fz = mass * 20.f;
+                                    NativeInvoke::ApplyForceToEntity(
+                                        result.entity,
+                                        1,
+                                        fx, fy, fz,
+                                        0.f, 0.f, 0.f,
+                                        0, false, true, false, false, true
+                                    );
+                                }
+                            }
+                        }
+                    }
+                }
+            }
 
             if (ped && NativeInvoke::DoesEntityExist(ped))
             {
@@ -4594,6 +4855,7 @@ try{mp.game.invoke('0x0AE73D8DF3A762B2',false);}catch(e){}
     FovBackupEntry g_FovBackups[kMaxFovBackups]{};
     int g_FovBackupCount = 0;
     bool g_FovApplied = false;
+    bool g_AspectApplied = false;
 
     // Common gameplay-director cam slots (third-person / vehicle follow).
     static constexpr uint32_t kFollowCamSlots[] = {
@@ -4789,7 +5051,15 @@ try{mp.game.invoke('0x0AE73D8DF3A762B2',false);}catch(e){}
     // Aspect memory writes were crashing the renderer on inject when the
     // saved config re-enabled them. Keep the UI, but do not touch GPU/camera
     // memory for aspect until a safe pre-render hook exists.
-    void ApplyAspectRatioOnly(float /*aspect*/) noexcept {}
+    void ApplyAspectRatioOnly(float aspect) noexcept
+    {
+        if (!Offsets::AspectRatioAddr)
+            return;
+        __try {
+            *Offsets::AspectRatioAddr = aspect;
+        } __except (EXCEPTION_EXECUTE_HANDLER) {
+        }
+    }
 
     int g_CameraWarmupFrames = 0;
 
@@ -4810,24 +5080,38 @@ try{mp.game.invoke('0x0AE73D8DF3A762B2',false);}catch(e){}
 
     void ApplyCameraTweaks() noexcept
     {
-        // Always keep aspect inert; FOV writes are quarantined after the
-        // recurring Render-thread INVALID_POINTER_READ crashes.
-        g_Settings.aspectEnabled = false;
-
         if (!kAllowCameraMemoryWrites) {
             if (g_FovApplied)
                 RestoreFovBackups();
-            if (g_Settings.cameraFovEnabled) {
-                static bool logged = false;
-                if (!logged) {
-                    logged = true;
-                    hooks::HLog(
-                        "[Misc] FOV memory writer quarantined "
-                        "(renderer AV GTA5+0x79eef6 / +0x13dd6d6)");
-                }
-                g_Settings.cameraFovEnabled = false;
+            if (g_AspectApplied) {
+                if (Offsets::AspectRatioDefault > 0.1f)
+                    ApplyAspectRatioOnly(Offsets::AspectRatioDefault);
+                g_AspectApplied = false;
             }
             return;
+        }
+
+        if (g_Settings.aspectEnabled) {
+            float current = 0.f;
+            if (Offsets::AspectRatioAddr) {
+                __try {
+                    current = *Offsets::AspectRatioAddr;
+                } __except (EXCEPTION_EXECUTE_HANDLER) {}
+            }
+            if (!g_AspectApplied) {
+                if (current > 0.1f)
+                    Offsets::AspectRatioDefault = current;
+                g_AspectApplied = true;
+            }
+            if (std::fabs(current - g_Settings.aspectRatio) > 0.001f) {
+                ApplyAspectRatioOnly(g_Settings.aspectRatio);
+            }
+        } else {
+            if (g_AspectApplied) {
+                if (Offsets::AspectRatioDefault > 0.1f)
+                    ApplyAspectRatioOnly(Offsets::AspectRatioDefault);
+                g_AspectApplied = false;
+            }
         }
 
         const bool fovOn = g_Settings.cameraFovEnabled;
@@ -4860,6 +5144,11 @@ try{mp.game.invoke('0x0AE73D8DF3A762B2',false);}catch(e){}
             g_LastSynced.godMode,
             "misc_god:on",
             "misc_god:off");
+        SyncBoolCmd(
+            g_Settings.noRagdoll,
+            g_LastSynced.noRagdoll,
+            "misc_noragdoll:on",
+            "misc_noragdoll:off");
         // Combat (no spread / recoil / reload) is CWeaponInfo only — no JS.
         // Noclip / freecam and the collision switches run on our V8 render
         // hook. Do not Quant-sync them.
@@ -4894,12 +5183,12 @@ try{mp.game.invoke('0x0AE73D8DF3A762B2',false);}catch(e){}
                 "var h=p.handle;"
                 "try{if(mp.game.ped&&mp.game.ped.applyDamageTo)"
                 "mp.game.ped.applyDamageTo(h,10000,true);}catch(e){}"
-                "try{p.setHealth(0);}catch(e){"
-                "try{mp.game.entity.setEntityHealth(h,0);}catch(e2){}"
-                "}"
+                "//try{p.setHealth(0);}catch(e){"
+                "//try{mp.game.entity.setEntityHealth(h,0);}catch(e2){}"
+                "//}"
                 "}"
                 "}catch(e){}";
-            EnqueuePlayerScript(kSuicideJs);
+            //EnqueuePlayerScript(kSuicideJs);
             WriteLocalHealth(0.f);
         }
         // Reset animations is V8 clearTasksImmediately in ApplyPlayerNatives.
@@ -5182,12 +5471,73 @@ void Shutdown() noexcept
     VehicleMovement::Shutdown();
 }
 
+static void ApplyObjectCollisionOverride() noexcept
+{
+    CPed* ped = Game::GetLocalPed();
+    if (!ped || !IsValidPtr(ped)) return;
+
+    uintptr_t targetPtr = (uintptr_t)ped;
+    auto vehState = VehicleMovement::GetLocalVehicleState();
+    if (vehState.valid && vehState.inVehicle) {
+        uintptr_t vehPtr = 0;
+        __try {
+            vehPtr = *(uintptr_t*)((uintptr_t)ped + 0x0D28);
+            if (!IsValidPtr((void*)vehPtr)) {
+                vehPtr = *(uintptr_t*)((uintptr_t)ped + 0x0D30); // Try alternate offset
+            }
+        } __except (EXCEPTION_EXECUTE_HANDLER) {}
+        
+        if (IsValidPtr((void*)vehPtr)) {
+            targetPtr = vehPtr;
+        }
+    }
+
+    __try {
+        uintptr_t value = *(uintptr_t*)(targetPtr + 0x30);
+        if (!IsValidPtr((void*)value)) return;
+        uintptr_t value1 = *(uintptr_t*)(value + 0x10);
+        if (!IsValidPtr((void*)value1)) return;
+        uintptr_t value2 = *(uintptr_t*)(value1 + 0x20);
+        if (!IsValidPtr((void*)value2)) return;
+        uintptr_t value3 = *(uintptr_t*)(value2 + 0x70);
+        if (!IsValidPtr((void*)value3)) return;
+        uintptr_t value4 = *(uintptr_t*)(value3 + 0x0);
+        if (!IsValidPtr((void*)value4)) return;
+
+        float* collisionRadius = (float*)(value4 + 0x2C);
+        
+        static uintptr_t lastTarget = 0;
+        static float originalCollisionRadius = 0.25f;
+        static bool applied = false;
+
+        if (g_Settings.disableObjectCollision) {
+            if (lastTarget != targetPtr) {
+                if (*collisionRadius > 0.0f) {
+                    originalCollisionRadius = *collisionRadius;
+                } else {
+                    originalCollisionRadius = 0.25f;
+                }
+                lastTarget = targetPtr;
+            }
+            *collisionRadius = -1.0f;
+            applied = true;
+        } else if (applied) {
+            if (lastTarget == targetPtr) {
+                *collisionRadius = originalCollisionRadius;
+            }
+            applied = false;
+            lastTarget = 0;
+        }
+    } __except (EXCEPTION_EXECUTE_HANDLER) {}
+}
+
 void Update() noexcept
 {
     // Ahead of every hook: the previous payload's handlers are still live in
     // the script context until this takes them down.
     EnsureSessionReset();
     HandleKeyToggles();
+    ApplyObjectCollisionOverride();
     ApplyNoclip();
     ApplyFreecam();
     SyncMoveScript();
@@ -5289,9 +5639,15 @@ bool RequestAttackBurst(int milliseconds) noexcept
     return EnqueuePlayerScript(script);
 }
 
+FriendRadiusState& GetFriendRadiusState() noexcept
+{
+    return g_FriendRadiusState;
+}
+
 void RenderPlayersOverlay() noexcept
 {
     RenderClickWarpMarker();
+    RenderFriendAddRadius();
     RenderAutoLootRadius();
     if (!g_Settings.showPlayers && !g_Settings.showAdmins &&
         !g_Settings.showAdminList)
@@ -5513,6 +5869,83 @@ void RenderPlayersOverlay() noexcept
         }
     }
 
+    if (g_Settings.specDetect) {
+        int specCount = 0;
+        int adminCount = 0;
+        FiveRpAdminScan::Entry admins[FiveRpAdminScan::kCapacity]{};
+
+        if (ServerProfile::IsFiveRp()) {
+            adminCount = FiveRpAdminScan::CopyList(
+                admins,
+                static_cast<int>(sizeof(admins) / sizeof(admins[0])));
+
+            // Count only admins whose ped was despawned (handle == 0).
+            // This is the single reliable indicator that they entered
+            // freecam or /spec - the server removes the ped from all clients.
+            for (int i = 0; i < adminCount; ++i) {
+                if (admins[i].streamed && !admins[i].inSpec && haveLocal) {
+                    for (int j = 0; j < count; ++j) {
+                        if (entries[j].remoteId == admins[i].remoteId) {
+                            const float dx = entries[j].x - localPos.x;
+                            const float dy = entries[j].y - localPos.y;
+                            const float dz = entries[j].z - localPos.z;
+                            if (dx * dx + dy * dy + dz * dz > 250000.f) {
+                                admins[i].inSpec = true;
+                            }
+                            break;
+                        }
+                    }
+                }
+                if (admins[i].inSpec)
+                    ++specCount;
+            }
+        }
+
+        ImGui::Dummy(ImVec2(0.f, 2.f));
+        // Force recompile to update struct offset
+        countRow("Admins in spec", specCount);
+
+        if (specCount > 0) {
+            ImGui::Dummy(ImVec2(0.f, 1.f));
+
+            constexpr int kVisibleRows = 14;
+            ImDrawList* rows = ImGui::GetWindowDrawList();
+            int drawn = 0;
+            for (int i = 0; i < adminCount; ++i) {
+                const auto& a = admins[i];
+                if (!a.inSpec)
+                    continue;
+                if (drawn >= kVisibleRows) {
+                    ++drawn;
+                    continue;
+                }
+
+                const ImVec2 origin = ImGui::GetCursorScreenPos();
+                const ImVec2 dot(
+                    origin.x + 3.f,
+                    origin.y + ImGui::GetTextLineHeight() * 0.5f);
+                rows->AddCircleFilled(
+                    dot, 2.6f, IM_COL32(230, 80, 80, 235), 8);
+
+                ImGui::Dummy(ImVec2(11.f, 0.f));
+                ImGui::SameLine(0.f, 0.f);
+                ImGui::TextColored(
+                    ImVec4(0.95f, 0.35f, 0.35f, 1.f),
+                    "%s",
+                    a.name[0] ? a.name : "?");
+
+                ++drawn;
+            }
+            if (specCount > kVisibleRows) {
+                ImGui::TextColored(
+                    ImVec4(0.55f, 0.59f, 0.66f, 1.f),
+                    "   +%d more",
+                    specCount - kVisibleRows);
+            }
+        }
+    }
+
+
     ImGui::End();
     ImGui::PopStyleVar(4);
 }
@@ -5530,7 +5963,9 @@ bool Export(
     MF_WRITE("mf_norecoil_pct", g_Settings.noRecoilPct);
     MF_WRITE("mf_reload", g_Settings.reloadSpeed ? 1 : 0);
     MF_WRITE("mf_reload_pct", g_Settings.reloadSpeedPct);
+    MF_WRITE("mf_heavy_fist", g_Settings.heavyFist ? 1 : 0);
     MF_WRITE("mf_god", g_Settings.godMode ? 1 : 0);
+    MF_WRITE("mf_no_ragdoll", g_Settings.noRagdoll ? 1 : 0);
     MF_WRITE("mf_fixed_hp", g_Settings.fixedHp ? 1 : 0);
     MF_WRITE("mf_fixed_hp_val", g_Settings.fixedHpValue);
     MF_WRITE("mf_fixed_ap", g_Settings.fixedAp ? 1 : 0);
@@ -5552,6 +5987,8 @@ bool Export(
     MF_WRITE("mf_show_players", g_Settings.showPlayers ? 1 : 0);
     MF_WRITE("mf_show_admins", g_Settings.showAdmins ? 1 : 0);
     MF_WRITE("mf_show_admin_list", g_Settings.showAdminList ? 1 : 0);
+    MF_WRITE("mf_spec_detect", g_Settings.specDetect ? 1 : 0);
+
     MF_WRITE("mf_players_dist", g_Settings.playersDistance);
     MF_WRITE("mf_around_x", g_Settings.aroundPosX);
     MF_WRITE("mf_around_y", g_Settings.aroundPosY);
@@ -5592,6 +6029,9 @@ bool Export(
             "mf_vehicle_speed_mult",
             vehicle.speedMult);
         MF_WRITE(
+            "mf_vehicle_boost",
+            vehicle.boostSpeed);
+        MF_WRITE(
             "mf_vehicle_gravity",
             vehicle.gravityEnable ? 1 : 0);
         MF_WRITE(
@@ -5624,7 +6064,9 @@ void Import(const char* content) noexcept
     MF_READ_FLOAT("mf_norecoil_pct", g_Settings.noRecoilPct);
     MF_READ_BOOL("mf_reload", g_Settings.reloadSpeed);
     MF_READ_FLOAT("mf_reload_pct", g_Settings.reloadSpeedPct);
+    MF_READ_BOOL("mf_heavy_fist", g_Settings.heavyFist);
     MF_READ_BOOL("mf_god", g_Settings.godMode);
+    MF_READ_BOOL("mf_no_ragdoll", g_Settings.noRagdoll);
     MF_READ_BOOL("mf_fixed_hp", g_Settings.fixedHp);
     MF_READ_FLOAT("mf_fixed_hp_val", g_Settings.fixedHpValue);
     MF_READ_BOOL("mf_fixed_ap", g_Settings.fixedAp);
@@ -5646,6 +6088,8 @@ void Import(const char* content) noexcept
     MF_READ_BOOL("mf_show_players", g_Settings.showPlayers);
     MF_READ_BOOL("mf_show_admins", g_Settings.showAdmins);
     MF_READ_BOOL("mf_show_admin_list", g_Settings.showAdminList);
+    MF_READ_BOOL("mf_spec_detect", g_Settings.specDetect);
+
     MF_READ_FLOAT("mf_players_dist", g_Settings.playersDistance);
     MF_READ_FLOAT("mf_around_x", g_Settings.aroundPosX);
     MF_READ_FLOAT("mf_around_y", g_Settings.aroundPosY);
@@ -5679,6 +6123,9 @@ void Import(const char* content) noexcept
         MF_READ_FLOAT(
             "mf_vehicle_speed_mult",
             vehicle.speedMult);
+        MF_READ_FLOAT(
+            "mf_vehicle_boost",
+            vehicle.boostSpeed);
         MF_READ_BOOL(
             "mf_vehicle_gravity",
             vehicle.gravityEnable);
@@ -5693,6 +6140,10 @@ void Import(const char* content) noexcept
             vehicle.speedMult = 1.f;
         if (vehicle.speedMult > 10.f)
             vehicle.speedMult = 10.f;
+        if (!(vehicle.boostSpeed >= 1.f))
+            vehicle.boostSpeed = 1.f;
+        if (vehicle.boostSpeed > 100.f)
+            vehicle.boostSpeed = 100.f;
         if (!(vehicle.gravityMult >= 1.f))
             vehicle.gravityMult = 1.f;
         if (vehicle.gravityMult >
@@ -5704,9 +6155,7 @@ void Import(const char* content) noexcept
 #undef MF_READ_BOOL
 #undef MF_READ_FLOAT
 #undef MF_READ_INT
-    // Quarantine: never re-arm camera writers from config.
-    g_Settings.aspectEnabled = false;
-    g_Settings.cameraFovEnabled = false;
+#undef MF_READ_INT
     g_HaveSynced = false;
 }
 } // namespace MiscFeatures

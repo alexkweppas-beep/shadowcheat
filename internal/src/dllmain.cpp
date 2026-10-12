@@ -36,7 +36,6 @@
 #include "Main/Hooks.h"
 #include "Features/CloudStorage.h"
 #include "Features/ModelPreview.h"
-#include "shared_ipc.hpp"
 #include "imgui.h"
 #include "xorstr.hpp"
 
@@ -256,19 +255,15 @@ extern "C" SHADOW_INIT_CODE BOOL WINAPI DllMain(
 
         hooks::g_LogFn = nullptr;
 
+        // Consume cloud.session BEFORE NotifyInjectReady — InjectCore proceeds
+        // to forensic wipe right after the ready event and would delete the
+        // token file if we wait until later in this function.
         g_Heap = GetProcessHeap();
         g_PrivateHeap = g_Heap;
-        auto* launchAuth = static_cast<ShadowLaunchAuth*>(lpReserved);
-        const bool launchValid =
-            ShadowSecurity::VerifyLaunchAuth(launchAuth);
-#if defined(SHADOW_PROTECTED_RELEASE)
-        if (!launchValid)
-            return FALSE;
-#endif
-        if (launchValid && !CloudStorage::Initialize(launchAuth))
-            return FALSE;
-        if (launchAuth)
-            SecureZeroMemory(launchAuth, sizeof(*launchAuth));
+        CloudStorage::Initialize();
+        
+        ShadowSecurity::VerifySharedMemory();
+        ShadowSecurity::VerifyLoaderPidOnce();
 
         // NOTE: NotifyInjectReady() is called from inside InitImGui() after the
         // D3D11 Present hook is confirmed active. Calling it here would unblock

@@ -149,6 +149,7 @@ namespace Menu
         bool familyTag{};
         bool skeleton{};
         bool distance{};
+        float maxDistance{450.f};
         bool weaponTag{};
         bool dynamicIdTag{};
         bool staticIdTag{};
@@ -173,8 +174,8 @@ namespace Menu
         // Corner radius in pixels, shared by all three box styles. Zero is the
         // square box every build shipped with, so nobody's saved look changes.
         float boxRounding{};
-        float boxThickness{1.8f};
-        float skeletonThickness{1.5f};
+        float boxThickness{0.5f};
+        float skeletonThickness{0.5f};
         int healthStyle{};  // EspBarStyle
         int armorStyle{};   // EspBarStyle
         int weaponDisplay{}; // EspWeaponDisplay
@@ -204,6 +205,9 @@ namespace Menu
         float radarPosX{-1.f}; // -1 = use minimap default
         float radarPosY{-1.f};
         float radarSize{0.f};  // 0 = use minimap default
+        bool targetColorEnabled{};
+        int targetColorStyle{}; // EspHiddenStyle
+        float targetColor[4]{0.95f, 0.25f, 0.25f, 1.f};
     };
 
     struct RadarSettings final
@@ -274,9 +278,12 @@ namespace Menu
         float pickupColor[4]{0.38f, 0.92f, 0.55f, 1.f};
         float textColor[4]{0.92f, 0.92f, 0.96f, 1.f};
         float snapLineColor[4]{0.82f, 0.62f, 1.f, 0.85f};
+        bool useCustomColors{};
         std::uint32_t includeModels[kMaxVisualModelFilters]{};
+        float includeModelColors[kMaxVisualModelFilters][4]{};
         int includeModelCount{};
         std::uint32_t excludeModels[kMaxVisualModelFilters]{};
+        float excludeModelColors[kMaxVisualModelFilters][4]{};
         int excludeModelCount{};
     };
 

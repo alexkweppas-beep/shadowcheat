@@ -15,7 +15,7 @@
 #include "../Features/AutoLoot.h"
 #include "../Features/MiscFeatures.h"
 #include "../Features/ServerProfile.h"
-
+#include "../Features/VehicleMovement.h"
 #include <cfloat>
 #include <cstdio>
 
@@ -35,6 +35,13 @@ namespace Menu
             ICON_FA_SHIELD_HEART,
             T("God Mode", "Режим бога", "Режим бога"),
             &s.godMode);
+        /*
+        MiscRow(
+            "misc_noragdoll",
+            ICON_FA_PERSON_FALLING_BURST,
+            T("No Ragdoll", "Без рэгдола", "Без регдола"),
+            &s.noRagdoll);
+        */
         MiscRow(
             "misc_fixed_hp",
             ICON_FA_HEART,
@@ -72,16 +79,18 @@ namespace Menu
             ICON_FA_USER_CLOCK,
             T("Anti-AFK", "Анти-АФК", "Анти-АФК"),
             &s.antiAfk);
+        /*
         MiscRow(
             "player_stamina",
             ICON_FA_PERSON_RUNNING,
             T("Unlimited stamina", "Бесконечная выносливость", "Нескінченна витривалість"),
             &s.unlimitedStamina);
+        */
 
         MiscRow(
             "player_ac_shield",
             ICON_FA_SHIELD_HALVED,
-            T("Disable anti-cheat", "Отключение античита", "Відключення античиту"),
+            T("Warnings bypass", "Обход варнингов", "Обхід варнінгів"),
             &AntiCheatShield::Enabled());
         MenuUi::EndInspectorIsland();
 
@@ -136,6 +145,7 @@ namespace Menu
                 ICON_FA_SKULL,
                 &MiscFeatures::RequestSuicide))
             MiscFeatures::RequestSuicide();
+        /*
         MiscRow(
             "misc_respawn_inplace",
             ICON_FA_MAP_PIN,
@@ -143,6 +153,7 @@ namespace Menu
               "Респавн на месте смерти",
               "Респавн на місці смерті"),
             &s.respawnInPlace);
+        */
         MenuUi::EndInspectorIsland();
 
         MenuUi::BeginInspectorIsland(
@@ -175,12 +186,15 @@ namespace Menu
               "Без колізії: об'єкти"),
             &s.disableObjectCollision);
         MenuUi::EndInspectorIsland();
-        RenderWebRadarIsland();
     }
+
+
 
     static void RenderPlayerMovePage()
     {
         auto& s = MiscFeatures::GetSettings();
+        auto& vm = VehicleMovement::GetSettings();
+        const float scale = UIScale();
 
         MenuUi::BeginInspectorIsland(
             "player_movement",
@@ -247,29 +261,6 @@ namespace Menu
             EndAimReveal(s.freecam);
         }
 
-
-        MenuUi::EndInspectorIsland();
-
-        MenuUi::NextPageColumn();
-        MenuUi::BeginInspectorIsland(
-            "player_teleport",
-            T("TELEPORT", "ТЕЛЕПОРТ", "ТЕЛЕПОРТ"),
-            0.f);
-        if (MenuUi::ActionButton(
-                "misc_tp_waypoint",
-                T("Teleport to Waypoint", "ТП по метке", "ТП по мітці"),
-                ImVec2(
-                    ImGui::GetContentRegionAvail().x,
-                    36.f * UIScale()),
-                true,
-                ICON_FA_LOCATION_DOT))
-            MiscFeatures::RequestTeleportWaypoint();
-        gui->keybind(
-            T("Waypoint key###misc_tp_waypoint_key",
-              "Клавиша ТП###misc_tp_waypoint_key",
-              "Клавіша ТП###misc_tp_waypoint_key"),
-            &s.tpWaypointKey,
-            ICON_FA_KEY);
         MiscRow(
             "player_clickwarp",
             ICON_FA_COMPUTER_MOUSE,
@@ -288,6 +279,131 @@ namespace Menu
                 ICON_FA_KEY);
             EndAimReveal(s.clickWarp);
         }
+
+        if (MenuUi::ActionButton(
+                "misc_tp_waypoint",
+                T("Teleport to Waypoint", "ТП по метке", "ТП по мітці"),
+                ImVec2(
+                    ImGui::GetContentRegionAvail().x,
+                    36.f * UIScale()),
+                true,
+                ICON_FA_LOCATION_DOT))
+            MiscFeatures::RequestTeleportWaypoint();
+        gui->keybind(
+            T("Waypoint key###misc_tp_waypoint_key",
+              "Клавиша ТП###misc_tp_waypoint_key",
+              "Клавіша ТП###misc_tp_waypoint_key"),
+            &s.tpWaypointKey,
+            ICON_FA_KEY);
+        MenuUi::EndInspectorIsland();
+
+        MenuUi::NextPageColumn();
+
+        MenuUi::BeginInspectorIsland(
+            "cars_service",
+            T("MOTION (cars)", "ДВИЖЕНИЕ (МАШИНЫ)", "РУХ (АВТО)"),
+            0.f);
+        const float gap = 8.f * scale;
+        const float half = ImMax(
+            120.f * scale,
+            (ImGui::GetContentRegionAvail().x - gap) * 0.5f);
+        if (MenuUi::ActionButton(
+                "misc_vehicle_repair",
+                T("Repair", "Починить", "Полагодити"),
+                ImVec2(half, 34.f * scale),
+                false,
+                ICON_FA_WRENCH,
+                &MiscFeatures::RequestRepairVehicle))
+            MiscFeatures::RequestRepairVehicle();
+        ImGui::SameLine(0.f, gap);
+        if (MenuUi::ActionButton(
+                "cars_stop",
+                T("Stop", "Стоп", "Стоп"),
+                ImVec2(half, 34.f * scale),
+                false,
+                ICON_FA_HAND,
+                &VehicleMovement::RequestStop))
+            VehicleMovement::RequestStop();
+        if (MenuUi::ActionButton(
+                "cars_flip",
+                T("Flip", "Перевернуть", "Перевернути"),
+                ImVec2(half, 34.f * scale),
+                false,
+                ICON_FA_ARROWS_ROTATE,
+                &VehicleMovement::RequestFlip))
+            VehicleMovement::RequestFlip();
+        ImGui::SameLine(0.f, gap);
+        if (MenuUi::ActionButton(
+                "cars_crash",
+                T("Explode", "Взрыв", "Вибух"),
+                ImVec2(half, 34.f * scale),
+                false,
+                ICON_FA_EXPLOSION,
+                &VehicleMovement::RequestCrash))
+            VehicleMovement::RequestCrash();
+
+        if (MenuUi::ActionButton(
+                "cars_boost",
+                T("Boost", "Ускорение", "Прискорення"),
+                ImVec2(ImGui::GetContentRegionAvail().x, 34.f * scale),
+                false,
+                ICON_FA_JET_FIGHTER,
+                &VehicleMovement::RequestBoost))
+            VehicleMovement::RequestBoost();
+        
+        
+        MenuUi::EndInspectorIsland();
+
+        MenuUi::BeginInspectorIsland(
+            "cars_motion",
+            nullptr,
+            0.f);
+        MiscRow(
+            "misc_vehicle_speed",
+            ICON_FA_GAUGE_HIGH,
+            T("Speed", "Скорость", "Швидкість"),
+            &vm.speedEnable);
+        DrawAimAnimatedSlider(
+            "misc_vehicle_speed_value",
+            vm.speedEnable,
+            ICON_FA_GAUGE_HIGH,
+            T("Engine multiplier###misc_vehicle_speed_value",
+              "Множитель двигателя###misc_vehicle_speed_value",
+              "Множник двигуна###misc_vehicle_speed_value"),
+            &vm.speedMult,
+            1.f,
+            10.f,
+            "%.1fx");
+        DrawAimAnimatedSlider(
+            "cars_boost_speed",
+            vm.speedEnable,
+            ICON_FA_JET_FIGHTER,
+            T("Boost speed", "Скорость буста", "Швидкість буста"),
+            &vm.boostSpeed,
+            1.f,
+            100.f,
+            "%.0f");
+        MiscRow(
+            "misc_vehicle_gravity",
+            ICON_FA_ARROW_DOWN,
+            T("Gravity / Downforce", "Гравитация / прижим", "Гравітація / притиск"),
+            &vm.gravityEnable);
+        DrawAimAnimatedSlider(
+            "misc_vehicle_gravity_value",
+            vm.gravityEnable,
+            ICON_FA_ARROW_DOWN,
+            T("Downforce###misc_vehicle_gravity_value",
+              "Сила прижима###misc_vehicle_gravity_value",
+              "Сила притиску###misc_vehicle_gravity_value"),
+            &vm.gravityMult,
+            1.f,
+            VehicleMovement::Settings::kMaxGravity,
+            "%.1fx");
+        MiscRow(
+            "cars_seatbelt",
+            ICON_FA_SHIELD,
+            T("Seatbelt", "Ремень", "Ремінь"),
+            &vm.seatbelt);
         MenuUi::EndInspectorIsland();
 
         s.cameraFovEnabled = false;
@@ -497,22 +613,6 @@ namespace Menu
             ICON_FA_CIRCLE_NOTCH,
             T("Show radius", "Показывать радиус", "Показувати радіус"),
             &s.showRadius);
-        // Past the measured limit the slider still moves, but it is worth
-        // saying whose rule it is, since a refusal there is not a bug here.
-        if (s.radius > AutoLoot::kServerLimit)
-            MenuUi::LabelWithHelp(
-                T("Past the server limit",
-                  "Больше лимита сервера",
-                  "Більше ліміту сервера"),
-                "Takes were accepted at 7 m and refused at 12, so most items "
-                "out here will be turned down. Refused items back off instead "
-                "of being retried.",
-                "Подъём принимался на 7 м и отклонялся на 12, так что дальше "
-                "почти всё будет отклонено. Отказавшие предметы уходят в "
-                "паузу, а не долбятся повторно.",
-                "Підйом приймався на 7 м і відхилявся на 12, тож далі майже "
-                "все буде відхилено. Відмовлені предмети йдуть у паузу, а не "
-                "запитуються повторно.");
         float delay = static_cast<float>(s.intervalMs);
         if (gui->slider_float_icon(
                 ICON_FA_STOPWATCH,

@@ -291,14 +291,6 @@ namespace Menu
             EndAimReveal(s.freecam);
         }
 
-
-        MenuUi::EndInspectorIsland();
-
-        MenuUi::NextPageColumn();
-        MenuUi::BeginInspectorIsland(
-            "misc_move_teleport",
-            T("TELEPORT", "ТЕЛЕПОРТ", "ТЕЛЕПОРТ"),
-            0.f);
         if (MenuUi::ActionButton(
                 "misc_tp_waypoint",
                 T("Teleport to Waypoint", "ТП по метке", "ТП по мітці"),
@@ -311,10 +303,12 @@ namespace Menu
         gui->keybind(
             T("Waypoint key###misc_tp_waypoint_key",
               "Клавиша ТП###misc_tp_waypoint_key",
-              "Клавіша ТП###misc_tp_waypoint_key"),
+              "Клавиша ТП###misc_tp_waypoint_key"),
             &s.tpWaypointKey,
             ICON_FA_KEY);
         MenuUi::EndInspectorIsland();
+
+        MenuUi::NextPageColumn();
 
         // Quarantined writers remain disabled and have no dead UI controls.
         s.cameraFovEnabled = false;
@@ -460,12 +454,12 @@ namespace Menu
             "misc_web_radar",
             T("WEB RADAR", "ВЕБ-РАДАР", "ВЕБ-РАДАР"),
             0.f,
-            WebRadar::StatusText(),
-            true);
+            nullptr,
+            false);
         MiscRow(
             "misc_web_radar_on",
             ICON_FA_LOCATION_DOT,
-            T("Enable", "Включить", "Увімкнути"),
+            T("Enable Web Radar", "Включить веб-радар", "Увімкнути веб-радар"),
             &radar.enabled,
             false,
             false);
@@ -476,7 +470,7 @@ namespace Menu
             T("Rate###radar_hz", "Частота###radar_hz", "Частота###radar_hz"),
             &radar.hz,
             1.f,
-            10.f,
+            15.f,
             "%.0f Hz");
         DrawAimAnimatedSlider(
             "misc_web_radar_radius",
@@ -494,13 +488,6 @@ namespace Menu
                 false,
                 ICON_FA_LINK))
             WebRadar::CopyPageUrl();
-        ImGui::TextDisabled("%s", WebRadar::PageUrl());
-        if (WebRadar::LastStatus() != 0) {
-            ImGui::TextDisabled(
-                "HTTP %u  %u ms",
-                WebRadar::LastStatus(),
-                WebRadar::LastSendAgeMs());
-        }
         MenuUi::EndInspectorIsland();
     }
 

@@ -4,7 +4,7 @@
 #include <dxgi1_2.h>
 #include <MinHook.h>
 
-#pragma comment(lib, "d3d11.lib")
+// #pragma comment(lib, "d3d11.lib") // Loaded dynamically
 #pragma comment(lib, "dxgi.lib")
 #pragma comment(lib, "psapi.lib")
 
@@ -532,6 +532,15 @@ namespace d3d
     // under EAC because the software rasterizer initialised inside DllMain.
     // HARDWARE just opens the existing GPU driver handle — fast and matches
     // what the game itself uses, so vtable[8] resolves to the same function.
+    static PFN_D3D11CreateDeviceAndSwapChain GetD3D11CreateFn()
+    {
+        HMODULE hD3D11 = GetModuleHandleW(L"d3d11.dll");
+        if (!hD3D11) hD3D11 = LoadLibraryW(L"d3d11.dll");
+        if (!hD3D11) return nullptr;
+        return reinterpret_cast<PFN_D3D11CreateDeviceAndSwapChain>(
+            GetProcAddress(hD3D11, "D3D11CreateDeviceAndSwapChain"));
+    }
+
     IDXGISwapChain* GetDummySwapChain(void** outVTable)
     {
         if (g_dummySwap) {
@@ -541,6 +550,12 @@ namespace d3d
                     outVTable[i] = ppv[i];
             }
             return g_dummySwap;
+        }
+
+        auto pfnD3D11Create = GetD3D11CreateFn();
+        if (!pfnD3D11Create) {
+            HelperLog("GetDummySwapChain: d3d11.dll missing");
+            return nullptr;
         }
 
         DXGI_SWAP_CHAIN_DESC sd{};
@@ -567,7 +582,7 @@ namespace d3d
         HelperLog("GetDummySwapChain: HARDWARE device");
         HRESULT hr = E_FAIL;
         __try {
-            hr = D3D11CreateDeviceAndSwapChain(
+            hr = pfnD3D11Create(
                 nullptr, D3D_DRIVER_TYPE_HARDWARE, nullptr, 0,
                 flTry, _countof(flTry), D3D11_SDK_VERSION,
                 &sd, &g_dummySwap, &g_dummyDevice, &actualFl, &g_dummyContext);
@@ -580,7 +595,7 @@ namespace d3d
             HelperLog("GetDummySwapChain: HARDWARE failed, trying WARP");
             sd.OutputWindow = nullptr;  // WARP doesn't need a real HWND
             __try {
-                hr = D3D11CreateDeviceAndSwapChain(
+                hr = pfnD3D11Create(
                     nullptr, D3D_DRIVER_TYPE_WARP, nullptr, 0,
                     flTry, _countof(flTry), D3D11_SDK_VERSION,
                     &sd, &g_dummySwap, &g_dummyDevice, &actualFl, &g_dummyContext);

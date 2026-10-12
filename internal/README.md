@@ -10,20 +10,28 @@
 
 ## Доставка без драйвера
 
-Production-пейлоад скачивает и manual-map'ит защищённый `repo-launcher`.
-Он передаёт в `DllMain::lpReserved` одноразовый bootstrap с product-scoped
-ticket и сразу освобождает его после старта. Именованная shared-memory секция
-с постоянным JWT для internal больше не используется.
+Пейлоад мапится в игру **из юзермода**, драйвер не нужен. `shadow_injector`
+читает `shadow_internal.dll`, мапит её в GTA5.exe (секции, релокации, импорты)
+и запускает `DllMain` на новом потоке. Ничего не грузится в ядро, поэтому не
+нужно отключать ни HVCI, ни список блокировки уязвимых драйверов, ни Secure
+Boot — всё это касается только загрузки драйверов, а мы его не загружаем.
 
-Standalone `shadow_injector` оставлен только для разработки и по умолчанию не
-собирается. Он не входит в shipping-каталог.
+```text
+shadow_injector.exe            # инжект в уже запущенную GTA5
+shadow_injector.exe --watch    # ждать запуска GTA5 и инжектить при старте
+shadow_injector.exe --wipe     # после успешного маппинга затереть DLL на диске
+```
+
+`--watch` повторяет тайминг ядерного пути: ждёт, пока в процессе появятся
+`dxgi`/`d3d11`, и мапит до загрузки `multiplayer.dll`. Инжект в уже живую игру
+тоже работает, но резолверу имён нужно несколько секунд на прогрев кэша.
+
+Инжектору нужны права на чтение/запись памяти GTA5 (запуск от администратора).
 
 ## Сборка
 
 ```bash
-cmake -S . -B build -A x64 \
-  -DSHADOW_VMP_ROOT="D:/tools/VMProtect" \
-  -DSHADOW_BUILD_TAG="release-2026-09"
+cmake -S . -B build -A x64 -DSHADOW_VMP_ROOT="D:/tools/VMProtect"
 cmake --build build --config Release
 ```
 
@@ -39,35 +47,17 @@ Release по умолчанию собирается с SDK-маркерами �
 cmake -S . -B build-dev -A x64 -DSHADOW_ENABLE_VMP=OFF
 ```
 
-Для локальной диагностики можно явно сохранить сырой файл:
+Чтобы сохранять сырой файл рядом для сравнения, добавьте
 `-DSHADOW_KEEP_VMP_RAW=ON`. Такой файл нельзя отдавать пользователям.
 
 Персональный watermark, заранее созданный в VMProtect, задаётся через
 `-DSHADOW_VMP_WATERMARK=<имя>`. Для раздачи лучше собирать отдельный watermark
 на пользователя: он не запрещает дамп, но позволяет определить источник слива.
 
-Development-инжектор включается отдельно:
-`-DSHADOW_BUILD_DEV_INJECTOR=ON`.
+Вместе также собирается `build/Release/shadow_injector.exe`.
 
-Production-каталог из 32 cohort-вариантов и on-demand JS собирается одной
-командой:
-
-```powershell
-.\scripts\Build-ProtectedVariants.ps1 `
-  -VmpRoot "D:\tools\VMProtect" `
-  -OutputRoot "..\repo-website\back\backend\products\ragemp\variants" `
-  -Count 32
-```
-
-Каждый вариант получает отдельные `SHADOW_VARIANT_ID/SEED`, VMProtect output
-и SHA-256. Backend стабильно выбирает cohort через HMAC пользователя/HWID,
-после чего патчит персональный customer tag. Quant/FiveRP/Ukraine JS в DLL не
-входят: скрипт сборки экспортирует их в соседний `features/`, а клиент получает
-персонализированный AES-GCM bundle только по действующему launch ticket.
-
-Требуется MSVC (Build Tools 2022 достаточно), Windows SDK, Python 3 и пакет
-`cryptography` для упаковки feature bundles. C/C++ зависимости вендорены в
-`third_party/`.
+Требуется MSVC (Build Tools 2022 достаточно) и Windows SDK. Сторонние
+зависимости вендорены в `third_party/`, качать при сборке ничего не нужно.
 
 Три вещи в настройках сборки неочевидны и ломают линковку, если их убрать:
 

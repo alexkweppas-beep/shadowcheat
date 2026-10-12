@@ -2,24 +2,8 @@
 
 #include <cstddef>
 #include <cstdint>
-#include <array>
-#include <vector>
-
-struct ShadowLaunchAuth;
 
 namespace CloudStorage {
-enum class AuthorizationState : std::uint8_t {
-  Pending,
-  Authorized,
-  Denied
-};
-
-enum class VerificationResult : std::uint8_t {
-  Authorized,
-  Retry,
-  Denied
-};
-
 struct Item final {
   char id[37]{};
   char name[64]{};
@@ -28,13 +12,8 @@ struct Item final {
 
 constexpr int kMaxItems = 32;
 
-struct EncryptedFeatureBundle final {
-  std::vector<std::uint8_t> payload;
-  std::array<std::uint8_t, 32> key{};
-  char canary[65]{};
-};
-
-bool Initialize(const ShadowLaunchAuth* auth);
+void Initialize();
+// Re-read the launcher's shared auth page if the protected token is absent.
 bool EnsureSession();
 void Shutdown();
 bool IsAvailable();
@@ -43,14 +22,10 @@ const char *LastError();
 std::int64_t SubscriptionEndsAt() noexcept;
 const char* GetUsername() noexcept;
 
-AuthorizationState GetAuthorizationState() noexcept;
-bool IsAuthorized() noexcept;
-VerificationResult VerifySubscription();
+// Performs a background ping to the server to verify the session/token is still valid.
+bool VerifySubscription();
 
 bool PostJson(const wchar_t *path, const char *body, unsigned long &status);
-bool DownloadFeatureBundle(
-    const char* featureId,
-    EncryptedFeatureBundle& bundle);
 
 bool List(const char *kind, Item *items, int capacity, int &count);
 bool Get(const char *kind, const char *id, char *content, std::size_t capacity);

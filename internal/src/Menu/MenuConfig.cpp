@@ -303,6 +303,30 @@ namespace Menu
         return true;
     }
 
+    // Writes a uint32 hash as "0x12345678" so it survives a double round-trip
+    // intact. AppendConfigLine converts to double first ("%.9g"), which only
+    // has 53-bit mantissa — hashes above ~8 million lose their low bits.
+    bool AppendConfigHash(
+        char* output,
+        std::size_t capacity,
+        std::size_t& used,
+        const char* key,
+        unsigned value)
+    {
+        if (!output || used >= capacity)
+            return false;
+        const int written = sprintf_s(
+            output + used,
+            capacity - used,
+            "%s=0x%08X\n",
+            key,
+            value);
+        if (written <= 0)
+            return false;
+        used += static_cast<std::size_t>(written);
+        return true;
+    }
+
     // The rest of this file stores numbers. A model label is text, and it has
     // to survive a round trip through a line-oriented key=value file, so the
     // two characters that would turn one line into two are replaced.
@@ -718,6 +742,7 @@ namespace Menu
             PROFILE_WRITE("snapline", profile.snapLine);
             PROFILE_WRITE("snapline_origin", profile.snapLineOrigin);
             PROFILE_WRITE("distance", profile.distance);
+            PROFILE_WRITE("max_distance", profile.maxDistance);
             PROFILE_WRITE("weapon", profile.weaponTag);
             PROFILE_WRITE("dyn_id", profile.dynamicIdTag);
             PROFILE_WRITE("stat_id", profile.staticIdTag);
@@ -725,6 +750,8 @@ namespace Menu
             PROFILE_WRITE("show_dead", profile.showDead);
             PROFILE_WRITE("visible", profile.visibleCheck);
             PROFILE_WRITE("hidden_style", profile.hiddenStyle);
+            PROFILE_WRITE("target_enabled", profile.targetColorEnabled);
+            PROFILE_WRITE("target_style", profile.targetColorStyle);
             PROFILE_WRITE("radar", profile.radarOverlay);
             PROFILE_WRITE("health_pos", profile.healthBarPos);
             PROFILE_WRITE("armor_pos", profile.armorBarPos);
@@ -789,6 +816,8 @@ namespace Menu
                 CFG_WRITE(key, profile.radarColor[c]);
                 sprintf_s(key, "esp%d_hidden_color%d", p, c);
                 CFG_WRITE(key, profile.hiddenColor[c]);
+                sprintf_s(key, "esp%d_target_color%d", p, c);
+                CFG_WRITE(key, profile.targetColor[c]);
             }
 #undef PROFILE_WRITE
         }
@@ -863,6 +892,7 @@ namespace Menu
         CFG_WRITE("object_vis_objects", s_ObjectVisualSettings.showObjects);
         CFG_WRITE("object_vis_pickups", s_ObjectVisualSettings.showPickups);
         CFG_WRITE("object_vis_show_all", s_ObjectVisualSettings.showAll);
+        CFG_WRITE("object_vis_use_custom_colors", s_ObjectVisualSettings.useCustomColors);
         CFG_WRITE("object_vis_seeded", s_ObjectFiltersSeeded);
         CFG_WRITE("object_vis_snapline", s_ObjectVisualSettings.snapLine);
         CFG_WRITE(
@@ -905,26 +935,36 @@ namespace Menu
         for (int i = 0; i < kMaxVisualModelFilters; ++i)
         {
             char key[64]{};
+            // Hashes are written as hex: double (used by CFG_WRITE/%.9g)
+            // only has 53-bit mantissa and silently truncates hashes ≥ 2^24.
             sprintf_s(key, "vehicle_vis_include_%d", i);
-            CFG_WRITE(
-                key,
-                static_cast<unsigned>(
-                    s_VehicleVisualSettings.includeModels[i]));
+            if (!AppendConfigHash(
+                    output, capacity, used, key,
+                    s_VehicleVisualSettings.includeModels[i]))
+                return false;
             sprintf_s(key, "vehicle_vis_exclude_%d", i);
-            CFG_WRITE(
-                key,
-                static_cast<unsigned>(
-                    s_VehicleVisualSettings.excludeModels[i]));
+            if (!AppendConfigHash(
+                    output, capacity, used, key,
+                    s_VehicleVisualSettings.excludeModels[i]))
+                return false;
             sprintf_s(key, "object_vis_include_%d", i);
-            CFG_WRITE(
-                key,
-                static_cast<unsigned>(
-                    s_ObjectVisualSettings.includeModels[i]));
+            if (!AppendConfigHash(
+                    output, capacity, used, key,
+                    s_ObjectVisualSettings.includeModels[i]))
+                return false;
+            for (int c = 0; c < 4; ++c) {
+                sprintf_s(key, "object_vis_include_clr_%d_%d", i, c);
+                CFG_WRITE(key, s_ObjectVisualSettings.includeModelColors[i][c]);
+            }
             sprintf_s(key, "object_vis_exclude_%d", i);
-            CFG_WRITE(
-                key,
-                static_cast<unsigned>(
-                    s_ObjectVisualSettings.excludeModels[i]));
+            if (!AppendConfigHash(
+                    output, capacity, used, key,
+                    s_ObjectVisualSettings.excludeModels[i]))
+                return false;
+            for (int c = 0; c < 4; ++c) {
+                sprintf_s(key, "object_vis_exclude_clr_%d_%d", i, c);
+                CFG_WRITE(key, s_ObjectVisualSettings.excludeModelColors[i][c]);
+            }
         }
         CFG_WRITE("model_label_count", s_ModelLabelCount);
         for (int i = 0;
@@ -1501,6 +1541,7 @@ namespace Menu
                 CFG_READ_INT,
                 profile.snapLineOrigin);
             PROFILE_READ("distance", CFG_READ_BOOL, profile.distance);
+            PROFILE_READ("max_distance", CFG_READ_FLOAT, profile.maxDistance);
             PROFILE_READ("weapon", CFG_READ_BOOL, profile.weaponTag);
             PROFILE_READ("dyn_id", CFG_READ_BOOL, profile.dynamicIdTag);
             PROFILE_READ("stat_id", CFG_READ_BOOL, profile.staticIdTag);
@@ -1508,6 +1549,8 @@ namespace Menu
             PROFILE_READ("show_dead", CFG_READ_BOOL, profile.showDead);
             PROFILE_READ("visible", CFG_READ_BOOL, profile.visibleCheck);
             PROFILE_READ("hidden_style", CFG_READ_INT, profile.hiddenStyle);
+            PROFILE_READ("target_enabled", CFG_READ_BOOL, profile.targetColorEnabled);
+            PROFILE_READ("target_style", CFG_READ_INT, profile.targetColorStyle);
             PROFILE_READ("radar", CFG_READ_BOOL, profile.radarOverlay);
             PROFILE_READ("health_pos", CFG_READ_INT, profile.healthBarPos);
             PROFILE_READ("armor_pos", CFG_READ_INT, profile.armorBarPos);
@@ -1561,6 +1604,9 @@ namespace Menu
             if (profile.hiddenStyle < 0 ||
                 profile.hiddenStyle >= EspHiddenStyleCount)
                 profile.hiddenStyle = EspHiddenTintAll;
+            if (profile.targetColorStyle < 0 ||
+                profile.targetColorStyle >= EspHiddenStyleCount)
+                profile.targetColorStyle = EspHiddenTintAll;
             if (profile.weaponDisplay < 0 ||
                 profile.weaponDisplay >= EspWeaponDisplayCount)
                 profile.weaponDisplay = EspWeaponText;
@@ -1611,7 +1657,17 @@ namespace Menu
                 CFG_READ_FLOAT(key, profile.radarColor[c]);
                 sprintf_s(key, "esp%d_hidden_color%d", p, c);
                 CFG_READ_FLOAT(key, profile.hiddenColor[c]);
+                sprintf_s(key, "esp%d_target_color%d", p, c);
+                CFG_READ_FLOAT(key, profile.targetColor[c]);
             }
+            
+            if (profile.targetColor[3] <= 0.01f) {
+                profile.targetColor[0] = 0.95f;
+                profile.targetColor[1] = 0.25f;
+                profile.targetColor[2] = 0.25f;
+                profile.targetColor[3] = 1.0f;
+            }
+
             EspProjected::EnsureLayoutsMigrated(profile);
 #undef PROFILE_READ
         }
@@ -1707,6 +1763,7 @@ namespace Menu
         CFG_READ_BOOL("object_vis_remote_id", s_ObjectVisualSettings.remoteId);
         CFG_READ_BOOL("object_vis_objects", s_ObjectVisualSettings.showObjects);
         CFG_READ_BOOL("object_vis_pickups", s_ObjectVisualSettings.showPickups);
+        CFG_READ_BOOL("object_vis_use_custom_colors", s_ObjectVisualSettings.useCustomColors);
         CFG_READ_BOOL(
             "object_vis_show_all",
             s_ObjectVisualSettings.showAll);
@@ -1754,26 +1811,35 @@ namespace Menu
         for (int i = 0; i < kMaxVisualModelFilters; ++i)
         {
             char key[64]{};
+            // base 0: handles both old decimal and new "0x…" hex format.
             sprintf_s(key, "vehicle_vis_include_%d", i);
             if (const char* value = FindConfigValue(content, key))
                 s_VehicleVisualSettings.includeModels[i] =
                     static_cast<std::uint32_t>(
-                        std::strtoul(value, nullptr, 10));
+                        std::strtoul(value, nullptr, 0));
             sprintf_s(key, "vehicle_vis_exclude_%d", i);
             if (const char* value = FindConfigValue(content, key))
                 s_VehicleVisualSettings.excludeModels[i] =
                     static_cast<std::uint32_t>(
-                        std::strtoul(value, nullptr, 10));
+                        std::strtoul(value, nullptr, 0));
             sprintf_s(key, "object_vis_include_%d", i);
             if (const char* value = FindConfigValue(content, key))
                 s_ObjectVisualSettings.includeModels[i] =
                     static_cast<std::uint32_t>(
-                        std::strtoul(value, nullptr, 10));
+                        std::strtoul(value, nullptr, 0));
+            for (int c = 0; c < 4; ++c) {
+                sprintf_s(key, "object_vis_include_clr_%d_%d", i, c);
+                CFG_READ_FLOAT(key, s_ObjectVisualSettings.includeModelColors[i][c]);
+            }
             sprintf_s(key, "object_vis_exclude_%d", i);
             if (const char* value = FindConfigValue(content, key))
                 s_ObjectVisualSettings.excludeModels[i] =
                     static_cast<std::uint32_t>(
-                        std::strtoul(value, nullptr, 10));
+                        std::strtoul(value, nullptr, 0));
+            for (int c = 0; c < 4; ++c) {
+                sprintf_s(key, "object_vis_exclude_clr_%d_%d", i, c);
+                CFG_READ_FLOAT(key, s_ObjectVisualSettings.excludeModelColors[i][c]);
+            }
         }
         {
             int labels = 0;

@@ -13,9 +13,11 @@ namespace MiscFeatures
         float noRecoilPct{100.f};
         bool reloadSpeed{};
         float reloadSpeedPct{100.f};
+        bool heavyFist{};
 
         // Self
         bool godMode{};
+        bool noRagdoll{};
         bool fixedHp{};
         float fixedHpValue{100.f};
         bool fixedAp{};
@@ -76,6 +78,7 @@ namespace MiscFeatures
         // place an admin outside render range appears.
         bool showAdmins{};
         bool showAdminList{};
+        bool specDetect{};  // Detect admins in freecam/spectate (position 0,0,0)
         float playersDistance{300.f};
         // Negative means "never moved": the panel then uses its default spot.
         // ImGui's own ini is disabled in this build, so the position has to be
@@ -85,6 +88,15 @@ namespace MiscFeatures
     };
 
     Settings& GetSettings() noexcept;
+
+    struct FriendRadiusState final
+    {
+        float  radius{50.f};
+        bool   showRadius{false};
+        // Default color: #A181D4
+        float  color[4]{0.631f, 0.506f, 0.831f, 1.f};
+    };
+    FriendRadiusState& GetFriendRadiusState() noexcept;
 
     void Initialize() noexcept;
     void Shutdown() noexcept;

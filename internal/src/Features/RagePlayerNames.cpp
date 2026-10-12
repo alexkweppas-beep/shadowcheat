@@ -244,7 +244,9 @@ namespace
             return true;
 
         SHADOW_PROTECT_MUT("Names.Snapshot");
-        const char* snapshotFormat = SHADOW_DECRYPT_STRING_A(
+        static const char* s_Format = nullptr;
+        if (!s_Format)
+            s_Format = SHADOW_DECRYPT_STRING_A(
             "const rows=[],seen={};"
             "const adminKey='%s';"
             "const adminVars=[%s];"
@@ -685,25 +687,13 @@ namespace
             "dying=e.isDeadOrDying(true)?1:0;"
             "else if(typeof e.isDead==='function')dying=e.isDead()?1:0;}"
             "catch(_){}"
-            // An empty bar is a hundred, not zero. GTA keeps ped health as
-            // 100 + value and this server maps its own 0..100 hit points onto
-            // exactly that range, which its client code states outright by
-            // writing setHealth(100 + stored). Compared against zero this
-            // never once fired, so nobody ever read as down: the whole death
-            // and knock display was dead code against a threshold no live
-            // player can reach.
-            //
-            // Reported in roleplay points, so a reader sees the same number
-            // the server does. A server that does not do this mapping keeps its
-            // health as the game reports it: subtracting a hundred there read
-            // every healthy player as dead.
+            "if(ident===0&&e.isPlayerDeath){dead=1;hp=0;dying=1;}"
+            "else{"
             "if(Number.isFinite(hp)){"
             "if(rpHp){hp=hp-100;if(hp<0)hp=0;}"
             "if(hp<=0)dead=1;}"
             "else if(dying===1)dead=1;"
-            // Fatally injured with hit points left is the bleeding-out window,
-            // which the overlay draws apart from a finished death.
-            "if(dying===1&&!dead)knock=1;"
+            "if(dying===1&&!dead)knock=1;}"
             "try{if(typeof e.getHeading==='function')heading=Number(e.getHeading());"
             "else if(typeof e.getRotation==='function'){const r=e.getRotation(2);"
             "heading=Number(r&&r.z);}"
@@ -784,12 +774,12 @@ namespace
             "0,0,0,0].join('\\t'));"
             "return rows.join('\\n');");
         SHADOW_PROTECT_END();
-        if (!snapshotFormat)
+        if (!s_Format)
             return false;
         const int length = std::snprintf(
             g_SnapshotScript,
             sizeof(g_SnapshotScript),
-            snapshotFormat,
+            s_Format,
                 adminKey,
                 adminVars,
                 identity,
@@ -799,7 +789,6 @@ namespace
                 includeNonPlayers ? 1 : 0,
                 familyLookupDemand ? 1 : 0,
                 greenZoneDemand ? 1 : 0);
-        SHADOW_FREE_STRING(snapshotFormat);
         const bool ok = length > 0 &&
             length < static_cast<int>(
                 sizeof(g_SnapshotScript));
@@ -1894,10 +1883,8 @@ namespace RagePlayerNames
                             visibilityDemand
                                 ? 24u : 0u);
                 }
-                SecureZeroMemory(
-                    g_SnapshotScript,
-                    sizeof(g_SnapshotScript));
-                g_ScriptKey.built = false;
+                // Keep the built script. Enqueue copies it; wiping the buffer
+                // forced a Ultra decrypt + snprintf on every 400 ms refresh.
             }
         }
     }

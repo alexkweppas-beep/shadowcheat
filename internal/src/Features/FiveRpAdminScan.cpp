@@ -9,9 +9,17 @@
 
 namespace
 {
-    // Walks the whole player pool, not forEachInStreamRange, so off-stream
-    // admins are included. The admin variable name is never hardcoded: the
-    // server publishes it in mp.serverDataKeys.isAdmin and rotates it.
+    // Walks the whole player pool (not just streamed range) to find every admin
+    // on the server.  Spec detection logic (confirmed from competitor analysis):
+    //   handle != 0 (ped is streamed)  AND  position == {0,0,0}
+    // When admin enters freecam//spec the server keeps their ped handle valid
+    // but teleports it to world origin {0,0,0}.
+    // NON-streamed admins (handle == 0) are IGNORED - their position is
+    // undefined and checking it causes all far-away admins to false-positive.
+    //
+    // Wire format (tab-separated):
+    //   header: @adm <key> <scanned> <rows> <errs> <undef>
+    //   rows:   <remoteId> <charId> <streamed:0|1> <name> <faction> <inSpec:0|1>
     constexpr char kScanScript[] =
 R"FIVEADMIN(return (()=>{try{
 const root=(typeof globalThis!=='undefined'&&globalThis)||(typeof global!=='undefined'&&global)||null;
@@ -24,9 +32,7 @@ const apiRoot=(root&&root.__butterflyFiveRpApi)||(ctx&&ctx.api)||(root&&root.api
 const helpers=(root&&root.__butterflyFiveRpPlayers)||(apiRoot&&apiRoot.players);
 const empty='@adm\t\t0\t0\t0\t0';
 if(!rage||!rage.players||typeof rage.players.forEach!=='function')return empty;
-/* Several mp instances coexist after a reconnect and the one our scripts run
-in carries an empty serverDataKeys, so the native probe pins the live table on
-the root as __butterflyFiveRpDataKeys. */
+/* Resolve the rotating admin variable name from server data keys */
 let key='';
 try{const dk=(root&&root.__butterflyFiveRpDataKeys)||rage.serverDataKeys;
 if(dk&&dk.isAdmin)key=String(dk.isAdmin).trim();}catch(_){}
@@ -36,13 +42,11 @@ try{const m=rage.game&&rage.game.misc;
 if(m&&typeof m.getVariableHashKey==='function'){
 hash=m.getVariableHashKey(key);charHash=m.getVariableHashKey('characterId');}}catch(_){}
 const safe=v=>String(v==null?'':v).replace(/[\t\r\n]/g,' ').trim();
-const valid=v=>!!v&&Number.isFinite(Number(v.x))&&Number.isFinite(Number(v.y))&&Number.isFinite(Number(v.z))&&(Number(v.x)!==0||Number(v.y)!==0||Number(v.z)!==0);
-/* errs and undef are reported back so a pass that finds nobody can be told
-apart from a pass where the variable was simply unreadable. */
 const rows=[];let scanned=0,errs=0,undef=0;
 rage.players.forEach(p=>{
 if(!p||scanned>=8192||rows.length>=128)return;
 ++scanned;
+/* Read admin variable - skip if not an admin */
 let raw;
 try{raw=hash!=null?p.getVariable(hash):undefined;
 if(raw===undefined||raw===null)raw=p.getVariable(key);}catch(_){++errs;return;}
@@ -50,30 +54,43 @@ if(raw===undefined||raw===null){++undef;return;}
 if(!raw)return;
 const id=Number(p.remoteId);
 if(!Number.isFinite(id)||id<0||id>65535)return;
+/* Character id for cross-referencing */
 let cid=0;
 try{cid=Number(charHash!=null?p.getVariable(charHash):0)||Number(p.getVariable('characterId'))||0;}catch(_){}
 if(!Number.isFinite(cid)||cid<0)cid=0;
+/* Name - prefer server roster, fall back to RAGE name */
 let name='';
 try{if(helpers&&typeof helpers.getName==='function')name=safe(helpers.getName.call(helpers,p));}catch(_){}
 if(!name){try{name=safe(p.name).replace(/_/g,' ');}catch(_){}}
+/* Faction */
 let fac='';
 try{if(helpers&&typeof helpers.getServerFactionId==='function')fac=safe(helpers.getServerFactionId.call(helpers,p));}catch(_){}
-let streamed=0;
-try{streamed=valid(p.position)?1:0;}catch(_){}
-rows.push([id,cid,streamed,name.slice(0,56),fac.slice(0,24)].join('\t'));
+let pos=null;try{pos=p.position;}catch(_){}
+let dim=0;try{dim=Number(p.dimension)||0;}catch(_){}
+let lDim=0;try{lDim=Number(rage.players.local.dimension)||0;}catch(_){}
+/* !!p.handle: true = ped in client memory (streamed), false = not in stream range.
+   inSpec = streamed admin with position exactly {0,0,0} OR in a different dimension. */
+const isStreamed=!!p.handle;
+const atOrig=!!pos&&Number(pos.x)===0&&Number(pos.y)===0&&Number(pos.z)===0;
+const diffDim=(dim!==lDim);
+const inSpec=isStreamed&&(atOrig||diffDim);
+rows.push([id,cid,isStreamed?1:0,name.slice(0,56),fac.slice(0,24),inSpec?1:0,dim].join('\t'));
 });
 return ['@adm',safe(key),scanned,rows.length,errs,undef].join('\t')+(rows.length?'\n'+rows.join('\n'):'');
 }catch(_){return '@adm\t\t0\t0\t0\t0';}})())FIVEADMIN";
+
 
     // A single pass can come back empty while admins are still online, for
     // instance when getVariable throws mid-stream-change. Entries therefore
     // age out instead of being replaced wholesale, so one bad pass no longer
     // blanks the list.
-    constexpr ULONGLONG kEntryTtlMs = 15000;
+    constexpr ULONGLONG kEntryTtlMs  = 15000; // admin entry expires after 15s without a scan
+    constexpr ULONGLONG kSpecTtlMs   = 30000; // keep showing "in spec" for 30s after last detection
 
     volatile LONG g_Lock = 0;
     FiveRpAdminScan::Entry g_Entries[FiveRpAdminScan::kCapacity]{};
-    ULONGLONG g_SeenAt[FiveRpAdminScan::kCapacity]{};
+    ULONGLONG g_SeenAt[FiveRpAdminScan::kCapacity]{};      // last time this admin was scanned
+    ULONGLONG g_SpecSeenAt[FiveRpAdminScan::kCapacity]{};  // last time this admin was detected in spec
     int g_Count = 0;
     int g_Scanned = 0;
     int g_Errors = 0;
@@ -146,11 +163,11 @@ return ['@adm',safe(key),scanned,rows.length,errs,undef].join('\t')+(rows.length
             while (*lineEnd && *lineEnd != '\n')
                 ++lineEnd;
 
-            const char* fieldBegin[6]{};
-            const char* fieldEnd[6]{};
+            const char* fieldBegin[7]{};
+            const char* fieldEnd[7]{};
             const char* field = cursor;
             int fields = 0;
-            while (fields < 6 && field <= lineEnd)
+            while (fields < 7 && field <= lineEnd)
             {
                 const char* stop = FieldEnd(field);
                 if (stop > lineEnd)
@@ -210,6 +227,14 @@ return ['@adm',safe(key),scanned,rows.length,errs,undef].join('\t')+(rows.length
                         static_cast<int>(sizeof(entry.factionTag)),
                         fieldBegin[4],
                         fieldEnd[4]);
+                    // 6th field: inSpec
+                    if (fields >= 6)
+                        entry.inSpec =
+                            ParseInt(fieldBegin[5], fieldEnd[5]) != 0;
+                    // 7th field: dimension
+                    if (fields >= 7)
+                        entry.dimension =
+                            ParseInt(fieldBegin[6], fieldEnd[6]);
                     ++count;
                 }
             }
@@ -241,6 +266,16 @@ return ['@adm',safe(key),scanned,rows.length,errs,undef].join('\t')+(rows.length
                 continue;
             g_Entries[slot] = parsed[index];
             g_SeenAt[slot] = now;
+            // If this scan sees the admin in spec, update the spec timestamp.
+            // If not in spec now but was recently, preserve the old inSpec flag
+            // so the overlay keeps showing them until kSpecTtlMs expires.
+            if (parsed[index].inSpec) {
+                g_SpecSeenAt[slot] = now;
+            } else if (g_SpecSeenAt[slot] &&
+                       now - g_SpecSeenAt[slot] < kSpecTtlMs) {
+                // Within the grace window: keep inSpec=true in the stored entry
+                g_Entries[slot].inSpec = true;
+            }
         }
         // Drop only what has gone unconfirmed for a while, so a single empty
         // pass cannot wipe the list.
@@ -252,8 +287,9 @@ return ['@adm',safe(key),scanned,rows.length,errs,undef].join('\t')+(rows.length
                 continue;
             if (write != index)
             {
-                g_Entries[write] = g_Entries[index];
-                g_SeenAt[write] = g_SeenAt[index];
+                g_Entries[write]     = g_Entries[index];
+                g_SeenAt[write]      = g_SeenAt[index];
+                g_SpecSeenAt[write]  = g_SpecSeenAt[index];
             }
             ++write;
         }
@@ -261,8 +297,9 @@ return ['@adm',safe(key),scanned,rows.length,errs,undef].join('\t')+(rows.length
              index < FiveRpAdminScan::kCapacity;
              ++index)
         {
-            g_Entries[index] = {};
-            g_SeenAt[index] = 0;
+            g_Entries[index]    = {};
+            g_SeenAt[index]     = 0;
+            g_SpecSeenAt[index] = 0;
         }
         g_Count = write;
         g_Scanned = scanned;
@@ -292,8 +329,9 @@ namespace FiveRpAdminScan
         g_KeyName[0] = 0;
         for (int index = 0; index < kCapacity; ++index)
         {
-            g_Entries[index] = {};
-            g_SeenAt[index] = 0;
+            g_Entries[index]    = {};
+            g_SeenAt[index]     = 0;
+            g_SpecSeenAt[index] = 0;
         }
         Unlock();
     }
@@ -315,8 +353,9 @@ namespace FiveRpAdminScan
             g_KeyName[0] = 0;
             for (int index = 0; index < kCapacity; ++index)
             {
-                g_Entries[index] = {};
-                g_SeenAt[index] = 0;
+                g_Entries[index]    = {};
+                g_SeenAt[index]     = 0;
+                g_SpecSeenAt[index] = 0;
             }
             Unlock();
         }
@@ -359,26 +398,28 @@ namespace FiveRpAdminScan
             return;
         }
 
-        // The pool sweep is the heaviest script we submit, so it waits for an
-        // empty queue instead of landing right after the player snapshot.
+        // The pool sweep is heavy, but we want fast spec detection.
+        // Competitors scan every 1s, so we do the same.
         if (g_PendingCommand ||
             status.queuedCommands != 0 ||
             status.state != RageV8Runtime::State::Ready ||
             !status.rootCaptured ||
-            now - g_LastRequest < 3000)
+            now - g_LastRequest < 1000)
             return;
 
         g_LastRequest = now;
-        SHADOW_PROTECT_MUT("FiveRP.AdminScan");
-        const char* scanScript =
-            SHADOW_DECRYPT_STRING_A(kScanScript);
+        static const char* s_Scan = nullptr;
+        if (!s_Scan)
+        {
+            SHADOW_PROTECT_MUT("FiveRP.AdminScan");
+            s_Scan = SHADOW_DECRYPT_STRING_A(kScanScript);
+            SHADOW_PROTECT_END();
+        }
         const bool queued =
-            scanScript &&
+            s_Scan &&
             RageV8Runtime::Enqueue(
-                scanScript,
+                s_Scan,
                 &g_PendingCommand);
-        SHADOW_FREE_STRING(scanScript);
-        SHADOW_PROTECT_END();
         if (!queued)
             g_PendingCommand = 0;
     }

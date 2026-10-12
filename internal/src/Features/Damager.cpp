@@ -301,20 +301,22 @@ namespace Damager
             static_cast<double>(target.aimZ));
         if (header <= 0)
             return;
-        SHADOW_PROTECT_MUT("Damager.Load");
-        const char* body = SHADOW_DECRYPT_STRING_A(kBody);
-        if (!body)
+        static const char* s_Body = nullptr;
+        if (!s_Body)
         {
+            SHADOW_PROTECT_MUT("Damager.Load");
+            s_Body = SHADOW_DECRYPT_STRING_A(kBody);
             SHADOW_PROTECT_END();
+        }
+        if (!s_Body)
+        {
             SecureZeroMemory(script, sizeof(script));
             return;
         }
         lstrcpynA(
             script + header,
-            body,
+            s_Body,
             static_cast<int>(sizeof(script)) - header);
-        SHADOW_FREE_STRING(body);
-        SHADOW_PROTECT_END();
 
         g_LastRequest = now;
         const bool queued =

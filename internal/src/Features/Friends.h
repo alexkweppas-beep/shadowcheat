@@ -15,6 +15,12 @@ namespace Friends
     bool RemoveAt(int index) noexcept;
     const char* Get(int index) noexcept;
 
+    extern bool UseCustomColors;
+
+    void SetColor(int index, const float* color) noexcept;
+    void GetColor(int index, float* color) noexcept;
+    void GetColorByName(const char* name, float* color) noexcept;
+
     bool Export(
         char* output,
         std::size_t capacity,

@@ -162,16 +162,18 @@ namespace Menu
         {
             SetModelLabel(seed.hash, seed.name);
             bool present = false;
-            for (int index = 0;
-                 index < objects.includeModelCount;
-                 ++index)
-                present = present ||
-                    objects.includeModels[index] == seed.hash;
-            if (present ||
-                objects.includeModelCount >= kMaxVisualModelFilters)
+            for (int index = 0; index < objects.includeModelCount; ++index)
+                present = present || objects.includeModels[index] == seed.hash;
+            if (present || objects.includeModelCount >= kMaxVisualModelFilters)
                 continue;
-            objects.includeModels[
-                objects.includeModelCount++] = seed.hash;
+            
+            const int currentCount = objects.includeModelCount;
+            objects.includeModels[currentCount] = seed.hash;
+            objects.includeModelColors[currentCount][0] = 235.f / 255.f;
+            objects.includeModelColors[currentCount][1] = 235.f / 255.f;
+            objects.includeModelColors[currentCount][2] = 245.f / 255.f;
+            objects.includeModelColors[currentCount][3] = 1.0f;
+            objects.includeModelCount++;
         }
     }
 
@@ -203,13 +205,13 @@ namespace Menu
             p.staticIdTag = false;
             p.showDead = false;
             p.visibleCheck = false;
-            p.healthBarPos = EspHealthBarLeft;
-            p.armorBarPos = EspHealthBarLeft;
+            p.healthBarPos = EspHealthBarBottom;
+            p.armorBarPos = EspHealthBarBottom;
             p.nameTagPos = EspTagAbove;
             p.factionTagPos = EspTagAbove;
             p.distancePos = EspTagBelow;
             p.boxStyle = EspBoxCorners;
-            p.healthStyle = EspBarDynamic;
+            p.healthStyle = EspBarSolid;
             p.armorStyle = EspBarSolid;
             p.healthShowValue = false;
             p.armorShowValue = false;
@@ -249,8 +251,8 @@ namespace Menu
             p.staticIdTag = false;
             p.showDead = false;
             p.visibleCheck = false;
-            p.healthBarPos = EspHealthBarLeft;
-            p.armorBarPos = EspHealthBarLeft;
+            p.healthBarPos = EspHealthBarBottom;
+            p.armorBarPos = EspHealthBarBottom;
             p.nameTagPos = EspTagAbove;
             p.factionTagPos = EspTagAbove;
             p.distancePos = EspTagBelow;
@@ -295,8 +297,8 @@ namespace Menu
             p.staticIdTag = false;
             p.showDead = false;
             p.visibleCheck = false;
-            p.healthBarPos = EspHealthBarLeft;
-            p.armorBarPos = EspHealthBarLeft;
+            p.healthBarPos = EspHealthBarBottom;
+            p.armorBarPos = EspHealthBarBottom;
             p.nameTagPos = EspTagAbove;
             p.factionTagPos = EspTagAbove;
             p.distancePos = EspTagBelow;
@@ -337,8 +339,8 @@ namespace Menu
             p.skeleton = false;
             p.distance = false;
             p.visibleCheck = false;
-            p.healthBarPos = EspHealthBarLeft;
-            p.armorBarPos = EspHealthBarLeft;
+            p.healthBarPos = EspHealthBarBottom;
+            p.armorBarPos = EspHealthBarBottom;
             p.nameTagPos = EspTagAbove;
             p.factionTagPos = EspTagAbove;
             p.distancePos = EspTagBelow;
@@ -379,8 +381,8 @@ namespace Menu
             p.skeleton = false;
             p.distance = false;
             p.visibleCheck = false;
-            p.healthBarPos = EspHealthBarLeft;
-            p.armorBarPos = EspHealthBarLeft;
+            p.healthBarPos = EspHealthBarBottom;
+            p.armorBarPos = EspHealthBarBottom;
             p.nameTagPos = EspTagAbove;
             p.factionTagPos = EspTagAbove;
             p.distancePos = EspTagBelow;
@@ -423,8 +425,8 @@ namespace Menu
             p.skeleton = false;
             p.distance = false;
             p.visibleCheck = false;
-            p.healthBarPos = EspHealthBarLeft;
-            p.armorBarPos = EspHealthBarLeft;
+            p.healthBarPos = EspHealthBarBottom;
+            p.armorBarPos = EspHealthBarBottom;
             p.nameTagPos = EspTagAbove;
             p.factionTagPos = EspTagAbove;
             p.distancePos = EspTagBelow;
@@ -460,8 +462,8 @@ namespace Menu
             p.skeleton = false;
             p.distance = false;
             p.visibleCheck = false;
-            p.healthBarPos = EspHealthBarLeft;
-            p.armorBarPos = EspHealthBarLeft;
+            p.healthBarPos = EspHealthBarBottom;
+            p.armorBarPos = EspHealthBarBottom;
             p.nameTagPos = EspTagAbove;
             p.factionTagPos = EspTagAbove;
             p.distancePos = EspTagBelow;
@@ -499,15 +501,22 @@ namespace Menu
             p.greenZoneColor[0] = 0.0f;
             p.greenZoneColor[1] = 1.0f;
             p.greenZoneColor[2] = 0.0f;
+            p.targetColor[0] = 0.95f;
+            p.targetColor[1] = 0.25f;
+            p.targetColor[2] = 0.25f;
             float* colors[] = {
                 p.boxColor, p.boxFillColor, p.nameColor, p.factionColor,
                 p.familyColor, p.healthColor, p.armorColor, p.skeletonColor,
                 p.distanceColor, p.weaponColor, p.dynamicIdColor,
-                p.staticIdColor, p.greenZoneColor, p.deadColor, p.hiddenColor, p.radarColor
+                p.staticIdColor, p.greenZoneColor, p.deadColor, p.hiddenColor, p.radarColor, p.targetColor
             };
             for (float* c : colors)
                 c[3] = 1.f;
+            p.boxThickness = 0.5f;
+            p.skeletonThickness = 0.5f;
             EspProjected::EnsureLayoutsMigrated(p);
+            p.layouts[5].side = static_cast<int>(EspProjected::Side::Bottom);
+            p.layouts[6].side = static_cast<int>(EspProjected::Side::Bottom);
         }
     }
     int s_VisualCategoryTab = 0;
@@ -1278,20 +1287,13 @@ namespace Menu
             "Підбір предметів",
             MainPage::Player, 2
         },
-        {
-            "cars", ICON_FA_CAR,
-            "Cars", "Машины", "Авто",
-            "Vehicle motion",
-            "Движение транспорта",
-            "Рух транспорту",
-            MainPage::Cars, 0
-        },
+
         {
             "weather", ICON_FA_CLOUD_SUN,
-            "Weather", "Погода", "Погода",
-            "Time and weather",
-            "Время и погода",
-            "Час і погода",
+            "World", "Мир", "Світ",
+            "Time, weather and camera",
+            "Время, погода и камера",
+            "Час, погода і камера",
             MainPage::World, 0
         },
         {

@@ -41,9 +41,9 @@
 // DirectX
 #include <stdio.h>
 #include <d3d11.h>
-#include <d3dcompiler.h>
+// #include <d3dcompiler.h>
 #ifdef _MSC_VER
-#pragma comment(lib, "d3dcompiler") // Automatically link with d3dcompiler.lib as we are using D3DCompile() below.
+// #pragma comment(lib, "d3dcompiler") // Automatically link with d3dcompiler.lib as we are using D3DCompile() below.
 #endif
 
 // Kept as a call site marker only: this build writes no log of any kind.

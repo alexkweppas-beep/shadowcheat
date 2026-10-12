@@ -17,6 +17,7 @@
 
 #include <Windows.h>
 #include <TlHelp32.h>
+#include <compressapi.h>
 #include <cstdio>
 #include <cstdint>
 #include <string>
@@ -94,6 +95,71 @@ namespace
         if (!ok)
             return {};
         return data;
+    }
+
+    // If the file starts with our 'SHZP' magic it is XPRESS_HUFFMAN-compressed.
+    // Decompress transparently so the rest of the injector sees a plain PE.
+    static constexpr uint32_t kShzpMagic = 0x505A4853u; // 'SHZP'
+
+    std::vector<uint8_t> TryDecompress(std::vector<uint8_t>& raw)
+    {
+        // Header: magic(4) + original_size(4) + compressed_size(4)
+        if (raw.size() < 12)
+            return {};
+        uint32_t magic = 0;
+        memcpy(&magic, raw.data(), 4);
+        if (magic != kShzpMagic)
+            return {}; // plain PE, nothing to do
+
+        uint32_t orig_size = 0, comp_size = 0;
+        memcpy(&orig_size, raw.data() + 4, 4);
+        memcpy(&comp_size, raw.data() + 8, 4);
+
+        if (comp_size + 12 > static_cast<uint32_t>(raw.size()) || orig_size == 0) {
+            Log("SHZP header sanity check failed");
+            return {};
+        }
+
+        // cabinet.dll is present on every Windows 8+ install — no extra DLLs needed.
+        HMODULE hCab = LoadLibraryW(L"cabinet.dll");
+        if (!hCab) { Log("cabinet.dll not available"); return {}; }
+
+        using FnCreate = BOOL(WINAPI*)(DWORD Algorithm, PCOMPRESS_ALLOCATION_ROUTINES, PDECOMPRESSOR_HANDLE);
+        using FnDecomp = BOOL(WINAPI*)(DECOMPRESSOR_HANDLE, LPCVOID, SIZE_T, PVOID, SIZE_T, PSIZE_T);
+        using FnClose  = BOOL(WINAPI*)(DECOMPRESSOR_HANDLE);
+
+        auto fnCreate = reinterpret_cast<FnCreate>(GetProcAddress(hCab, "CreateDecompressor"));
+        auto fnDecomp = reinterpret_cast<FnDecomp>(GetProcAddress(hCab, "Decompress"));
+        auto fnClose  = reinterpret_cast<FnClose> (GetProcAddress(hCab, "CloseDecompressor"));
+
+        if (!fnCreate || !fnDecomp || !fnClose) {
+            Log("Compression API not found in cabinet.dll");
+            FreeLibrary(hCab);
+            return {};
+        }
+
+        DECOMPRESSOR_HANDLE hDecomp = nullptr;
+        if (!fnCreate(COMPRESS_ALGORITHM_XPRESS_HUFF, nullptr, &hDecomp)) {
+            Log("CreateDecompressor failed: %lu", GetLastError());
+            FreeLibrary(hCab);
+            return {};
+        }
+
+        std::vector<uint8_t> out(orig_size);
+        SIZE_T finalSz = 0;
+        const bool ok = fnDecomp(hDecomp,
+                                 raw.data() + 12, comp_size,
+                                 out.data(), orig_size,
+                                 &finalSz) && finalSz == orig_size;
+        fnClose(hDecomp);
+        FreeLibrary(hCab);
+
+        if (!ok) {
+            Log("Decompress failed: %lu (got %zu, expected %u)", GetLastError(), finalSz, orig_size);
+            return {};
+        }
+        Log("decompressed: %u -> %u bytes", comp_size, orig_size);
+        return out;
     }
 
     // Overwrite a file with zeros and delete it. Used by --wipe to match the
@@ -680,10 +746,8 @@ namespace
                 if (probe) {
                     const bool dxgi =
                         RemoteModuleBase(probe, pid, L"dxgi.dll") != 0;
-                    const bool d3d11 =
-                        RemoteModuleBase(probe, pid, L"d3d11.dll") != 0;
                     CloseHandle(probe);
-                    if (dxgi && d3d11)
+                    if (dxgi)
                         return pid;
                 } else {
                     pid = 0;  // process died or restarted
@@ -740,10 +804,9 @@ int wmain(int argc, wchar_t** argv)
         HANDLE probe = OpenProcess(PROCESS_QUERY_INFORMATION | PROCESS_VM_READ, FALSE, pid);
         if (probe) {
             bool dxgi = RemoteModuleBase(probe, pid, L"dxgi.dll") != 0;
-            bool d3d11 = RemoteModuleBase(probe, pid, L"d3d11.dll") != 0;
             CloseHandle(probe);
-            if (!dxgi || !d3d11) {
-                Log("GTA5.exe (pid=%lu) is a dummy or not fully loaded (missing dxgi/d3d11)", pid);
+            if (!dxgi) {
+                Log("GTA5.exe (pid=%lu) is a dummy or not fully loaded (missing dxgi)", pid);
                 return 1;
             }
         }
@@ -754,6 +817,14 @@ int wmain(int argc, wchar_t** argv)
     if (image.empty()) {
         Log("cannot read %ls", dllPath);
         return 1;
+    }
+    // Transparent decompression: if file has SHZP header, unpack first.
+    {
+        auto decompressed = TryDecompress(image);
+        if (!decompressed.empty()) {
+            SecureZeroMemory(image.data(), image.size());
+            image = std::move(decompressed);
+        }
     }
     ZeroOnExit imageWiper{image};
     PeInfo pe{};

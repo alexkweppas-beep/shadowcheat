@@ -475,6 +475,20 @@ namespace Features {
                     : objects.objectColor;
                 textColor = objects.textColor;
                 snapColor = objects.snapLineColor;
+                
+                if (objects.useCustomColors)
+                {
+                    for (int i = 0; i < objects.includeModelCount; ++i)
+                    {
+                        if (objects.includeModels[i] == entry.modelHash)
+                        {
+                            boxColor = objects.includeModelColors[i];
+                            textColor = objects.includeModelColors[i];
+                            snapColor = objects.includeModelColors[i];
+                            break;
+                        }
+                    }
+                }
             }
 
             WorldBoxProjection projection{};
@@ -1063,20 +1077,22 @@ namespace Features {
         if (height < 12.f)
             height = 12.f;
 
-        // Width from torso aspect — sleek and proportional.
-        float width = height * 0.36f;
+        // Width from torso aspect — wider to match external reference style.
+        // External uses pHeight/3.5 per-side, total ≈ 57% of height.
+        float width = height * 0.44f;
         if (boneOk && bonePts && boneOk[lArm] && boneOk[rArm])
         {
             const float shoulder =
                 fabsf(bonePts[lArm].x - bonePts[rArm].x) + 6.f;
             // Only widen if shoulders are clearly wider; never shrink below aspect.
             if (shoulder > width)
-                width = width + (shoulder - width) * 0.35f;
+                width = width + (shoulder - width) * 0.45f;
         }
-        if (width < height * 0.28f)
-            width = height * 0.28f;
-        if (width > height * 0.48f)
-            width = height * 0.48f;
+        if (width < height * 0.34f)
+            width = height * 0.34f;
+        if (width > height * 0.60f)
+            width = height * 0.60f;
+
 
         boxMin = ImVec2(centerX - width * 0.5f, topY);
         boxMax = ImVec2(centerX + width * 0.5f, botY);
@@ -1758,10 +1774,42 @@ namespace Features {
                     isFriend);
             const int profileIndex =
                 static_cast<int>(selectedProfile);
-            const Menu::EspProfileSettings& profile =
+            Menu::EspProfileSettings profile =
                 Menu::s_EspProfiles[profileIndex];
             if (!profile.enabled)
                 continue;
+
+            if (hasLocalPosition) {
+                const float dx = pos.x - localPosition.x;
+                const float dy = pos.y - localPosition.y;
+                const float dz = pos.z - localPosition.z;
+                if (dx * dx + dy * dy + dz * dz > profile.maxDistance * profile.maxDistance)
+                    continue;
+            }
+                
+            if (isFriend && Friends::UseCustomColors)
+            {
+                const char* identity = visual.nickname[0] ? visual.nickname : visual.name;
+                float customColor[4];
+                Friends::GetColorByName(identity, customColor);
+                for (int c = 0; c < 4; ++c)
+                {
+                    profile.boxColor[c] = customColor[c];
+                    profile.nameColor[c] = customColor[c];
+                    profile.factionColor[c] = customColor[c];
+                    profile.familyColor[c] = customColor[c];
+                    profile.healthColor[c] = customColor[c];
+                    profile.armorColor[c] = customColor[c];
+                    profile.skeletonColor[c] = customColor[c];
+                    profile.distanceColor[c] = customColor[c];
+                    profile.weaponColor[c] = customColor[c];
+                    profile.dynamicIdColor[c] = customColor[c];
+                    profile.staticIdColor[c] = customColor[c];
+                    profile.greenZoneColor[c] = customColor[c];
+                    profile.snapLineColor[c] = customColor[c];
+                }
+                profile.snapLineColor[3] *= 0.85f;
+            }
             if (isDeadOrKnock && !profile.showDead)
                 continue;
 
@@ -1786,10 +1834,24 @@ namespace Features {
                     frameEntry.visibleZoneKnown,
                     frameEntry.visibleZoneMask);
 
-            // Whether the labels take the hidden colour along with the outline,
-            // or only the outline does.
-            const bool tintLabels = hidden &&
-                profile.hiddenStyle == EspHiddenTintAll;
+            bool isAimTarget = false;
+            if (profile.targetColorEnabled) {
+                AimTargetSnapshot mark{};
+                if (CopyCrosshairTarget(mark) && mark.valid && mark.ped == ped) {
+                    isAimTarget = true;
+                }
+            }
+
+            const float* activeOverrideColor = nullptr;
+            bool tintLabels = false;
+
+            if (isAimTarget) {
+                activeOverrideColor = profile.targetColor;
+                tintLabels = (profile.targetColorStyle == EspHiddenTintAll);
+            } else if (hidden) {
+                activeOverrideColor = profile.hiddenColor;
+                tintLabels = (profile.hiddenStyle == EspHiddenTintAll);
+            }
 
             ++pedCount;
 
@@ -2177,9 +2239,8 @@ namespace Features {
 
                 EspProjected::DrawOptions drawOptions{};
                 drawOptions.colorOverride =
-                    tintLabels ? profile.hiddenColor : nullptr;
-                drawOptions.boxColorOverride =
-                    hidden ? profile.hiddenColor : nullptr;
+                    tintLabels ? activeOverrideColor : nullptr;
+                drawOptions.boxColorOverride = activeOverrideColor;
                 // Colour the faction tag by the faction itself. Only asked for
                 // when the tag is actually drawn, and the key is the server's
                 // own identifier, so it survives a rename of the visible tag.
@@ -2256,8 +2317,8 @@ namespace Features {
                         ImVec2(
                             (boxMin.x + boxMax.x) * 0.5f,
                             boxMax.y),
-                        hidden
-                            ? profile.hiddenColor
+                        activeOverrideColor
+                            ? activeOverrideColor
                             : profile.snapLineColor);
                 }
 
@@ -2274,8 +2335,8 @@ namespace Features {
                 if (profile.skeleton) {
                     RUNTIME_PROFILE_BEGIN(skeletonTimer);
                     ++skeletonExpected;
-                    const float* skColSrc = hidden
-                        ? profile.hiddenColor
+                    const float* skColSrc = activeOverrideColor
+                        ? activeOverrideColor
                         : profile.skeletonColor;
                     const ImU32 skCol = IM_COL32(
                         (int)(skColSrc[0] * 255.f),
@@ -2560,9 +2621,17 @@ namespace Features {
                     if (dot.x > winPos.x + size - 3.f) dot.x = winPos.x + size - 3.f;
                     if (dot.y > winPos.y + size - 3.f) dot.y = winPos.y + size - 3.f;
 
-                    const ImU32 col = visual.isPlayer
+                    ImU32 col = visual.isPlayer
                         ? (isFriend ? friendCol : enemyCol)
                         : npcCol;
+
+                    if (isFriend && Friends::UseCustomColors)
+                    {
+                        float customColor[4];
+                        Friends::GetColorByName(identity, customColor);
+                        col = radarColor(customColor);
+                    }
+                        
                     const float marker =
                         ImClamp(radar.markerSize, 2.f, 9.f);
                     drawList->AddCircleFilled(dot, marker, col, 16);

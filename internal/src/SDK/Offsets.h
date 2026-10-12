@@ -83,6 +83,9 @@ namespace Offsets
     inline uint8_t** CameraManagerPtr   = nullptr;
     // Cell that holds camGameplayDirector* (FOV metadata source).
     inline uint8_t** GameplayDirectorPtr = nullptr;
+    inline uintptr_t FovWriterAddy = 0;
+    inline float* AspectRatioAddr = nullptr;
+    inline float AspectRatioDefault = 0.f;
 
     // RAGE MP player entity cell layout (heap, verified via CE 30.06.2026).
     // Entity cell begins with a vtable pointer (multiplayer.dll + EntityVtableRVA).
@@ -184,6 +187,9 @@ namespace Offsets
         constexpr uint32_t VehicleReloadTime = 0x130;
         constexpr uint32_t AnimReloadRate = 0x134;
         constexpr uint32_t RecoilShakeAmplitude = 0x2F4;
+        constexpr uint32_t Force = 0xD8;
+        constexpr uint32_t ForceHitPed = 0xDC;
+        constexpr uint32_t ForceHitVehicle = 0xE0;
     }
 
     namespace Viewport {
@@ -231,6 +237,10 @@ namespace Offsets
         // sp¬ GetBoneFunc / amph BonePositionAddress
         inline constexpr const char* GetBone =
             "48 89 5C 24 ? 48 89 6C 24 ? 48 89 74 24 ? 57 48 83 EC 60 48 8B 01 41 8B E8 48 8B F2 48 8B F9 33 DB";
+        inline constexpr const char* FovWriter =
+            "0F 11 83 ? ? ? ? 89 83 ? ? ? ? 0F 11 4C 24 ? 89 44 24 ? E8";
+        inline constexpr const char* AspectRatio =
+            "0F 11 05 ? ? ? ? C7 05 ? ? ? ? ? ? ? ? E8 ? ? ? ? 48 8B";
     }
 
     // Engine: void* __fastcall GetBone(CPed*, __m128*/Vector4*, int32_t mask)

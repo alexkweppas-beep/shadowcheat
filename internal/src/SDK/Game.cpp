@@ -2210,8 +2210,10 @@ namespace Game {
                 !(boneMask & (1u << kPelvis)))
                 __leave;
 
-            const float headToPelvis =
-                bones[kHead].z - bones[kPelvis].z;
+            const float dx_hp = bones[kHead].x - bones[kPelvis].x;
+            const float dy_hp = bones[kHead].y - bones[kPelvis].y;
+            const float dz_hp = bones[kHead].z - bones[kPelvis].z;
+            const float headToPelvis = std::sqrt(dx_hp * dx_hp + dy_hp * dy_hp + dz_hp * dz_hp);
             if (headToPelvis < 0.15f || headToPelvis > 1.8f)
                 __leave;
 

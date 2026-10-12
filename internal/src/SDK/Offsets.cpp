@@ -135,6 +135,25 @@ namespace Offsets
 
         ResolveGetBone(base);
 
+        {
+            uint8_t* match = Memory::FindPattern("GTA5.exe", Patterns::FovWriter);
+            if (match) {
+                FovWriterAddy = reinterpret_cast<uintptr_t>(match);
+            }
+        }
+        {
+            uint8_t* match = Memory::FindPattern("GTA5.exe", Patterns::AspectRatio);
+            if (match) {
+                AspectRatioAddr = Memory::GetAbsoluteAddress<float*>(match);
+            } else {
+                // Fallback to RAGE MP (GTA5RP) hardcoded RVA discovered via CE scan
+                AspectRatioAddr = reinterpret_cast<float*>(base + 0x1E81080);
+            }
+            if (AspectRatioAddr && !IsBadReadPtr(AspectRatioAddr, sizeof(float))) {
+                AspectRatioDefault = *AspectRatioAddr;
+            }
+        }
+
         hooks::HLog("Offsets: initialized via static RVA (GTA5 build 1.0.231.0)");
         hooks::HLog(WorldPtr           ? "Offsets: WorldPtr OK"           : "Offsets: WorldPtr FAILED");
         hooks::HLog(ReplayInterfacePtr ? "Offsets: ReplayInterface OK"    : "Offsets: ReplayInterface FAILED");
@@ -149,6 +168,8 @@ namespace Offsets
                 ? "Offsets: GameplayDirector OK"
                 : "Offsets: GameplayDirector FAILED");
         hooks::HLog(GetBone ? "Offsets: GetBone OK" : "Offsets: GetBone FAILED");
+        hooks::HLog(FovWriterAddy ? "Offsets: FovWriter OK" : "Offsets: FovWriter FAILED");
+        hooks::HLog(AspectRatioAddr ? "Offsets: AspectRatio OK" : "Offsets: AspectRatio FAILED");
 
         const bool ok =
             (WorldPtr != nullptr) && (ReplayInterfacePtr != nullptr);

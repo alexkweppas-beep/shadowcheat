@@ -196,6 +196,9 @@ namespace MenuUi
         bool overflow = false;
         bool bindable = true;
         float iconScale = 1.f;
+        const char* tipEn = nullptr;
+        const char* tipRu = nullptr;
+        const char* tipUa = nullptr;
     };
 
     struct FeatureRowResult final

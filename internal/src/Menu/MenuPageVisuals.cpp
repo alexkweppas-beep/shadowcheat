@@ -47,6 +47,7 @@
 #include "../Features/ObsBypass.h"
 #include "../Features/MeshSilhouette.h"
 #include "../Features/PedPreview.h"
+#include "../Features/WebRadar.h"
 #include "../Main/Hooks.h"
 #include "../SDK/Game.h"
 #include "../SDK/RageBuildFlavor.h"
@@ -384,6 +385,8 @@ namespace Menu
             radar.vehicleColor,
             false);
         MenuUi::EndInspectorIsland();
+
+        RenderWebRadarIsland();
 
         MenuUi::NextPageColumn();
         MenuUi::BeginInspectorIsland(
@@ -1095,12 +1098,25 @@ namespace Menu
             MenuUi::EndOverflowPopup();
         }
         VisualsRow(
-            "dead",
-            ICON_FA_SKULL,
-            T("Show Dead", "Показывать мёртвых", "Показувати мертвих"),
-            &profile.showDead,
-            profile.deadColor,
-            false);
+            "target",
+            ICON_FA_CROSSHAIRS,
+            T("Target", "Таргет", "Таргет"),
+            &profile.targetColorEnabled,
+            profile.targetColor,
+            true);
+        if (MenuUi::BeginOverflowPopup("target"))
+        {
+            gui->dropdown(
+                T("Recolour", "Перекрашивать", "Перефарбовувати"),
+                &profile.targetColorStyle,
+                HiddenStyleNames(),
+                EspHiddenStyleCount);
+            if (profile.targetColorStyle < 0 ||
+                profile.targetColorStyle >= EspHiddenStyleCount)
+                profile.targetColorStyle = EspHiddenTintAll;
+            MenuUi::EndOverflowPopup();
+        }
+
         MenuUi::EndInspectorIsland();
 
         MenuUi::BeginInspectorIsland(
@@ -1219,6 +1235,7 @@ namespace Menu
             if (profile.armorStyle < 0 ||
                 profile.armorStyle >= EspBarStyleCount)
                         profile.armorStyle = EspBarSolid;
+                    int prevArmorPos = profile.armorBarPos;
                     gui->dropdown(
                         T("Armor Position", "Позиция брони", "Позиція броні"),
                         &profile.armorBarPos,
@@ -1226,6 +1243,13 @@ namespace Menu
                         4);
                     if (profile.armorBarPos < 0 || profile.armorBarPos > 3)
                         profile.armorBarPos = EspHealthBarLeft;
+                    if (profile.armorBarPos != prevArmorPos) {
+                        EspProjected::Side s = (profile.armorBarPos == EspHealthBarLeft) ? EspProjected::Side::Left :
+                                               (profile.armorBarPos == EspHealthBarRight) ? EspProjected::Side::Right :
+                                               (profile.armorBarPos == EspHealthBarTop) ? EspProjected::Side::Top :
+                                               EspProjected::Side::Bottom;
+                        EspProjected::SetLayout(profile, EspProjected::ElementId::Armor, s, 1);
+                    }
             gui->checkbox(
                 T("Show value", "Показывать значение", "Показувати значення"),
                 &profile.armorShowValue);
@@ -1372,6 +1396,18 @@ namespace Menu
             MenuUi::EndInspectorIsland();
         }
 
+        MenuUi::BeginInspectorIsland(
+            "island_render_distance",
+            T("MAX DISTANCE", "МАКС ДИСТАНЦИЯ", "МАКС ДИСТАНЦІЯ"));
+        gui->slider_float_icon(
+            ICON_FA_RULER,
+            T("Max distance", "Макс. дистанция", "Макс. дистанція"),
+            &profile.maxDistance,
+            10.f,
+            600.f,
+            "%.0f m");
+        MenuUi::EndInspectorIsland();
+
         ImGui::Dummy(
             ImVec2(0.f, MenuTheme::Sizes().space2 * UIScale()));
     }
@@ -1462,6 +1498,7 @@ namespace Menu
             if (profile.armorStyle < 0 ||
                 profile.armorStyle >= EspBarStyleCount)
                 profile.armorStyle = EspBarSolid;
+            int prevArmorPos = profile.armorBarPos;
             gui->dropdown(
                 T("Armor Position", "Позиция брони", "Позиція броні"),
                 &profile.armorBarPos,
@@ -1469,6 +1506,13 @@ namespace Menu
                 4);
             if (profile.armorBarPos < 0 || profile.armorBarPos > 3)
                 profile.armorBarPos = EspHealthBarLeft;
+            if (profile.armorBarPos != prevArmorPos) {
+                EspProjected::Side s = (profile.armorBarPos == EspHealthBarLeft) ? EspProjected::Side::Left :
+                                       (profile.armorBarPos == EspHealthBarRight) ? EspProjected::Side::Right :
+                                       (profile.armorBarPos == EspHealthBarTop) ? EspProjected::Side::Top :
+                                       EspProjected::Side::Bottom;
+                EspProjected::SetLayout(profile, EspProjected::ElementId::Armor, s, 1);
+            }
             gui->checkbox(
                 T("Armor value", "Значение брони", "Значення броні"),
                 &profile.armorShowValue);

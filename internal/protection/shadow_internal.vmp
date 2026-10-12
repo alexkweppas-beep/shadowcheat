@@ -1,39 +1,42 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <Document>
-	<Protection InputFileName="shadow_internal.raw.dll" Options="32768" CheckKernelDebugger="false" CheckVirtualMachine="false" CompressionMode="0" VMCodeSectionName=".svm" VMExecutorCount="2" LicenseDataFileName="" OutputFileName="" WaterMarkName="" RunParameters="">
+	<Protection InputFileName="shadow_internal.raw.dll" Options="32768" CheckKernelDebugger="false" CheckVirtualMachine="false" CompressionMode="1" VMCodeSectionName=".svm" VMExecutorCount="2" LicenseDataFileName="" OutputFileName="" WaterMarkName="" RunParameters="">
 		<Folders/>
 		<Procedures>
 			<Procedure MapAddress="VMProtectMarker &quot;Core.V8.Resolve&quot;" IncludedInCompilation="true" Options="1"/>
-			<Procedure MapAddress="VMProtectMarker &quot;Core.V8.Fingerprint&quot;" IncludedInCompilation="true" Options="2"/>
+			<Procedure MapAddress="VMProtectMarker &quot;Core.V8.Fingerprint&quot;" IncludedInCompilation="true" Options="1"/>
 			<Procedure MapAddress="VMProtectMarker &quot;Core.V8.Isolate&quot;" IncludedInCompilation="true" Options="1"/>
-			<Procedure MapAddress="VMProtectMarker &quot;Cloud.Session&quot;" IncludedInCompilation="true" Options="2"/>
-			<Procedure MapAddress="VMProtectMarker &quot;Cloud.AuthHeader&quot;" IncludedInCompilation="true" Options="2"/>
-			<Procedure MapAddress="VMProtectMarker &quot;Cloud.StoreToken&quot;" IncludedInCompilation="true" Options="2"/>
-			<Procedure MapAddress="VMProtectMarker &quot;Cloud.LoadToken&quot;" IncludedInCompilation="true" Options="2"/>
-			<Procedure MapAddress="VMProtectMarker &quot;Feature.Bundle&quot;" IncludedInCompilation="true" Options="2"/>
-			<Procedure MapAddress="VMProtectMarker &quot;GTA5RP.Shield&quot;" IncludedInCompilation="true" Options="2"/>
+			<Procedure MapAddress="VMProtectMarker &quot;Cloud.Session&quot;" IncludedInCompilation="true" Options="1"/>
+			<Procedure MapAddress="VMProtectMarker &quot;Cloud.AuthHeader&quot;" IncludedInCompilation="true" Options="1"/>
+			<Procedure MapAddress="VMProtectMarker &quot;Cloud.StoreToken&quot;" IncludedInCompilation="true" Options="1"/>
+			<Procedure MapAddress="VMProtectMarker &quot;Cloud.LoadToken&quot;" IncludedInCompilation="true" Options="1"/>
+			<Procedure MapAddress="VMProtectMarker &quot;GTA5RP.Shield&quot;" IncludedInCompilation="true" Options="1"/>
 			<Procedure MapAddress="VMProtectMarker &quot;GTA5RP.Status&quot;" IncludedInCompilation="true" Options="1"/>
-			<Procedure MapAddress="VMProtectMarker &quot;GTA5RP.Profile&quot;" IncludedInCompilation="true" Options="2"/>
-			<Procedure MapAddress="VMProtectMarker &quot;Server.Probe&quot;" IncludedInCompilation="true" Options="2"/>
-			<Procedure MapAddress="VMProtectMarker &quot;Silent.Initialize&quot;" IncludedInCompilation="true" Options="2"/>
+			<Procedure MapAddress="VMProtectMarker &quot;GTA5RP.Profile&quot;" IncludedInCompilation="true" Options="1"/>
+			<Procedure MapAddress="VMProtectMarker &quot;Server.Probe&quot;" IncludedInCompilation="true" Options="1"/>
+			<Procedure MapAddress="VMProtectMarker &quot;Quant.Load&quot;" IncludedInCompilation="true" Options="1"/>
+			<Procedure MapAddress="VMProtectMarker &quot;Ukraine.Load&quot;" IncludedInCompilation="true" Options="1"/>
+			<Procedure MapAddress="VMProtectMarker &quot;FiveRP.Load&quot;" IncludedInCompilation="true" Options="1"/>
+			<Procedure MapAddress="VMProtectMarker &quot;Silent.Initialize&quot;" IncludedInCompilation="true" Options="1"/>
 			<Procedure MapAddress="VMProtectMarker &quot;Damager.Load&quot;" IncludedInCompilation="true" Options="1"/>
 			<Procedure MapAddress="VMProtectMarker &quot;AutoLoot.Load&quot;" IncludedInCompilation="true" Options="1"/>
 			<Procedure MapAddress="VMProtectMarker &quot;FiveRP.AdminScan&quot;" IncludedInCompilation="true" Options="1"/>
 			<Procedure MapAddress="VMProtectMarker &quot;World.Snapshot&quot;" IncludedInCompilation="true" Options="1"/>
 			<Procedure MapAddress="VMProtectMarker &quot;Names.Snapshot&quot;" IncludedInCompilation="true" Options="1"/>
 			<Procedure MapAddress="VMProtectMarker &quot;Misc.Freecam&quot;" IncludedInCompilation="true" Options="1"/>
-			<Procedure MapAddress="VMProtectMarker &quot;Misc.ClickWarp&quot;" IncludedInCompilation="true" Options="2"/>
-			<Procedure MapAddress="VMProtectMarker &quot;Misc.Reset&quot;" IncludedInCompilation="true" Options="2"/>
+			<Procedure MapAddress="VMProtectMarker &quot;Misc.ClickWarp&quot;" IncludedInCompilation="true" Options="1"/>
+			<Procedure MapAddress="VMProtectMarker &quot;Misc.Reset&quot;" IncludedInCompilation="true" Options="1"/>
 			<Procedure MapAddress="VMProtectMarker &quot;Misc.Player&quot;" IncludedInCompilation="true" Options="1"/>
 			<Procedure MapAddress="VMProtectMarker &quot;Misc.World&quot;" IncludedInCompilation="true" Options="1"/>
 			<Procedure MapAddress="VMProtectMarker &quot;Core.Offsets&quot;" IncludedInCompilation="true" Options="1"/>
-			<Procedure MapAddress="VMProtectMarker &quot;Obs.Install&quot;" IncludedInCompilation="true" Options="0"/>
+			<Procedure MapAddress="VMProtectMarker &quot;Obs.Install&quot;" IncludedInCompilation="true" Options="1"/>
 			<Procedure MapAddress="VMProtectMarker &quot;Combat.Bake&quot;" IncludedInCompilation="true" Options="1"/>
-			<Procedure MapAddress="VMProtectMarker &quot;Combat.Policy&quot;" IncludedInCompilation="true" Options="1"/>
-			<Procedure MapAddress="VMProtectMarker &quot;WorldProbe.Initialize&quot;" IncludedInCompilation="true" Options="2"/>
-			<Procedure MapAddress="VMProtectMarker &quot;VerifyLaunchAuth&quot;" IncludedInCompilation="true" Options="0"/>
+			<Procedure MapAddress="VMProtectMarker &quot;VerifySharedMemory&quot;" IncludedInCompilation="true" Options="1"/>
+			<Procedure MapAddress="VMProtectMarker &quot;VerifyLoaderPidOnce&quot;" IncludedInCompilation="true" Options="1"/>
+			<Procedure MapAddress="VMProtectMarker &quot;ServerSubscriptionThread&quot;" IncludedInCompilation="true" Options="1"/>
 		</Procedures>
 	</Protection>
 	<DLLBox/>
 	<Script IncludedInCompilation="true"></Script>
 </Document>
+

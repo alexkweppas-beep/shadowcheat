@@ -160,30 +160,31 @@ state.names.join('|');
 
     __declspec(noinline) void EnqueueInstall() noexcept
     {
+        static const char* s_Source = nullptr;
+        if (!s_Source)
+        {
+            SHADOW_PROTECT_ULTRA("GTA5RP.Shield");
+            s_Source = SHADOW_DECRYPT_STRING_A(kInstallScript);
+            SHADOW_PROTECT_END();
+        }
+        if (!s_Source)
+            return;
+
         char script[sizeof(kInstallScript) + 16]{};
-        bool built = false;
-        SHADOW_PROTECT_ULTRA("GTA5RP.Shield");
-        const char* source = SHADOW_DECRYPT_STRING_A(kInstallScript);
-        const char* marker = source
-            ? strstr(source, "BLOCK_FLAG")
-            : nullptr;
+        const char* marker = strstr(s_Source, "BLOCK_FLAG");
         if (marker)
         {
             const std::size_t prefix =
-                static_cast<std::size_t>(marker - source);
-            memcpy(script, source, prefix);
+                static_cast<std::size_t>(marker - s_Source);
+            memcpy(script, s_Source, prefix);
             const char* value = g_Enabled ? "true" : "false";
             lstrcpynA(
                 script + prefix,
                 value,
                 static_cast<int>(sizeof(script) - prefix));
             lstrcatA(script, marker + strlen("BLOCK_FLAG"));
-            built = true;
-        }
-        SHADOW_FREE_STRING(source);
-        SHADOW_PROTECT_END();
-        if (built)
             RageV8Runtime::Enqueue(script, &g_PendingInstall);
+        }
         SecureZeroMemory(script, sizeof(script));
     }
 }
@@ -256,15 +257,17 @@ void Update() noexcept
     if (now >= g_NextStatus && !g_PendingStatus && !g_PendingInstall)
     {
         g_NextStatus = now + 2000;
-        SHADOW_PROTECT_MUT("GTA5RP.Status");
-        const char* statusScript =
-            SHADOW_DECRYPT_STRING_A(kStatusScript);
-        if (statusScript)
+        static const char* s_Status = nullptr;
+        if (!s_Status)
+        {
+            SHADOW_PROTECT_MUT("GTA5RP.Status");
+            s_Status = SHADOW_DECRYPT_STRING_A(kStatusScript);
+            SHADOW_PROTECT_END();
+        }
+        if (s_Status)
             RageV8Runtime::Enqueue(
-                statusScript,
+                s_Status,
                 &g_PendingStatus);
-        SHADOW_FREE_STRING(statusScript);
-        SHADOW_PROTECT_END();
     }
 }
 

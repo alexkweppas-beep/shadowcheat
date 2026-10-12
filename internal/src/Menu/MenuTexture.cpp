@@ -11,6 +11,24 @@
 #include <cstdint>
 #include <cstring>
 
+// stb_image: pure-C PNG decoder, no COM/WIC required.
+// STB_IMAGE_STATIC keeps all symbols file-scoped so they don't clash with
+// the identical implementation already compiled in ModelPreview.cpp.
+#pragma warning(push)
+#pragma warning(disable: 4244 4996)
+#define STBI_NO_HDR
+#define STBI_NO_LINEAR
+#define STBI_ONLY_PNG
+#define STBI_ONLY_JPEG
+#define STB_IMAGE_STATIC
+#define STB_IMAGE_IMPLEMENTATION
+#define STBI_MALLOC(sz)       HeapAlloc(GetProcessHeap(), 0, (sz))
+#define STBI_REALLOC(p, nsz)  HeapReAlloc(GetProcessHeap(), 0, (p), (nsz))
+#define STBI_FREE(p)          HeapFree(GetProcessHeap(), 0, (p))
+#include "../thirdparty/model_preview/stb_image.h"
+#pragma warning(pop)
+
+
 #pragma comment(lib, "windowscodecs.lib")
 #pragma comment(lib, "winhttp.lib")
 
@@ -580,35 +598,115 @@ void* GetWeaponIconImGui(const char* iconFile) noexcept
     return reinterpret_cast<void*>(GetWeaponIcon(iconFile));
 }
 
+// ---------------------------------------------------------------------------
+// LoadPngMemoryStb — decode PNG/JPEG with stb_image (no COM/WIC, no
+// CoInitialize needed, works on any thread, any COM apartment model).
+// ---------------------------------------------------------------------------
+    static bool LoadPngMemoryStb(
+        const unsigned char* data,
+        std::uint32_t size,
+        ID3D11ShaderResourceView** outSrv,
+        unsigned* outWidth = nullptr,
+        unsigned* outHeight = nullptr) noexcept
+    {
+        if (!g_Device || !data || size == 0 || !outSrv)
+            return false;
+        *outSrv = nullptr;
+        if (outWidth)  *outWidth  = 0;
+        if (outHeight) *outHeight = 0;
+
+        int w = 0, h = 0, ch = 0;
+        stbi_uc* pixels = stbi_load_from_memory(
+            data, static_cast<int>(size), &w, &h, &ch, 4);
+        if (!pixels || w <= 0 || h <= 0 || w > 4096 || h > 4096)
+        {
+            if (pixels) stbi_image_free(pixels);
+            return false;
+        }
+
+        D3D11_TEXTURE2D_DESC desc{};
+        desc.Width            = static_cast<UINT>(w);
+        desc.Height           = static_cast<UINT>(h);
+        desc.MipLevels        = 1;
+        desc.ArraySize        = 1;
+        desc.Format           = DXGI_FORMAT_R8G8B8A8_UNORM;
+        desc.SampleDesc.Count = 1;
+        desc.Usage            = D3D11_USAGE_IMMUTABLE;
+        desc.BindFlags        = D3D11_BIND_SHADER_RESOURCE;
+
+        D3D11_SUBRESOURCE_DATA sub{};
+        sub.pSysMem     = pixels;
+        sub.SysMemPitch = static_cast<UINT>(w) * 4u;
+
+        ID3D11Texture2D* tex = nullptr;
+        HRESULT hr = g_Device->CreateTexture2D(&desc, &sub, &tex);
+        stbi_image_free(pixels);
+        if (FAILED(hr) || !tex)
+            return false;
+
+        D3D11_SHADER_RESOURCE_VIEW_DESC srvDesc{};
+        srvDesc.Format                    = desc.Format;
+        srvDesc.ViewDimension             = D3D11_SRV_DIMENSION_TEXTURE2D;
+        srvDesc.Texture2D.MipLevels       = 1;
+        hr = g_Device->CreateShaderResourceView(tex, &srvDesc, outSrv);
+        tex->Release();
+        if (FAILED(hr) || !*outSrv)
+            return false;
+        if (outWidth)  *outWidth  = static_cast<unsigned>(w);
+        if (outHeight) *outHeight = static_cast<unsigned>(h);
+        return true;
+    }
+
 void* GetSilhouetteImGui(
     unsigned* outWidth,
     unsigned* outHeight) noexcept
 {
-    // Embedded, so the stage never waits on the cloud pack.
+    // Embedded silhouette PNG. We try stb_image first (zero-COM, works on any
+    // thread/apartment) and fall back to WIC. On success the result is cached
+    // in a static SRV for the lifetime of the device.
     static ID3D11ShaderResourceView* srv = nullptr;
-    static unsigned width = 0;
+    static unsigned width  = 0;
     static unsigned height = 0;
-    static bool failed = false;
+    // Retry counter: allow a few failures before giving up. This handles the
+    // case where g_Device is valid but DX is transiently busy on the first
+    // frame. After kMaxTries the fallback polygon silhouette is drawn instead.
+    static int tries = 0;
+    constexpr int kMaxTries = 8;
 
-    if (!srv && !failed && g_Device)
+    if (!srv && tries < kMaxTries && g_Device)
     {
-        if (!LoadPngMemory(
+        ++tries;
+        // Primary: stb_image — no COM dependency whatsoever.
+        bool ok = LoadPngMemoryStb(
+            SilhouetteAsset::kPng,
+            SilhouetteAsset::kPngSize,
+            &srv, &width, &height);
+
+        if (!ok)
+        {
+            // Fallback: WIC path (needs COM, may fail on some setups).
+            ok = LoadPngMemory(
                 SilhouetteAsset::kPng,
                 SilhouetteAsset::kPngSize,
-                &srv,
-                &width,
-                &height))
+                &srv, &width, &height);
+        }
+
+        if (!ok)
         {
-            failed = true;
-            srv = nullptr;
+            srv    = nullptr;
+            width  = 0;
+            height = 0;
+        }
+        else
+        {
+            tries = kMaxTries; // success — stop retrying
         }
     }
-    if (outWidth)
-        *outWidth = width;
-    if (outHeight)
-        *outHeight = height;
+    if (outWidth)  *outWidth  = width;
+    if (outHeight) *outHeight = height;
     return reinterpret_cast<void*>(srv);
 }
+
 
 void* GetGlowImGui() noexcept
 {

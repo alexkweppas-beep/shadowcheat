@@ -733,7 +733,9 @@ void Update() {
   // on: the nearby count comes from the nametag snapshot and needs none of
   // it. Keyed on the count toggle, that sweep ran for people who only
   // wanted to know whether anyone was watching.
-  FiveRpAdminScan::Update(MiscFeatures::GetSettings().showAdminList);
+  FiveRpAdminScan::Update(
+      MiscFeatures::GetSettings().showAdminList ||
+      MiscFeatures::GetSettings().specDetect);
   const auto namesProfile = RuntimeProfiler::Begin();
   RagePlayerNames::Update();
   RageWorldEntities::Update();

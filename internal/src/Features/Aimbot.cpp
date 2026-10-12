@@ -89,6 +89,7 @@ volatile LONG g_SilentTargetSequence = 0;
 AimTargetSnapshot g_DisplayTarget{};
 AimTargetSnapshot g_LockedSilentTarget{};
 AimTargetSnapshot g_LastVectorTarget{};
+AimTargetSnapshot g_CrosshairTarget{};
 AimDiagnostics g_Diagnostics{};
 
 void PublishSilentTarget(
@@ -1243,9 +1244,31 @@ bool CopyDisplayTarget(AimTargetSnapshot& output) noexcept
     return true;
 }
 
+bool CopyCrosshairTarget(AimTargetSnapshot& output) noexcept
+{
+    if (!g_CrosshairTarget.valid)
+    {
+        output = {};
+        return false;
+    }
+    output = g_CrosshairTarget;
+    return true;
+}
+
 AimDiagnostics GetAimDiagnostics() noexcept
 {
     return g_Diagnostics;
+}
+
+static BYTE ReadTriggerStateSafe() noexcept
+{
+    uintptr_t base = reinterpret_cast<uintptr_t>(GetModuleHandleA(NULL));
+    if (!base) return 0;
+    __try {
+        return *(BYTE*)(base + 0x202C8E0);
+    } __except(EXCEPTION_EXECUTE_HANDLER) {
+        return 0;
+    }
 }
 
 __declspec(noinline) void RunAimbot()
@@ -1302,6 +1325,49 @@ __declspec(noinline) void RunAimbot()
             vectorKeyHeld,
         profile.vecKey);
 
+    bool anyTargetColor = false;
+    for (int i = 0; i < static_cast<int>(Menu::EspProfileId::Count); ++i)
+    {
+        if (Menu::s_EspProfiles[i].targetColorEnabled)
+        {
+            anyTargetColor = true;
+            break;
+        }
+    }
+
+    const Game::FramePedContext& frame = Game::GetFramePedContext();
+    if (anyTargetColor && frame.localPed)
+    {
+        const ImVec2 display = ImGui::GetIO().DisplaySize;
+        const ImVec2 center(display.x * 0.5f, display.y * 0.5f);
+        ModeSettings crossSettings{};
+        crossSettings.enabled = true;
+        crossSettings.nearest = true;
+        crossSettings.boneNearestAny = true;
+        crossSettings.visibleCheck = true;
+        crossSettings.wallshot = false;
+        crossSettings.ignoreDead = profile.ignoreDead;
+        crossSettings.ignoreNpc = profile.ignoreNpc;
+        crossSettings.ignoreAdmins = profile.ignoreAdmins;
+        crossSettings.ignoreFriends = profile.ignoreFriends || Menu::s_Aim_IgnoreFriends;
+        crossSettings.adminThreshold = Menu::s_AdminLevelThreshold;
+        crossSettings.lockOnLast = false;
+        crossSettings.fovPixels = 30.f; // Small radius for strict crosshair targeting
+        for (int i = 0; i < Menu::kAimHitboxCount; ++i)
+            crossSettings.bones[i] = true;
+
+        TargetCandidate crossTarget{};
+        SelectTarget(crossSettings, frame, center, nullptr, crossTarget);
+        if (crossTarget.valid)
+            g_CrosshairTarget = ToSnapshot(crossTarget);
+        else
+            g_CrosshairTarget = {};
+    }
+    else
+    {
+        g_CrosshairTarget = {};
+    }
+
     if (!g_AimbotEnabled)
     {
         return;
@@ -1319,8 +1385,6 @@ __declspec(noinline) void RunAimbot()
         return;
     }
 
-    const Game::FramePedContext& frame =
-        Game::GetFramePedContext();
     auto* localPed = frame.localPed;
     if (!localPed)
     {
@@ -1568,26 +1632,6 @@ __declspec(noinline) void RunAimbot()
 
     if (profile.triggerEnabled && triggerKeyHeld)
     {
-        ModeSettings triggerSettings{};
-        triggerSettings.enabled = true;
-        // Fire when the crosshair is actually on an enabled body part. There is
-        // no radius to tune: the capsules are sized in metres and scaled per
-        // ped, so the test means the same thing at 3 m and at 300 m.
-        triggerSettings.hitboxTest = true;
-        triggerSettings.visibleCheck =
-            profile.triggerVisible;
-        triggerSettings.ignoreDead = profile.ignoreDead;
-        triggerSettings.ignoreNpc = profile.ignoreNpc;
-        triggerSettings.ignoreAdmins = profile.ignoreAdmins;
-        triggerSettings.ignoreFriends =
-            profile.ignoreFriends || Menu::s_Aim_IgnoreFriends;
-        triggerSettings.adminThreshold =
-            Menu::s_AdminLevelThreshold;
-        triggerSettings.lockOnLast = false;
-        for (int i = 0; i < Menu::kAimHitboxCount; ++i)
-            triggerSettings.bones[i] =
-                profile.triggerBones[i];
-
         const ULONGLONG now = GetTickCount64();
         if (s_TriggerProfile != &profile ||
             s_TriggerLastTickAt == 0 ||
@@ -1601,26 +1645,46 @@ __declspec(noinline) void RunAimbot()
         }
         s_TriggerLastTickAt = now;
 
-        SelectTarget(
-            triggerSettings,
-            frame,
-            center,
-            nullptr,
-            triggerTarget);
-        g_Diagnostics.triggerTargetValid =
-            triggerTarget.valid;
-        if (triggerTarget.valid)
+        bool targetValid = false;
+
+        if (profile.triggerBoneNearestAny)
         {
-            // Only a change of ped restarts the reaction delay. Restarting it
-            // when the closest bone changed meant that sweeping across a body,
-            // where head and chest trade places every frame, kept resetting the
-            // dwell timer and the trigger never fired at all.
-            if (triggerTarget.ped != s_TriggerCandidate)
+            BYTE triggerState = ReadTriggerStateSafe();
+            targetValid = (triggerState == 1 || triggerState == 2);
+            g_Diagnostics.triggerTargetValid = targetValid;
+        }
+        else
+        {
+            ModeSettings triggerSettings{};
+            triggerSettings.enabled = true;
+            triggerSettings.hitboxTest = true;
+            triggerSettings.visibleCheck = profile.triggerVisible;
+            triggerSettings.ignoreDead = profile.ignoreDead;
+            triggerSettings.ignoreNpc = profile.ignoreNpc;
+            triggerSettings.ignoreAdmins = profile.ignoreAdmins;
+            triggerSettings.ignoreFriends = profile.ignoreFriends || Menu::s_Aim_IgnoreFriends;
+            triggerSettings.adminThreshold = Menu::s_AdminLevelThreshold;
+            triggerSettings.lockOnLast = false;
+            for (int i = 0; i < Menu::kAimHitboxCount; ++i)
+                triggerSettings.bones[i] = profile.triggerBones[i];
+
+            SelectTarget(triggerSettings, frame, center, nullptr, triggerTarget);
+            targetValid = triggerTarget.valid;
+            g_Diagnostics.triggerTargetValid = targetValid;
+            
+            if (targetValid)
             {
-                s_TriggerCandidate = triggerTarget.ped;
-                s_TriggerAcquiredAt = now;
+                if (triggerTarget.ped != s_TriggerCandidate)
+                {
+                    s_TriggerCandidate = triggerTarget.ped;
+                    s_TriggerAcquiredAt = now;
+                }
+                s_TriggerHitbox = triggerTarget.hitbox;
             }
-            s_TriggerHitbox = triggerTarget.hitbox;
+        }
+
+        if (targetValid)
+        {
             const ULONGLONG delay = static_cast<ULONGLONG>(
                 ClampFloat(profile.triggerDelayMs, 0.f, 250.f));
             const ULONGLONG cooldown = static_cast<ULONGLONG>(
@@ -1632,23 +1696,13 @@ __declspec(noinline) void RunAimbot()
                 s_TriggerLastShotAt == 0 ||
                 (now >= s_TriggerLastShotAt &&
                  now - s_TriggerLastShotAt >= cooldown);
+            
             if (dwellReady && cooldownReady)
             {
-                // The shot goes through the RAGE script thread. RunAimbot runs
-                // in the D3D Present hook, and a control value submitted from
-                // there is never consumed by the game — which is why calling
-                // SET_CONTROL_VALUE_NEXT_FRAME straight from here fired
-                // nothing at all.
-                bool fired =
-                    MiscFeatures::RequestAttackBurst(60);
+                bool fired = MiscFeatures::RequestAttackBurst(60);
                 if (!fired)
                 {
-                    // Only reachable before V8 comes up. Kept so the feature
-                    // degrades instead of going silent.
-                    fired = NativeInvoke::SetControlValueNextFrame(
-                        0,
-                        24,
-                        1.f);
+                    fired = NativeInvoke::SetControlValueNextFrame(0, 24, 1.f);
                 }
                 if (fired)
                 {

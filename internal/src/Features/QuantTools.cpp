@@ -1,8 +1,9 @@
 #include "QuantTools.h"
 
-#include "FeatureBundles.h"
+#include "QuantToolsScript.h"
 #include "RageV8Runtime.h"
 #include "ServerProfile.h"
+#include "../vmp_markers.hpp"
 #include "../SDK/RageBuildFlavor.h"
 #include "../Menu/Menu.h"
 #include "../Menu/IconsFontAwesome6.h"
@@ -1232,20 +1233,19 @@ namespace
         if (g_ServerKind != ServerKind::Quant)
             return;
         g_LastLoadAttempt = GetTickCount64();
-        FeatureBundles::Request(FeatureBundles::Id::Quant);
-        SecureScriptBlob::Plaintext source;
-        if (!FeatureBundles::Consume(
-                FeatureBundles::Id::Quant,
-                source))
-            return;
         bool queued = false;
-        if (source.Data()) {
+        SHADOW_PROTECT_ULTRA("Quant.Load");
+        const char* protectedSource =
+            SHADOW_DECRYPT_STRING_A(QuantToolsScript::kSource);
+        if (protectedSource)
+        {
             queued = QueueScript(
-                source.Data(),
+                protectedSource,
                 RequestKind::Load,
                 "Load Quant Tools");
         }
-        source.Clear();
+        SHADOW_FREE_STRING(protectedSource);
+        SHADOW_PROTECT_END();
         if (!queued)
         {
             Menu::PushNotification(

@@ -1,6 +1,6 @@
 #include "ModelPreview.h"
 
-#include <d3dcompiler.h>
+// #include <d3dcompiler.h>
 #include <DirectXMath.h>
 #include <Windows.h>
 #include <winhttp.h>
@@ -24,15 +24,13 @@ extern "C" IMAGE_DOS_HEADER __ImageBase;
 // The payload wipes its PE header at the end of DllMain, after which
 // FindResourceW can no longer locate RCDATA in this image. DllMain primes
 // this cache first; LoadDefaultAsset reads from it.
-static uint8_t*       g_baked_res_data = nullptr;
+static const uint8_t* g_baked_res_data = nullptr;
 static size_t         g_baked_res_size = 0;
 
 namespace ModelPreview
 {
 	void CacheEmbeddedMeshResource()
 	{
-		if (g_baked_res_data)
-			return;
 		const HMODULE self = reinterpret_cast<HMODULE>(&__ImageBase);
 		const HRSRC res = FindResourceW(
 			self, MAKEINTRESOURCEW(IDR_MODEL_PREVIEW_MESH), RT_RCDATA);
@@ -43,17 +41,12 @@ namespace ModelPreview
 		const auto* bytes = static_cast<const uint8_t*>(LockResource(loaded));
 		if (!bytes || !size_dw)
 			return;
-		auto* owned = static_cast<uint8_t*>(
-			HeapAlloc(GetProcessHeap(), 0, size_dw));
-		if (!owned)
-			return;
-		CopyMemory(owned, bytes, size_dw);
-		g_baked_res_data = owned;
+		g_baked_res_data = bytes;
 		g_baked_res_size = size_dw;
 	}
 }
 
-#pragma comment(lib, "d3dcompiler.lib")
+// #pragma comment(lib, "d3dcompiler.lib")
 #pragma comment(lib, "winhttp.lib")
 
 #pragma warning(push)
@@ -303,6 +296,8 @@ float4 ps_main(VS_OUT i, bool isFront : SV_IsFrontFace) : SV_TARGET
 
 	bool Init(ID3D11Device* device, ID3D11DeviceContext* ctx)
 	{
+		return false;
+#if 0
 		if (g_inited) return core_resources_ready();
 		if (!device || !ctx) return false;
 		release_core_resources();
@@ -315,6 +310,7 @@ float4 ps_main(VS_OUT i, bool isFront : SV_IsFrontFace) : SV_TARGET
 		ID3DBlob* ps_blob = nullptr;
 		ID3DBlob* err = nullptr;
 
+/*
 		HRESULT hr = D3DCompile(shader_src, strlen(shader_src), nullptr, nullptr, nullptr,
 			"vs_main", "vs_5_0", 0, 0, &vs_blob, &err);
 		if (FAILED(hr)) { if (err) err->Release(); release_core_resources(); return false; }
@@ -322,6 +318,7 @@ float4 ps_main(VS_OUT i, bool isFront : SV_IsFrontFace) : SV_TARGET
 		hr = D3DCompile(shader_src, strlen(shader_src), nullptr, nullptr, nullptr,
 			"ps_main", "ps_5_0", 0, 0, &ps_blob, &err);
 		if (FAILED(hr)) { vs_blob->Release(); if (err) err->Release(); release_core_resources(); return false; }
+*/
 
 		device->CreateVertexShader(vs_blob->GetBufferPointer(), vs_blob->GetBufferSize(), nullptr, &g_vs);
 		device->CreatePixelShader(ps_blob->GetBufferPointer(), ps_blob->GetBufferSize(), nullptr, &g_ps);
@@ -464,6 +461,7 @@ float4 ps_main(VS_OUT i, bool isFront : SV_IsFrontFace) : SV_TARGET
 
 		g_inited = true;
 		return true;
+#endif
 	}
 
 	// ====================================================================
@@ -1665,60 +1663,44 @@ std::string ResolveDefaultModelPath()
     return "";
 }
 
-bool LoadDefaultAsset()
+// =====================================================================
+// Two-phase async asset load:
+//   Phase 1 — CPU-only parse, runs in a background thread.
+//   Phase 2 — D3D resource creation, runs on the render thread next frame.
+// This keeps the render thread unblocked during the slow file/mesh parse
+// while correctly serialising all D3D calls through the render thread.
+// =====================================================================
+struct TexStaging final
 {
-    if (!g_inited)
-        return false;
-    if (g_loaded)
-        return true;
-    if (g_load_failed || g_load_loading)
-        return false;
+    uint32_t w{0};
+    uint32_t h{0};
+    std::vector<uint8_t> rgba; // decoded RGBA pixels
+};
 
-    g_load_loading = true;
-    g_load_attempted = true;
+struct MeshStaging final
+{
+    std::vector<Vertex>   verts;
+    std::vector<uint32_t> prims; // flat: start, count, tex_i per prim
+    uint32_t prim_count{0};
+    std::vector<TexStaging> textures;
+    std::vector<BoneJoint>  bones;
+    bool ok{false};
+};
 
-    // Timed here rather than at a call site: there are two of them, and the
-    // one that actually triggers the load is the preview, not the renderer.
-    // This runs on the render thread, so however long it takes is a frame
-    // nobody gets, and a player reported the menu dropping to a handful of
-    // frames on hardware that should never drop any.
-    LARGE_INTEGER loadStart{};
-    QueryPerformanceCounter(&loadStart);
-    struct LoadTimer final
-    {
-        LARGE_INTEGER start;
-        ~LoadTimer() noexcept
-        {
-            LARGE_INTEGER end{};
-            LARGE_INTEGER freq{};
-            QueryPerformanceCounter(&end);
-            QueryPerformanceFrequency(&freq);
-            if (!freq.QuadPart)
-                return;
-            char line[144];
-            const double ms =
-                static_cast<double>(end.QuadPart - start.QuadPart) *
-                1000.0 / static_cast<double>(freq.QuadPart);
-            sprintf_s(
-                line,
-                "ModelPreview: mesh load blocked the render thread "
-                "for %.0f ms",
-                ms);
-            hooks::HLog(line);
-        }
-    } loadTimer{loadStart};
+enum class LoadPhase : int { Idle = 0, Parsing, ParseDone, UploadDone, Failed };
+static volatile LONG   g_load_phase = static_cast<LONG>(LoadPhase::Idle);
+static MeshStaging*    g_staging    = nullptr; // heap-allocated, owned while parsing
+static HANDLE          g_parse_thread = nullptr;
 
-    // BMS2 blob lives in PE RCDATA (ModelPreviewMesh.rc) — avoids compiling
-    // a multi-MB constexpr array that OOMs MSVC.
+// ---- Phase-1 worker (no D3D, safe to run off render thread) ----
+static DWORD WINAPI ParseWorker(LPVOID) noexcept
+{
     constexpr uint32_t kMagic = embedded_model_preview_mesh::kMagic;
 
-    // Header is wiped after DllMain, so the resource table is unreachable
-    // through FindResourceW — use the pointer cached before the wipe.
     const uint8_t* bytes = g_baked_res_data;
     size_t size = g_baked_res_size;
     if (!bytes)
     {
-        // Fallback for builds where the cache was never primed.
         const HMODULE self = reinterpret_cast<HMODULE>(&__ImageBase);
         const HRSRC res = FindResourceW(
             self, MAKEINTRESOURCEW(IDR_MODEL_PREVIEW_MESH), RT_RCDATA);
@@ -1729,104 +1711,73 @@ bool LoadDefaultAsset()
             bytes = static_cast<const uint8_t*>(LockResource(loaded));
         }
     }
+
+    auto* staging = new MeshStaging();
+
+    auto fail = [&](const char* msg) -> DWORD {
+        hooks::HLog(msg);
+        delete staging;
+        InterlockedExchange(&g_load_phase, static_cast<LONG>(LoadPhase::Failed));
+        return 0;
+    };
+
     if (!bytes || size < 16)
-    {
-        hooks::HLog("ModelPreview: baked mesh resource unavailable");
-        g_load_loading = false;
-        g_load_failed = true;
-        return false;
-    }
+        return fail("ModelPreview: baked mesh resource unavailable");
 
     uint32_t magic = 0, vert_count = 0, prim_count = 0, tex_count = 0;
     uint32_t bone_count = 0;
-    memcpy(&magic, bytes, 4);
-    memcpy(&vert_count, bytes + 4, 4);
-    memcpy(&prim_count, bytes + 8, 4);
-    memcpy(&tex_count, bytes + 12, 4);
-    const bool is_bms3 = (magic == kMagic); // 'BMS3'
-    const bool is_bms2 = (magic == 0x32534D42u); // legacy 'BMS2'
+    memcpy(&magic,      bytes,      4);
+    memcpy(&vert_count, bytes + 4,  4);
+    memcpy(&prim_count, bytes + 8,  4);
+    memcpy(&tex_count,  bytes + 12, 4);
+    const bool is_bms3 = (magic == kMagic);
+    const bool is_bms2 = (magic == 0x32534D42u);
     size_t header_bytes = 16u;
     if (is_bms3)
     {
         if (size < 20u)
-        {
-            hooks::HLog("ModelPreview: baked BMS3 header truncated");
-            g_load_loading = false;
-            g_load_failed = true;
-            return false;
-        }
+            return fail("ModelPreview: baked BMS3 header truncated");
         memcpy(&bone_count, bytes + 16, 4);
         header_bytes = 20u;
     }
-    char head[192];
-    _snprintf(head, sizeof(head),
-        "ModelPreview: baked magic=0x%08X verts=%u prims=%u tex=%u bones=%u size=%zu",
-        magic, vert_count, prim_count, tex_count, bone_count, size);
-    hooks::HLog(head);
+    {
+        char head[192];
+        _snprintf(head, sizeof(head),
+            "ModelPreview: baked magic=0x%08X verts=%u prims=%u tex=%u bones=%u size=%zu",
+            magic, vert_count, prim_count, tex_count, bone_count, size);
+        hooks::HLog(head);
+    }
 
     if ((!is_bms3 && !is_bms2) || vert_count == 0 || vert_count > 500000u ||
         prim_count == 0 || prim_count > 256u || tex_count > 64u ||
         bone_count > 512u)
-    {
-        hooks::HLog("ModelPreview: baked header invalid");
-        g_load_loading = false;
-        g_load_failed = true;
-        return false;
-    }
+        return fail("ModelPreview: baked header invalid");
 
-    const size_t verts_bytes =
-        static_cast<size_t>(vert_count) * sizeof(Vertex);
-    const size_t prims_bytes =
-        static_cast<size_t>(prim_count) * sizeof(uint32_t) * 3u;
+    const size_t verts_bytes = static_cast<size_t>(vert_count) * sizeof(Vertex);
+    const size_t prims_bytes = static_cast<size_t>(prim_count) * sizeof(uint32_t) * 3u;
     size_t cursor = header_bytes + verts_bytes + prims_bytes;
     if (cursor > size)
-    {
-        hooks::HLog("ModelPreview: baked size mismatch");
-        g_load_loading = false;
-        g_load_failed = true;
-        return false;
-    }
+        return fail("ModelPreview: baked size mismatch");
 
-    const auto* verts =
+    // Copy verts + prim table into heap buffers (trivial, no D3D).
+    const auto* raw_verts =
         reinterpret_cast<const Vertex*>(bytes + header_bytes);
-    const auto* prims =
-        reinterpret_cast<const uint32_t*>(
-            bytes + header_bytes + verts_bytes);
+    staging->verts.assign(raw_verts, raw_verts + vert_count);
 
-    release_primitives();
-    if (g_vbuf)
-    {
-        g_vbuf->Release();
-        g_vbuf = nullptr;
-    }
+    const auto* raw_prims =
+        reinterpret_cast<const uint32_t*>(bytes + header_bytes + verts_bytes);
+    staging->prims.assign(raw_prims, raw_prims + prim_count * 3u);
+    staging->prim_count = prim_count;
 
-    D3D11_BUFFER_DESC bd = {};
-    bd.ByteWidth = static_cast<UINT>(verts_bytes);
-    bd.Usage = D3D11_USAGE_DEFAULT;
-    bd.BindFlags = D3D11_BIND_VERTEX_BUFFER;
-    D3D11_SUBRESOURCE_DATA sd = {};
-    sd.pSysMem = verts;
-    const HRESULT hr = g_device->CreateBuffer(&bd, &sd, &g_vbuf);
-    if (FAILED(hr) || !g_vbuf)
-    {
-        char line[96];
-        _snprintf(line, sizeof(line),
-            "ModelPreview: baked CreateBuffer FAILED hr=0x%08X",
-            (unsigned)hr);
-        hooks::HLog(line);
-        g_load_loading = false;
-        g_load_failed = true;
-        return false;
-    }
-
-    std::vector<ID3D11ShaderResourceView*> tex_srvs(tex_count, nullptr);
+    // Decode textures into RGBA staging buffers (CPU-only).
+    staging->textures.resize(tex_count);
     for (uint32_t ti = 0; ti < tex_count; ++ti)
     {
         if (cursor + 12 > size)
             break;
         uint32_t w = 0, h = 0, nbytes = 0;
-        memcpy(&w, bytes + cursor, 4);
-        memcpy(&h, bytes + cursor + 4, 4);
+        memcpy(&w,      bytes + cursor,     4);
+        memcpy(&h,      bytes + cursor + 4, 4);
         memcpy(&nbytes, bytes + cursor + 8, 4);
         cursor += 12;
         if (w == 0 || h == 0 || w > 4096 || h > 4096 ||
@@ -1835,23 +1786,118 @@ bool LoadDefaultAsset()
             hooks::HLog("ModelPreview: baked tex header bad");
             break;
         }
-        const auto* rgba = bytes + cursor;
+        staging->textures[ti].w = w;
+        staging->textures[ti].h = h;
+        staging->textures[ti].rgba.assign(bytes + cursor, bytes + cursor + nbytes);
         cursor += nbytes;
+    }
 
-        D3D11_TEXTURE2D_DESC td = {};
-        td.Width = w;
-        td.Height = h;
-        td.MipLevels = 0; // full chain
-        td.ArraySize = 1;
-        td.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
+    // Bones (BMS3 only) — plain POD, no D3D.
+    if (is_bms3 && bone_count > 0)
+    {
+        const size_t bones_bytes =
+            static_cast<size_t>(bone_count) * (sizeof(float) * 3u + sizeof(int32_t));
+        if (cursor + bones_bytes <= size)
+        {
+            staging->bones.reserve(bone_count);
+            for (uint32_t i = 0; i < bone_count; ++i)
+            {
+                float x = 0.f, y = 0.f, z = 0.f;
+                int32_t parent = -1;
+                memcpy(&x,      bytes + cursor,      4); cursor += 4;
+                memcpy(&y,      bytes + cursor,      4); cursor += 4;
+                memcpy(&z,      bytes + cursor,      4); cursor += 4;
+                memcpy(&parent, bytes + cursor,      4); cursor += 4;
+                if (parent < -1 || parent >= static_cast<int32_t>(bone_count))
+                    parent = -1;
+                staging->bones.push_back({ XMFLOAT3{ x, y, z }, parent, 0 });
+            }
+            for (size_t i = 0; i < staging->bones.size(); ++i)
+            {
+                int d = 0;
+                int p = staging->bones[i].parent;
+                while (p >= 0 && d < 64)
+                {
+                    ++d;
+                    p = staging->bones[static_cast<size_t>(p)].parent;
+                }
+                staging->bones[i].depth = d;
+            }
+        }
+        else
+        {
+            hooks::HLog("ModelPreview: baked bones truncated");
+        }
+    }
+
+    staging->ok = true;
+    g_staging = staging; // publish before state change (pointer write before LONG write)
+    InterlockedExchange(&g_load_phase, static_cast<LONG>(LoadPhase::ParseDone));
+    return 0;
+}
+
+// ---- Phase-2 upload (called on render thread when ParseDone) ----
+static void UploadStagingToD3D() noexcept
+{
+    MeshStaging* staging = g_staging;
+    g_staging = nullptr;
+
+    if (!staging || !staging->ok || !g_inited || !g_device || !g_ctx)
+    {
+        delete staging;
+        InterlockedExchange(&g_load_phase, static_cast<LONG>(LoadPhase::Failed));
+        return;
+    }
+
+    release_primitives();
+    if (g_vbuf) { g_vbuf->Release(); g_vbuf = nullptr; }
+
+    LARGE_INTEGER t0{};
+    QueryPerformanceCounter(&t0);
+
+    // Vertex buffer.
+    {
+        D3D11_BUFFER_DESC bd{};
+        bd.ByteWidth    = static_cast<UINT>(staging->verts.size() * sizeof(Vertex));
+        bd.Usage        = D3D11_USAGE_DEFAULT;
+        bd.BindFlags    = D3D11_BIND_VERTEX_BUFFER;
+        D3D11_SUBRESOURCE_DATA sd{};
+        sd.pSysMem      = staging->verts.data();
+        const HRESULT hr = g_device->CreateBuffer(&bd, &sd, &g_vbuf);
+        if (FAILED(hr) || !g_vbuf)
+        {
+            char line[96];
+            _snprintf(line, sizeof(line),
+                "ModelPreview: baked CreateBuffer FAILED hr=0x%08X", (unsigned)hr);
+            hooks::HLog(line);
+            delete staging;
+            InterlockedExchange(&g_load_phase, static_cast<LONG>(LoadPhase::Failed));
+            return;
+        }
+    }
+
+    // Textures.
+    const uint32_t tex_count = static_cast<uint32_t>(staging->textures.size());
+    std::vector<ID3D11ShaderResourceView*> tex_srvs(tex_count, nullptr);
+    for (uint32_t ti = 0; ti < tex_count; ++ti)
+    {
+        const auto& ts = staging->textures[ti];
+        if (ts.rgba.empty()) continue;
+
+        D3D11_TEXTURE2D_DESC td{};
+        td.Width            = ts.w;
+        td.Height           = ts.h;
+        td.MipLevels        = 0; // full chain
+        td.ArraySize        = 1;
+        td.Format           = DXGI_FORMAT_R8G8B8A8_UNORM;
         td.SampleDesc.Count = 1;
-        td.Usage = D3D11_USAGE_DEFAULT;
-        td.BindFlags = D3D11_BIND_SHADER_RESOURCE | D3D11_BIND_RENDER_TARGET;
-        td.MiscFlags = D3D11_RESOURCE_MISC_GENERATE_MIPS;
+        td.Usage            = D3D11_USAGE_DEFAULT;
+        td.BindFlags        = D3D11_BIND_SHADER_RESOURCE | D3D11_BIND_RENDER_TARGET;
+        td.MiscFlags        = D3D11_RESOURCE_MISC_GENERATE_MIPS;
         ID3D11Texture2D* tex = nullptr;
         if (SUCCEEDED(g_device->CreateTexture2D(&td, nullptr, &tex)) && tex)
         {
-            g_ctx->UpdateSubresource(tex, 0, nullptr, rgba, w * 4u, 0);
+            g_ctx->UpdateSubresource(tex, 0, nullptr, ts.rgba.data(), ts.w * 4u, 0);
             if (SUCCEEDED(g_device->CreateShaderResourceView(
                     tex, nullptr, &tex_srvs[ti])) &&
                 tex_srvs[ti])
@@ -1862,84 +1908,92 @@ bool LoadDefaultAsset()
         }
     }
 
+    // Primitives.
+    const uint32_t prim_count = staging->prim_count;
+    const uint32_t vert_count = static_cast<uint32_t>(staging->verts.size());
     g_primitives.reserve(prim_count);
     for (uint32_t i = 0; i < prim_count; ++i)
     {
-        const UINT start = prims[i * 3u];
-        const UINT count = prims[i * 3u + 1u];
-        const uint32_t tex_i = prims[i * 3u + 2u];
-        if (start + count > vert_count)
-            continue;
+        const UINT start  = staging->prims[i * 3u];
+        const UINT count  = staging->prims[i * 3u + 1u];
+        const uint32_t ti = staging->prims[i * 3u + 2u];
+        if (start + count > vert_count) continue;
         ID3D11ShaderResourceView* srv = nullptr;
-        if (tex_i != 0xFFFFFFFFu && tex_i < tex_count)
-            srv = tex_srvs[tex_i];
-        // Primitives share textures — AddRef so release_primitives is safe.
-        if (srv)
-            srv->AddRef();
+        if (ti != 0xFFFFFFFFu && ti < tex_count) srv = tex_srvs[ti];
+        if (srv) srv->AddRef();
         g_primitives.push_back({ start, count, srv });
     }
+    for (auto* srv : tex_srvs) { if (srv) srv->Release(); }
 
-    for (auto* srv : tex_srvs)
-    {
-        if (srv)
-            srv->Release();
-    }
-
-    // BMS3: bones already normalized with the mesh (IBM bind space).
-    g_bones.clear();
-    if (is_bms3 && bone_count > 0)
-    {
-        const size_t bones_bytes =
-            static_cast<size_t>(bone_count) * (sizeof(float) * 3u + sizeof(int32_t));
-        if (cursor + bones_bytes <= size)
-        {
-            g_bones.reserve(bone_count);
-            for (uint32_t i = 0; i < bone_count; ++i)
-            {
-                float x = 0.f, y = 0.f, z = 0.f;
-                int32_t parent = -1;
-                memcpy(&x, bytes + cursor, 4); cursor += 4;
-                memcpy(&y, bytes + cursor, 4); cursor += 4;
-                memcpy(&z, bytes + cursor, 4); cursor += 4;
-                memcpy(&parent, bytes + cursor, 4); cursor += 4;
-                if (parent < -1 ||
-                    parent >= static_cast<int32_t>(bone_count))
-                    parent = -1;
-                g_bones.push_back({ XMFLOAT3{ x, y, z }, parent, 0 });
-            }
-            for (size_t i = 0; i < g_bones.size(); ++i)
-            {
-                int d = 0;
-                int p = g_bones[i].parent;
-                while (p >= 0 && d < 64)
-                {
-                    ++d;
-                    p = g_bones[static_cast<size_t>(p)].parent;
-                }
-                g_bones[i].depth = d;
-            }
-        }
-        else
-        {
-            hooks::HLog("ModelPreview: baked bones truncated");
-        }
-    }
-
+    // Bones.
+    g_bones = std::move(staging->bones);
     g_vertex_count = vert_count;
-    g_loaded = !g_primitives.empty();
+    g_loaded       = !g_primitives.empty();
+    g_load_failed  = !g_loaded;
     g_load_loading = false;
-    g_load_failed = !g_loaded;
+
+    LARGE_INTEGER t1{}, freq{};
+    QueryPerformanceCounter(&t1);
+    QueryPerformanceFrequency(&freq);
     {
         char line[128];
         _snprintf(line, sizeof(line),
-            "ModelPreview: baked mesh %s (texSRVs=%u bones=%zu)",
+            "ModelPreview: baked mesh %s (texSRVs=%u bones=%zu D3D=%.0fms)",
             g_loaded ? "loaded" : "FAILED",
-            tex_count,
-            g_bones.size());
+            tex_count, g_bones.size(),
+            freq.QuadPart ? static_cast<double>(t1.QuadPart - t0.QuadPart) *
+                1000.0 / static_cast<double>(freq.QuadPart) : 0.0);
         hooks::HLog(line);
     }
-    return g_loaded;
+
+    delete staging;
+    InterlockedExchange(
+        &g_load_phase,
+        static_cast<LONG>(g_loaded ? LoadPhase::UploadDone : LoadPhase::Failed));
 }
+
+bool LoadDefaultAsset()
+{
+    if (!g_inited) return false;
+    if (g_loaded)  return true;
+
+    const LoadPhase phase = static_cast<LoadPhase>(
+        InterlockedCompareExchange(&g_load_phase, 0, 0)); // atomic read
+
+    if (phase == LoadPhase::Failed)
+        return false;
+
+    if (phase == LoadPhase::Idle)
+    {
+        // Kick background parse thread (Phase 1).
+        g_load_loading  = true;
+        g_load_attempted = true;
+        InterlockedExchange(&g_load_phase, static_cast<LONG>(LoadPhase::Parsing));
+        g_parse_thread = CreateThread(nullptr, 0, ParseWorker, nullptr, 0, nullptr);
+        if (!g_parse_thread)
+        {
+            hooks::HLog("ModelPreview: CreateThread failed, falling back to sync load");
+            // Synchronous fallback on thread creation failure.
+            InterlockedExchange(&g_load_phase, static_cast<LONG>(LoadPhase::Idle));
+            ParseWorker(nullptr);
+            // Fall through — next call will see ParseDone or Failed.
+        }
+        return false; // not loaded yet
+    }
+
+    if (phase == LoadPhase::Parsing)
+        return false; // still working in background
+
+    if (phase == LoadPhase::ParseDone)
+    {
+        // Phase 2: upload to GPU — must run on render thread.
+        UploadStagingToD3D();
+        return g_loaded;
+    }
+
+    return g_loaded; // UploadDone
+}
+
 
 void TickApplyCloudAsset() {}
 void RetryCloudDownload()
@@ -1973,4 +2027,5 @@ void Render(float rotationY, float rotationX, float viewScale)
     }
 }
 
-}
+} // namespace ModelPreview
+

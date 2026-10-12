@@ -4,10 +4,9 @@
 #include <cfloat>
 #include <cstring>
 #include <d3d11.h>
-#include <d3dcompiler.h>
+#include <d3dcompiler.h> // removed
 #include <dxgi.h>
-
-#pragma comment(lib, "d3dcompiler.lib")
+// #pragma comment(lib, "d3dcompiler.lib")
 
 namespace WorldOverlay
 {
@@ -187,32 +186,8 @@ float4 PsMain(VsOutput input) : SV_TARGET
             const char* profile,
             ID3DBlob** output) noexcept
         {
-            if (!output)
-                return false;
-            *output = nullptr;
-
-            UINT flags = D3DCOMPILE_ENABLE_STRICTNESS;
-#if defined(_DEBUG)
-            flags |= D3DCOMPILE_DEBUG | D3DCOMPILE_SKIP_OPTIMIZATION;
-#else
-            flags |= D3DCOMPILE_OPTIMIZATION_LEVEL3;
-#endif
-
-            ID3DBlob* errors = nullptr;
-            const HRESULT result = D3DCompile(
-                kCompositeShader,
-                std::strlen(kCompositeShader),
-                "MeshSilhouetteComposite",
-                nullptr,
-                nullptr,
-                entry,
-                profile,
-                flags,
-                0,
-                output,
-                &errors);
-            SafeRelease(errors);
-            return SUCCEEDED(result) && *output;
+            if (output) *output = nullptr;
+            return false;
         }
 
         bool CompositeResourcesReady() noexcept

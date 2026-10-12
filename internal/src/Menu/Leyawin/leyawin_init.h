@@ -118,7 +118,7 @@ inline void InitLeyawinGlobals()
     func->picker_checkbox[1] = 160.f / 255.f;
     func->picker_checkbox[2] = 204.f / 255.f;
     func->picker_checkbox[3] = 1.f;
-    func->accent_color[0] = 205.f / 255.f; // #CD81D4
+    func->accent_color[0] = 161.f / 255.f; // #A181D4
     func->accent_color[1] = 129.f / 255.f;
     func->accent_color[2] = 212.f / 255.f;
     func->accent_color[3] = 1.f;

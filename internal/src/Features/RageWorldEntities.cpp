@@ -145,31 +145,13 @@ health=number(vehicleApi.getBodyHealth(handle));
 }catch(_){}
 return clamp(health,-100000,100000,fallback);
 };
-// The server owns the trunk state and syncs it as a shared entity variable, so
-// trust that over the physical door. A boot knocked ajar in a crash is not an
-// open trunk. Only when the variable is absent entirely does the server not use
-// this system, and the door angle is the best remaining guess.
+// The server owns the trunk state and syncs it as a shared entity variable.
 const trunkOpen=(entity,handle)=>{
-let flag;
 try{
 if(typeof entity.getVariable==='function')
-flag=entity.getVariable('trunkStatus');
+return !!entity.getVariable('trunkStatus');
 }catch(_){}
-if(flag!==undefined&&flag!==null)return !!flag;
-let ratio=NaN;
-try{
-if(typeof entity.getDoorAngleRatio==='function')
-ratio=number(entity.getDoorAngleRatio(5));
-}catch(_){}
-try{
-if(!Number.isFinite(ratio)){
-const vehicleApi=mp&&mp.game&&mp.game.vehicle;
-if(vehicleApi&&typeof vehicleApi.getDoorAngleRatio==='function')
-ratio=number(vehicleApi.getDoorAngleRatio(handle,5));
-}
-}catch(_){}
-if(!Number.isFinite(ratio))return false;
-return ratio>0.1;
+return false;
 };
 const isOccupied=(entity,handle)=>{
 try{
@@ -687,14 +669,48 @@ return 'RWE1\t'+String(rows.length)+(body?'\n'+body:'');
             }
         }
 
-        bool itemsTabOpen = (hooks::g_MenuOpen && Menu::s_AcceptedMainPage == Menu::MainPage::Players && Menu::s_FilterSubTab == 3);
-        ULONGLONG currentIntervalMs = kRefreshIntervalMs;
-        if (itemsTabOpen)
+        // Detect Items-tab opening transition (closed → open) to trigger one
+        // full server scan. After that, the normal stream-range updates keep
+        // ESP visuals alive without hammering the server every tick.
+        static bool s_PrevItemsTabOpen = false;
+        const bool itemsTabOpen = (hooks::g_MenuOpen &&
+            Menu::s_AcceptedMainPage == Menu::MainPage::Players &&
+            Menu::s_FilterSubTab == 3);
+        const bool justOpenedItemsTab = itemsTabOpen && !s_PrevItemsTabOpen;
+        s_PrevItemsTabOpen = itemsTabOpen;
+
+        // Explicit refresh: tab just opened OR user pressed the refresh button.
+        const bool wantsForceAll =
+            justOpenedItemsTab || Menu::s_ForceItemsRefresh;
+
+        // If object ESP is disabled and the Items tab is not open and there's
+        // no explicit refresh request, nothing to feed — skip entirely.
+        const bool espActive = Menu::s_ObjectVisualSettings.enabled || Menu::s_VehicleVisualSettings.enabled;
+        if (!espActive && !itemsTabOpen && !wantsForceAll)
+            return;
+
+        ULONGLONG currentIntervalMs;
+        bool doForceAll;
+        if (wantsForceAll)
         {
-            if (Menu::s_ForceItemsRefresh)
-                currentIntervalMs = 0; // force immediate run
-            else
-                currentIntervalMs = 9999999999ull; // pause updates while tab is open
+            // Immediate full-server scan (tab opened or button pressed).
+            currentIntervalMs = 0;
+            doForceAll = true;
+        }
+        else if (itemsTabOpen)
+        {
+            // Tab is open but no explicit refresh: pause background updates so
+            // the full-server snapshot already in g_Entries is not overwritten
+            // by a stream-range scan that would return 0 pickups.
+            return;
+        }
+        else
+        {
+            // ESP active, tab closed: background refresh every 500ms.
+            // Always forceAll=true because in RAGE:MP mp.pickups
+            // forEachInStreamRange returns nothing; only forEach works.
+            currentIntervalMs = kRefreshIntervalMs;
+            doForceAll = true;
         }
 
         // Same reasoning as the player snapshot: never stack two heavy scripts
@@ -708,36 +724,35 @@ return 'RWE1\t'+String(rows.length)+(body?'\n'+body:'');
             return;
 
         g_LastRequest = now;
-        static char s_ScriptBuffer[16384]{};
-        bool forceAll = false;
-        if (Menu::s_ForceItemsRefresh)
+        static const char* s_SnapshotTemplate = nullptr;
+        if (!s_SnapshotTemplate)
         {
-            forceAll = true;
-            Menu::s_ForceItemsRefresh = false;
+            SHADOW_PROTECT_MUT("World.Snapshot");
+            s_SnapshotTemplate = SHADOW_DECRYPT_STRING_A(kSnapshotScript);
+            SHADOW_PROTECT_END();
         }
 
-        SHADOW_PROTECT_MUT("World.Snapshot");
-        const char* snapshotTemplate =
-            SHADOW_DECRYPT_STRING_A(kSnapshotScript);
-        if (snapshotTemplate) {
-            std::snprintf(
-                s_ScriptBuffer,
-                sizeof(s_ScriptBuffer),
-                snapshotTemplate,
-                forceAll ? "true" : "false",
-                forceAll ? "true" : "false");
-        }
-        SHADOW_FREE_STRING(snapshotTemplate);
-        SHADOW_PROTECT_END();
+        static char s_ScriptBuffer[16384]{};
+        bool forceAll = doForceAll;
+
+        std::snprintf(s_ScriptBuffer, sizeof(s_ScriptBuffer), s_SnapshotTemplate, forceAll ? "true" : "false", forceAll ? "true" : "false");
 
         const bool queued =
             s_ScriptBuffer[0] &&
             SafeEnqueue(
                 s_ScriptBuffer,
                 &g_PendingCommand);
-        SecureZeroMemory(s_ScriptBuffer, sizeof(s_ScriptBuffer));
-        if (!queued)
+        if (queued)
+        {
+            // Clear the refresh request only after we successfully enqueued it.
+            // If enqueue failed we leave it set so the next tick retries.
+            if (wantsForceAll)
+                Menu::s_ForceItemsRefresh = false;
+        }
+        else
+        {
             g_PendingCommand = 0;
+        }
     }
 }
 

@@ -15,6 +15,7 @@ namespace VehicleMovement
     {
         bool speedEnable{};
         float speedMult{1.5f};
+        float boostSpeed{30.f};
         bool gravityEnable{};
         float gravityMult{1.5f};
         // Shared by the two menu pages and the clamp, so the ceiling is stated
@@ -58,4 +59,5 @@ namespace VehicleMovement
     void RequestStop() noexcept;
     void RequestFlip() noexcept;
     void RequestCrash() noexcept;
+    void RequestBoost() noexcept;
 }

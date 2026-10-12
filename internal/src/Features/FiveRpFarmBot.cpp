@@ -1,9 +1,10 @@
 #include "FiveRpFarmBot.h"
 
+#include "FiveRpFarmBotScript.h"
 #include "FiveRpMetadataResolver.h"
-#include "FeatureBundles.h"
 #include "RageV8Runtime.h"
 #include "ServerProfile.h"
+#include "../vmp_markers.hpp"
 #include "../Menu/Menu.h"
 #include "../Menu/IconsFontAwesome6.h"
 #include "../Menu/Leyawin/custom_widgets.hpp"
@@ -160,20 +161,19 @@ namespace
             g_ServerKind != ServerKind::FiveRp)
             return;
         g_LastLoadAttempt = GetTickCount64();
-        FeatureBundles::Request(FeatureBundles::Id::FiveRp);
-        SecureScriptBlob::Plaintext source;
-        if (!FeatureBundles::Consume(
-                FeatureBundles::Id::FiveRp,
-                source))
-            return;
         bool queued = false;
-        if (source.Data()) {
+        SHADOW_PROTECT_ULTRA("FiveRP.Load");
+        const char* protectedSource =
+            SHADOW_DECRYPT_STRING_A(FiveRpFarmBotScript::kSource);
+        if (protectedSource)
+        {
             queued = QueueScript(
-                source.Data(),
+                protectedSource,
                 RequestKind::Load,
                 "Load 5RP farm bot");
         }
-        source.Clear();
+        SHADOW_FREE_STRING(protectedSource);
+        SHADOW_PROTECT_END();
         if (!queued)
         {
             Menu::PushNotification(

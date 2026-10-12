@@ -46,5 +46,6 @@ namespace Features {
     void RunAimbot();
     bool CopySilentTarget(AimTargetSnapshot& output) noexcept;
     bool CopyDisplayTarget(AimTargetSnapshot& output) noexcept;
+    bool CopyCrosshairTarget(AimTargetSnapshot& output) noexcept;
     AimDiagnostics GetAimDiagnostics() noexcept;
 }

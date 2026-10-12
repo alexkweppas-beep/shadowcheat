@@ -724,10 +724,11 @@ void RenderIntoScene(
 
     ModelPreview::TickApplyCloudAsset();
     // Load is deferred from InitImGui; kick it when the preview is shown.
-    // (Render() alone used to gate on IsLoaded — never reached LoadDefaultAsset.)
+    // LoadDefaultAsset() is non-blocking: it spawns a background parse thread
+    // on the first call and returns immediately. On subsequent calls it polls
+    // the phase and uploads D3D resources (fast) once the parse is done.
     if (ModelPreview::IsReady() &&
         !ModelPreview::IsLoaded() &&
-        !ModelPreview::IsLoading() &&
         !ModelPreview::IsLoadFailed())
     {
         ModelPreview::LoadDefaultAsset();

@@ -884,41 +884,94 @@ namespace Menu
         AimWeaponProfile& profile,
         const char* idPrefix,
         bool* visibleCheck,
-        bool showTitle = true) noexcept
+        bool showTitle = true,
+        bool asDropdown = false) noexcept
     {
         ImGui::PushID(idPrefix);
-        if (showTitle)
+        if (showTitle && !asDropdown)
             MenuUi::SectionTitle(T("Filters", "Фильтры", "Фільтри"));
-        if (visibleCheck)
+        
+        if (asDropdown)
         {
-            DrawAimBooleanRow(
-                "ignore_invisible",
-                ICON_FA_EYE_SLASH,
-                T("Ignore Invisible",
-                  "Игнорировать невидимых",
-                  "Ігнорувати невидимих"),
-                visibleCheck);
+            char id[128]{};
+            _snprintf(id, sizeof(id) - 1, "%s###%s_dropdown", T("Ignore", "Игнор", "Ігнор"), idPrefix);
+
+            const int kTotal = visibleCheck ? 5 : 4;
+            const char* labels[5]{};
+            bool values[5]{};
+            
+            int idx = 0;
+            if (visibleCheck) {
+                labels[idx] = T("Invisible", "Невидимых", "Невидимих");
+                values[idx] = *visibleCheck;
+                idx++;
+            }
+            
+            labels[idx] = T("Dead", "Мёртвых", "Мертвих");
+            values[idx] = profile.ignoreDead;
+            idx++;
+            
+            labels[idx] = T("NPC", "NPC", "NPC");
+            values[idx] = profile.ignoreNpc;
+            idx++;
+            
+            labels[idx] = T("Admins", "Админов", "Адмінів");
+            values[idx] = profile.ignoreAdmins;
+            idx++;
+            
+            labels[idx] = T("Friends", "Друзей", "Друзів");
+            values[idx] = profile.ignoreFriends;
+            
+            gui->multi_dropdown_icon(
+                ICON_FA_SHIELD_HALVED,
+                id,
+                values,
+                labels,
+                kTotal,
+                8);
+
+            idx = 0;
+            if (visibleCheck) {
+                *visibleCheck = values[idx++];
+            }
+            profile.ignoreDead = values[idx++];
+            profile.ignoreNpc = values[idx++];
+            profile.ignoreAdmins = values[idx++];
+            profile.ignoreFriends = values[idx++];
         }
-        DrawAimBooleanRow(
-            "ignore_dead",
-            ICON_FA_SKULL,
-            T("Ignore Dead", "Игнорировать мёртвых", "Ігнорувати мертвих"),
-            &profile.ignoreDead);
-        DrawAimBooleanRow(
-            "ignore_npc",
-            ICON_FA_ROBOT,
-            T("Ignore NPC", "Игнорировать NPC", "Ігнорувати NPC"),
-            &profile.ignoreNpc);
-        DrawAimBooleanRow(
-            "ignore_admin",
-            ICON_FA_USER_SHIELD,
-            T("Ignore Admins", "Игнорировать админов", "Ігнорувати адмінів"),
-            &profile.ignoreAdmins);
-        DrawAimBooleanRow(
-            "ignore_friends",
-            ICON_FA_USER_GROUP,
-            T("Ignore Friends", "Игнорировать друзей", "Ігнорувати друзів"),
-            &profile.ignoreFriends);
+        else
+        {
+            if (visibleCheck)
+            {
+                DrawAimBooleanRow(
+                    "ignore_invisible",
+                    ICON_FA_EYE_SLASH,
+                    T("Ignore Invisible",
+                      "Игнорировать невидимых",
+                      "Ігнорувати невидимих"),
+                    visibleCheck);
+            }
+            DrawAimBooleanRow(
+                "ignore_dead",
+                ICON_FA_SKULL,
+                T("Ignore Dead", "Игнорировать мёртвых", "Ігнорувати мертвих"),
+                &profile.ignoreDead);
+            DrawAimBooleanRow(
+                "ignore_npc",
+                ICON_FA_ROBOT,
+                T("Ignore NPC", "Игнорировать NPC", "Ігнорувати NPC"),
+                &profile.ignoreNpc);
+            DrawAimBooleanRow(
+                "ignore_admin",
+                ICON_FA_USER_SHIELD,
+                T("Ignore Admins", "Игнорировать админов", "Ігнорувати адмінів"),
+                &profile.ignoreAdmins);
+            DrawAimBooleanRow(
+                "ignore_friends",
+                ICON_FA_USER_GROUP,
+                T("Ignore Friends", "Игнорировать друзей", "Ігнорувати друзів"),
+                &profile.ignoreFriends);
+        }
         ImGui::PopID();
     }
 
@@ -962,37 +1015,106 @@ namespace Menu
               "Динамический FOV###aim_adv_dynamic_fov",
               "Динамічний FOV###aim_adv_dynamic_fov"),
             &profile.dynamicFov);
-        if (BeginAimReveal(
-                "vector_dynamic_fov_details",
-                profile.dynamicFov,
-                165.f))
+        if (profile.dynamicFov)
         {
-            gui->slider_float_icon(
-                ICON_FA_CROSSHAIRS,
-                "ADS###aim_adv_vec_ads",
-                &profile.dynamicFovAdsMul,
-                0.3f,
-                1.2f,
-                "%.2fx");
-            gui->slider_float_icon(
-                ICON_FA_PERSON_RUNNING,
-                T("Target speed###aim_adv_vec_speed",
-                  "Скорость цели###aim_adv_vec_speed",
-                  "Швидкість цілі###aim_adv_vec_speed"),
-                &profile.dynamicFovSpeedExpand,
-                0.f,
-                1.5f,
-                "%.2fx");
-            gui->slider_float_icon(
-                ICON_FA_RULER,
-                T("Distance scale###aim_adv_vec_fov_scale",
-                  "Масштаб дистанции###aim_adv_vec_fov_scale",
-                  "Масштаб дистанції###aim_adv_vec_fov_scale"),
-                &profile.fovDistanceMul,
-                0.25f,
-                2.f,
-                "%.2fx");
-            EndAimReveal(profile.dynamicFov);
+            if (BeginAimReveal(
+                    "vector_dynamic_fov_details",
+                    profile.dynamicFov,
+                    165.f))
+            {
+                gui->slider_float_icon(
+                    ICON_FA_CROSSHAIRS,
+                    "ADS###aim_adv_vec_ads",
+                    &profile.dynamicFovAdsMul,
+                    0.3f,
+                    1.2f,
+                    "%.2fx");
+                gui->slider_float_icon(
+                    ICON_FA_PERSON_RUNNING,
+                    T("Target speed###aim_adv_vec_speed",
+                      "Скорость цели###aim_adv_vec_speed",
+                      "Швидкість цілі###aim_adv_vec_speed"),
+                    &profile.dynamicFovSpeedExpand,
+                    0.f,
+                    1.5f,
+                    "%.2fx");
+                gui->slider_float_icon(
+                    ICON_FA_RULER,
+                    T("Distance scale###aim_adv_vec_fov_scale",
+                      "Масштаб дистанции###aim_adv_vec_fov_scale",
+                      "Масштаб дистанції###aim_adv_vec_fov_scale"),
+                    &profile.fovDistanceMul,
+                    0.25f,
+                    2.f,
+                    "%.2fx");
+                EndAimReveal(profile.dynamicFov);
+            }
+        }
+    }
+
+    static void RenderAimHumanize(
+        AimWeaponProfile& profile) noexcept
+    {
+        AimPlainCheck(
+            ICON_FA_USER,
+            T("Humanize###aim_adv_humanize",
+              "Хуманизация###aim_adv_humanize",
+              "Хуманізація###aim_adv_humanize"),
+            &profile.humanize);
+        if (profile.humanize)
+        {
+            if (BeginAimReveal(
+                    "vector_humanize_details",
+                    profile.humanize,
+                    165.f))
+            {
+                gui->slider_float_icon(
+                    ICON_FA_CLOCK,
+                    T("Reaction delay###aim_adv_vec_reaction",
+                      "Задержка реакции###aim_adv_vec_reaction",
+                      "Затримка реакції###aim_adv_vec_reaction"),
+                    &profile.reactionDelayMs,
+                    0.f,
+                    300.f,
+                    "%.0f ms");
+                gui->slider_float_icon(
+                    ICON_FA_WAVE_SQUARE,
+                    T("Micro jitter###aim_adv_vec_jitter",
+                      "Микро-тряска###aim_adv_vec_jitter",
+                      "Мікро-тряска###aim_adv_vec_jitter"),
+                    &profile.microJitter,
+                    0.f,
+                    1.f,
+                    "%.2f");
+                gui->slider_float_icon(
+                    ICON_FA_ARROW_RIGHT,
+                    T("Overshoot###aim_adv_vec_overshoot",
+                      "Промах (перелет)###aim_adv_vec_overshoot",
+                      "Промах (переліт)###aim_adv_vec_overshoot"),
+                    &profile.overshoot,
+                    0.f,
+                    1.f,
+                    "%.2f");
+                gui->slider_float_icon(
+                    ICON_FA_ARROWS_ROTATE,
+                    T("Target switch delay###aim_adv_vec_switch",
+                      "Задержка переключения###aim_adv_vec_switch",
+                      "Затримка перемикання###aim_adv_vec_switch"),
+                    &profile.targetSwitchDelayMs,
+                    0.f,
+                    500.f,
+                    "%.0f ms");
+                gui->slider_float_icon(
+                    ICON_FA_BATTERY_QUARTER,
+                    T("Fatigue###aim_adv_vec_fatigue",
+                      "Усталость###aim_adv_vec_fatigue",
+                      "Втома###aim_adv_vec_fatigue"),
+                    &profile.fatigue,
+                    0.f,
+                    1.f,
+                    "%.2f");
+                EndAimReveal(profile.humanize);
+            }
         }
     }
 
@@ -1027,6 +1149,10 @@ namespace Menu
             ICON_FA_POWER_OFF,
             T("Enabled", "Включено", "Увімкнено"),
             &profile.vecEnabled);
+        MenuUi::DrawBoneDropdown(
+            profile.vecBones,
+            "aim_vector",
+            &profile.vecBoneNearestAny);
         DrawAimColorToggleRow(
             "vector_draw_fov",
             ICON_FA_BULLSEYE,
@@ -1057,21 +1183,24 @@ namespace Menu
               "Случайная плавность###aim_vec_random",
               "Випадкова плавність###aim_vec_random"),
             &profile.vecRandomSmooth);
-        if (BeginAimReveal(
-                "vector_random_details",
-                profile.vecRandomSmooth,
-                40.f))
+        if (profile.vecRandomSmooth)
         {
-            gui->slider_float_icon(
-                ICON_FA_DICE,
-                T("Random amount###aim_vec_random_amount",
-                  "Сила случайности###aim_vec_random_amount",
-                  "Сила випадковості###aim_vec_random_amount"),
-                &profile.vecRandomAmt,
-                0.f,
-                1.f,
-                "%.2f");
-            EndAimReveal(profile.vecRandomSmooth);
+            if (BeginAimReveal(
+                    "vector_random_details",
+                    profile.vecRandomSmooth,
+                    40.f))
+            {
+                gui->slider_float_icon(
+                    ICON_FA_DICE,
+                    T("Random amount###aim_vec_random_amount",
+                      "Сила случайности###aim_vec_random_amount",
+                      "Сила випадковості###aim_vec_random_amount"),
+                    &profile.vecRandomAmt,
+                    0.f,
+                    1.f,
+                    "%.2f");
+                EndAimReveal(profile.vecRandomSmooth);
+            }
         }
         AimPlainCheck(
             ICON_FA_GAUGE_HIGH,
@@ -1079,25 +1208,38 @@ namespace Menu
               "Умная плавность###aim_vec_smart",
               "Розумна плавність###aim_vec_smart"),
             &profile.vecSmartSmooth);
-        gui->slider_float_icon(
-            ICON_FA_SLIDERS,
-            T("Smooth multiplier###aim_vector_smooth_mul",
-              "Множитель плавности###aim_vector_smooth_mul",
-              "Множник плавності###aim_vector_smooth_mul"),
-            &profile.smoothDistanceMul,
-            0.25f,
-            2.f,
-            "%.2fx");
+        if (profile.vecSmartSmooth)
+        {
+            if (BeginAimReveal(
+                    "vector_smart_details",
+                    profile.vecSmartSmooth,
+                    40.f))
+            {
+                gui->slider_float_icon(
+                    ICON_FA_SLIDERS,
+                    T("Smooth multiplier###aim_vector_smooth_mul",
+                      "Множитель плавности###aim_vector_smooth_mul",
+                      "Множник плавності###aim_vector_smooth_mul"),
+                    &profile.smoothDistanceMul,
+                    0.25f,
+                    2.f,
+                    "%.2fx");
+                EndAimReveal(profile.vecSmartSmooth);
+            }
+        }
         DrawAimBooleanRow(
             "vector_sticky",
             ICON_FA_LINK,
             T("Lock on last", "Держать цель", "Тримати ціль"),
             &profile.vecSticky);
-        MenuUi::DrawBoneDropdown(
-            profile.vecBones,
-            "aim_vector",
-            &profile.vecBoneNearestAny);
         RenderAimVectorAdvanced(profile);
+        RenderAimHumanize(profile);
+        DrawAimFilters(
+            profile,
+            "aim_vector_filters",
+            &profile.vecVisible,
+            false,
+            true);
         MenuUi::EndInspectorIsland();
 
         if (!layerEnabled)
@@ -1203,19 +1345,74 @@ namespace Menu
                 profile.silentMarkStyle >= EspTargetMarkStyleCount)
                 profile.silentMarkStyle = EspTargetMarkDot;
         }
-        MenuUi::EndInspectorIsland();
 
-        MenuUi::BeginInspectorIsland(
-            "aim_silent_filters_island",
-            T("IGNORE", "ИГНОР", "ІГНОР"),
-            10.f,
-            nullptr);
+
+        DrawAimBooleanRow(
+            "silent_prediction",
+            ICON_FA_LOCATION_ARROW,
+            T("Prediction (Lead)", "Упреждение", "Упередження"),
+            &profile.silentPrediction);
+        if (profile.silentPrediction)
+        {
+            if (BeginAimReveal(
+                    "silent_prediction_details",
+                    profile.silentPrediction,
+                    110.f))
+            {
+                gui->slider_float_icon(
+                    ICON_FA_RULER,
+                    T("Lead scale###silent_lead_scale",
+                      "Множитель упреждения###silent_lead_scale",
+                      "Множник упередження###silent_lead_scale"),
+                    &profile.silentLeadScale,
+                    0.f,
+                    2.f,
+                    "%.2fx");
+                gui->slider_float_icon(
+                    ICON_FA_CLOCK,
+                    T("Reaction delay###silent_reaction",
+                      "Задержка реакции###silent_reaction",
+                      "Затримка реакції###silent_reaction"),
+                    &profile.silentReactionMs,
+                    0.f,
+                    300.f,
+                    "%.0f ms");
+                gui->slider_float_icon(
+                    ICON_FA_CROSSHAIRS,
+                    T("Miss bias###silent_miss_bias",
+                      "Смещение к краю###silent_miss_bias",
+                      "Зміщення до краю###silent_miss_bias"),
+                    &profile.silentMissBias,
+                    0.f,
+                    1.f,
+                    "%.2f");
+                EndAimReveal(profile.silentPrediction);
+            }
+        }
+        DrawAimBooleanRow(
+            "silent_use_hc_curve",
+            ICON_FA_CHART_LINE,
+            T("Dynamic Hitchance", "Динамический шанс", "Динамічний шанс"),
+            &profile.useSilentHcCurve);
+        if (profile.useSilentHcCurve)
+        {
+            gui->slider_float_icon(
+                ICON_FA_RULER,
+                T("Distance scale###silent_hc_dist_mul",
+                  "Масштаб дистанции###silent_hc_dist_mul",
+                  "Масштаб дистанції###silent_hc_dist_mul"),
+                &profile.silentHcDistanceMul,
+                0.1f,
+                3.f,
+                "%.2fx");
+        }
         // Игнорировать невидимых управляет vecVisible (видимость для векторного айма)
         DrawAimFilters(
             profile,
             "aim_silent_filters",
             &profile.vecVisible,
-            false);
+            false,
+            true);
         MenuUi::EndInspectorIsland();
         if (!layerEnabled)
             ImGui::EndDisabled();
@@ -1252,7 +1449,7 @@ namespace Menu
               "Затримка реакції###aim_trigger_delay"),
             &profile.triggerDelayMs,
             0.f,
-            50.f,
+            10.f,
             "%.0f ms");
         gui->slider_float_icon(
             ICON_FA_HOURGLASS_HALF,
@@ -1265,7 +1462,8 @@ namespace Menu
             "%.0f ms");
         MenuUi::DrawBoneDropdown(
             profile.triggerBones,
-            "aim_trigger");
+            "aim_trigger",
+            &profile.triggerBoneNearestAny);
         MenuUi::EndInspectorIsland();
         if (!layerEnabled)
             ImGui::EndDisabled();

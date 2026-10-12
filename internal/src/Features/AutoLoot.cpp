@@ -94,7 +94,21 @@ if(!st.slots&&st.guess>4)st.guess--;}
 }catch(_){}});});}catch(_){}}
 var now=Date.now();
 var local=rage.players&&rage.players.local;
-var me=local&&local.position;
+/* Track vehicle state: detect the exit tick and freeze vehicle lookups for
+   2.5 s after exit, because local.vehicle can stay truthy for several frames
+   after the player steps out — using its position then makes the distance
+   check wrong and items right next to the ped appear out of range. */
+if(!st._vs)st._vs={in:false,exitAt:0};
+var lvRaw=null;try{lvRaw=local&&local.vehicle;}catch(_){}
+var inVeh=!!lvRaw;
+if(st._vs.in&&!inVeh)st._vs.exitAt=now;
+st._vs.in=inVeh;
+var recentExit=(now-st._vs.exitAt)<2500;
+var me=null;
+if(inVeh&&!recentExit){
+  try{var vp=lvRaw.position;if(vp&&typeof vp.x==='number'&&isFinite(vp.x))me=vp;}catch(_){}
+}
+if(!me){try{me=local&&local.position;}catch(_){}}
 if(!me)return line(0,0,0,'no player');
 var lower=[];
 for(var n=0;n<CFG.names.length;n++)lower.push(String(CFG.names[n]).toLowerCase());
@@ -111,7 +125,9 @@ var p=o.position;
 if(!p)return;
 var dx=p.x-me.x,dy=p.y-me.y,dz=p.z-me.z;
 var d=Math.sqrt(dx*dx+dy*dy+dz*dz);
-if(d>CFG.r)return;
+var limit=CFG.r;
+if(inVeh)limit+=3.0; /* vehicle center is far from ground/doors */
+if(d>limit)return;
 var parts=String(raw).split('$#$');
 var id=parseInt(parts[0],10);
 if(!id||id<=0)return;
@@ -119,17 +135,26 @@ if(!wanted(parts[1]||''))return;
 ++reach;
 if(st.cool[id]&&st.cool[id]>now)return;
 if(d<bestD){bestD=d;
-best={id:id,name:String(parts[1]||''),count:parseInt(parts[2],10)||1};}
+/* Always send count=1: the server's inv:takeWorldItemToSlot rejects large
+   stack counts (e.g. 300x 7.62mm), putting the item into cooldown.
+   One unit per autoloot cycle is always accepted by the server. */
+best={id:id,name:String(parts[1]||''),count:1};}
 }catch(_){}};
-/* Only what the game has streamed in. Walking every object the client knows
-about means several thousand position reads per pass, which is both slow enough
-to be noticed and pointless: an item outside stream range is far past the
-distance the server will accept anyway. */
-try{
-if(typeof rage.objects.forEachInStreamRange==='function')
-rage.objects.forEachInStreamRange(consider);
-else rage.objects.forEach(consider);
-}catch(_){}
+/* Use forEachInRange to safely center the search on 'me' (which tracks the
+   vehicle when seated). forEachInStreamRange centres on the ped, whose internal
+   position is stale while in a car, missing items. forEach iterates all, but
+   might miss items that are strictly in the stream pool. */
+try {
+  if (typeof rage.objects.forEachInRange === 'function') {
+    rage.objects.forEachInRange(me, CFG.r + 2, consider);
+  } else if (!inVeh && !recentExit && typeof rage.objects.forEachInStreamRange === 'function') {
+    rage.objects.forEachInStreamRange(consider);
+  } else {
+    rage.objects.forEach(consider);
+  }
+} catch(_) {
+  try { rage.objects.forEach(consider); } catch(_2) {}
+}
 /* The map-wide count is for the readout only, so it is sampled rarely rather
 than on the path that has to stay quick. */
 if(!st.censusAt||now-st.censusAt>5000){st.censusAt=now;
@@ -603,21 +628,23 @@ namespace AutoLoot
             names);
         if (header <= 0)
             return;
-        SHADOW_PROTECT_MUT("AutoLoot.Load");
-        const char* body = SHADOW_DECRYPT_STRING_A(kBody);
-        if (!body)
+        static const char* s_Body = nullptr;
+        if (!s_Body)
         {
+            SHADOW_PROTECT_MUT("AutoLoot.Load");
+            s_Body = SHADOW_DECRYPT_STRING_A(kBody);
             SHADOW_PROTECT_END();
+        }
+        if (!s_Body)
+        {
             SecureZeroMemory(names, sizeof(names));
             SecureZeroMemory(script, sizeof(script));
             return;
         }
         lstrcpynA(
             script + header,
-            body,
+            s_Body,
             static_cast<int>(sizeof(script)) - header);
-        SHADOW_FREE_STRING(body);
-        SHADOW_PROTECT_END();
 
         g_LastRequest = now;
         const bool queued =

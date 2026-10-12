@@ -26,6 +26,7 @@ namespace
     bool g_PendingStop = false;
     bool g_PendingFlip = false;
     bool g_PendingCrash = false;
+    bool g_PendingBoost = false;
 
     float ClampMultiplier(float value) noexcept
     {
@@ -220,6 +221,7 @@ namespace
             g_PendingStop = false;
             g_PendingFlip = false;
             g_PendingCrash = false;
+            g_PendingBoost = false;
             return;
         }
         if (g_PendingStop)
@@ -283,6 +285,20 @@ namespace
                 "mp.game.fire.addExplosion(q.x,q.y,q.z,7,1,true,false,1);"
                 "how='blast';}");
         }
+        if (g_PendingBoost)
+        {
+            g_PendingBoost = false;
+            char body[256];
+            float actualSpeed = g_Settings.boostSpeed * 5.0f;
+            _snprintf(body, sizeof(body), 
+                "if(typeof v.setForwardSpeed==='function'){"
+                "v.setForwardSpeed(%f);"
+                "how='fwd';}"
+                "else if(mp.game.vehicle&&typeof mp.game.vehicle.setVehicleForwardSpeed==='function'){"
+                "mp.game.vehicle.setVehicleForwardSpeed(v.handle,%f);how='ns';}",
+                actualSpeed, actualSpeed);
+            RunOnVehicle("boost", body);
+        }
         // Engine control lived here and was removed. The engine is the
         // server's: setting it from the client resynced the vehicle and threw
         // the occupant out, and asking over the server's own event does not
@@ -317,6 +333,11 @@ void RequestCrash() noexcept
     g_PendingCrash = true;
 }
 
+void RequestBoost() noexcept
+{
+    g_PendingBoost = true;
+}
+
 void Update() noexcept
 {
     g_Settings.unlockSpeedLimit = false;
@@ -331,7 +352,8 @@ void Update() noexcept
         g_Settings.autopilot ||
         g_PendingStop ||
         g_PendingFlip ||
-        g_PendingCrash;
+        g_PendingCrash ||
+        g_PendingBoost;
 
     if (!NativeInvoke::Init())
     {
@@ -376,7 +398,7 @@ void Update() noexcept
         const ULONGLONG nowMs = GetTickCount64();
         const bool pending =
             g_PendingStop || g_PendingFlip ||
-            g_PendingCrash;
+            g_PendingCrash || g_PendingBoost;
         if (pending || nowMs - lastReport >= 2000)
         {
             lastReport = nowMs;
@@ -411,6 +433,7 @@ void Update() noexcept
         g_PendingStop = false;
         g_PendingFlip = false;
         g_PendingCrash = false;
+        g_PendingBoost = false;
         g_Status = any ? Status::NoVehicle : Status::Off;
         const bool seated = g_LocalVehicle.valid
             ? g_LocalVehicle.inVehicle

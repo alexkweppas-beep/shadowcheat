@@ -1125,6 +1125,11 @@ namespace NativeInvoke
         Invoke<void>(0x57FFF03E423A4C0Bull, player);
     }
 
+    inline void SetExplosiveMeleeThisFrame(int player) noexcept
+    {
+        Invoke<void>(0xFF1BED81BFDC0FE0ull, player);
+    }
+
     inline void ClearPedTasksImmediately(int ped) noexcept
     {
         Invoke<void>(0xAAA34F8A7CB32098ull, ped);

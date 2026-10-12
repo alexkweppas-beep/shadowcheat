@@ -206,37 +206,39 @@ inline void EspComputeHealthBarRects(
     if (hpPercent > 1.f) hpPercent = 1.f;
     if (stackIndex < 0) stackIndex = 0;
 
-    const float barThick = 4.f;
+    // Reference uses max(2, round(3×scaleFactor)) where scaleFactor=clamp(25/dist,0.5,1).
+    // At typical distances (>25m) that is always 2px. Use 2 to avoid fat bars at range.
+    const float barThick = 3.f;
     const float barPad = 2.f;
-    const float stackShift = static_cast<float>(stackIndex) * (barThick + barPad + 3.f);
+    const float stackShift = static_cast<float>(stackIndex) * (barThick + barPad + 2.f);
     const float boxW = boxMax.x - boxMin.x;
     const float boxH = boxMax.y - boxMin.y;
 
     switch (position) {
     case EspHealthBarRight:
-        *outlineMin = ImVec2(boxMax.x + barPad + stackShift, boxMin.y - 1.f);
-        *outlineMax = ImVec2(boxMax.x + barPad + barThick + 2.f + stackShift, boxMax.y + 1.f);
-        *fillMin = ImVec2(boxMax.x + barPad + 1.f + stackShift, boxMax.y - boxH * hpPercent);
-        *fillMax = ImVec2(boxMax.x + barPad + barThick + 1.f + stackShift, boxMax.y);
+        *outlineMin = ImVec2(boxMax.x + barPad + stackShift,           boxMin.y);
+        *outlineMax = ImVec2(boxMax.x + barPad + barThick + stackShift, boxMax.y);
+        *fillMin    = ImVec2(boxMax.x + barPad + stackShift,           boxMax.y - boxH * hpPercent);
+        *fillMax    = ImVec2(boxMax.x + barPad + barThick + stackShift, boxMax.y);
         break;
     case EspHealthBarTop:
-        *outlineMin = ImVec2(boxMin.x - 1.f, boxMin.y - barPad - barThick - 2.f - stackShift);
-        *outlineMax = ImVec2(boxMax.x + 1.f, boxMin.y - barPad - stackShift);
-        *fillMin = ImVec2(boxMin.x, boxMin.y - barPad - barThick - stackShift);
-        *fillMax = ImVec2(boxMin.x + boxW * hpPercent, boxMin.y - barPad - 1.f - stackShift);
+        *outlineMin = ImVec2(boxMin.x,           boxMin.y - barPad - barThick - stackShift);
+        *outlineMax = ImVec2(boxMax.x,           boxMin.y - barPad - stackShift);
+        *fillMin    = ImVec2(boxMin.x,           boxMin.y - barPad - barThick - stackShift);
+        *fillMax    = ImVec2(boxMin.x + boxW * hpPercent, boxMin.y - barPad - stackShift);
         break;
     case EspHealthBarBottom:
-        *outlineMin = ImVec2(boxMin.x - 1.f, boxMax.y + barPad + stackShift);
-        *outlineMax = ImVec2(boxMax.x + 1.f, boxMax.y + barPad + barThick + 2.f + stackShift);
-        *fillMin = ImVec2(boxMin.x, boxMax.y + barPad + 1.f + stackShift);
-        *fillMax = ImVec2(boxMin.x + boxW * hpPercent, boxMax.y + barPad + barThick + 1.f + stackShift);
+        *outlineMin = ImVec2(boxMin.x,           boxMax.y + barPad + stackShift);
+        *outlineMax = ImVec2(boxMax.x,           boxMax.y + barPad + barThick + stackShift);
+        *fillMin    = ImVec2(boxMin.x,           boxMax.y + barPad + stackShift);
+        *fillMax    = ImVec2(boxMin.x + boxW * hpPercent, boxMax.y + barPad + barThick + stackShift);
         break;
     case EspHealthBarLeft:
     default:
-        *outlineMin = ImVec2(boxMin.x - barPad - barThick - 2.f - stackShift, boxMin.y - 1.f);
-        *outlineMax = ImVec2(boxMin.x - barPad - stackShift, boxMax.y + 1.f);
-        *fillMin = ImVec2(boxMin.x - barPad - barThick - 1.f - stackShift, boxMax.y - boxH * hpPercent);
-        *fillMax = ImVec2(boxMin.x - barPad - 1.f - stackShift, boxMax.y);
+        *outlineMin = ImVec2(boxMin.x - barPad - barThick - stackShift, boxMin.y);
+        *outlineMax = ImVec2(boxMin.x - barPad - stackShift,            boxMax.y);
+        *fillMin    = ImVec2(boxMin.x - barPad - barThick - stackShift, boxMax.y - boxH * hpPercent);
+        *fillMax    = ImVec2(boxMin.x - barPad - stackShift,            boxMax.y);
         break;
     }
 }
@@ -300,7 +302,7 @@ inline void EspDrawCornerBox(
         return;
     const float w = boxMax.x - boxMin.x;
     const float h = boxMax.y - boxMin.y;
-    float len = (w < h ? w : h) * 0.28f;
+    float len = (w < h ? w : h) * 0.25f;
     if (len < 4.f) len = 4.f;
     if (len > 18.f) len = 18.f;
 
@@ -436,9 +438,9 @@ inline void EspDrawBarStyled(
     outlineMin = ImVec2(outlineMin.x + offset.x, outlineMin.y + offset.y);
     outlineMax = ImVec2(outlineMax.x + offset.x, outlineMax.y + offset.y);
 
-    // Background track
+    // Dark rounded background track (no border, matching reference style)
     draw->AddRectFilled(
-        outlineMin, outlineMax, IM_COL32(0, 0, 0, (alpha * 180) / 255), 1.5f);
+        outlineMin, outlineMax, IM_COL32(30, 30, 30, (alpha * 150) / 255), 2.f);
 
     const bool vertical =
         position == EspHealthBarLeft || position == EspHealthBarRight;
@@ -452,6 +454,7 @@ inline void EspDrawBarStyled(
         const ImU32 high = armor
             ? EspArmorGradientColor(1.f, alpha)
             : EspHealthColor(1.f, alpha);
+        // Gradient fill with rounded corners
         if (vertical)
         {
             draw->AddRectFilledMultiColor(
@@ -468,14 +471,15 @@ inline void EspDrawBarStyled(
         const ImU32 col = armor
             ? EspArmorGradientColor(percent, alpha)
             : EspHealthColor(percent, alpha);
-        draw->AddRectFilled(fillMin, fillMax, col, 1.f);
+        draw->AddRectFilled(fillMin, fillMax, col, 2.f);
     }
     else
     {
-        draw->AddRectFilled(fillMin, fillMax, EspRgb(solidColor, alpha), 1.f);
+        draw->AddRectFilled(fillMin, fillMax, EspRgb(solidColor, alpha), 2.f);
     }
-    draw->AddRect(outlineMin, outlineMax, IM_COL32(0, 0, 0, alpha), 1.5f);
+    // No outline stroke — clean look matching external reference.
 }
+
 
 inline void EspDrawHealthBarAt(
     ImDrawList* draw,

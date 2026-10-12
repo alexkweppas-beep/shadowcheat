@@ -26,7 +26,7 @@ namespace AutoLoot
     // item at 12, so anything past roughly ten is refused. The slider is not
     // capped there anyway: the limit is worth being able to probe, and a
     // refusal is answered with a growing backoff rather than a retry storm.
-    inline constexpr float kMaxRadius = 120.f;
+    inline constexpr float kMaxRadius = 10.f;
     inline constexpr float kMinRadius = 1.f;
     inline constexpr float kServerLimit = 10.f;
 

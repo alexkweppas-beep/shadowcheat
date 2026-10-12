@@ -16,6 +16,7 @@
 #include "../Features/MeshSilhouette.h"
 #include "../Features/MiscFeatures.h"
 #include "../Features/ObsBypass.h"
+#include "../Features/NvidiaBypass.h"
 #include "../Features/PedPreview.h"
 #include "../Features/QuantTools.h"
 #include "../Features/RagePlayerNames.h"
@@ -87,7 +88,12 @@ void DrawSubscriptionCard(float scale) {
   // nickname can be clipped against the status pill below.
   const float avatar = 34.f * scale;
   const ImVec2 headerMin = ImGui::GetCursorScreenPos();
-  MenuUi::NavRailAccount(headerMin, avatar, s_AccountName, nullptr, 0.f);
+  const char *cloudUser = CloudStorage::GetUsername();
+  if (!cloudUser || !cloudUser[0])
+    cloudUser = s_AccountName;
+  const char *nick = cloudUser[0] ? cloudUser : "User";
+
+  MenuUi::NavRailAccount(headerMin, avatar, nick, nullptr, 0.f);
 
   const char *statusText =
       expired ? T("Expired", "Истёк", "Вичерпано")
@@ -115,10 +121,7 @@ void DrawSubscriptionCard(float scale) {
                        IM_ROUND(pillMin.y + (pillH - microSize) * 0.5f)),
                 gui->get_clr(statusColor, 1.f), statusText);
 
-  const char *cloudUser = CloudStorage::GetUsername();
-  if (!cloudUser || !cloudUser[0])
-    cloudUser = s_AccountName;
-  const char *nick = cloudUser[0] ? cloudUser : "User";
+
   ImFont *nickFont = MenuType::Title();
   const float nickSize = MenuType::TitleSize();
   const float nickX = IM_ROUND(headerMin.x + avatar + 10.f * scale);
@@ -222,6 +225,8 @@ void DrawSubscriptionCard(float scale) {
 }
 
 void DrawGlobalKeysCard() {
+  const float scale =
+      ImClamp(static_cast<float>(s_UIScalePercent) / 100.f, 1.f, 2.f);
   MenuUi::BeginInspectorIsland("flyout_keys_island",
                                T("Keys", "Клавиши", "Клавіші"), 0.f, nullptr,
                                true);
@@ -240,15 +245,18 @@ void DrawGlobalKeysCard() {
                ICON_FA_POWER_OFF);
   if (ImGui::IsItemActive())
     FeatureBinds::SetCaptureActive(true);
-  MenuUi::EndInspectorIsland();
-
   // Capture bypass belongs with the other global switches rather
   // than on a feature page: it changes how the overlay is drawn,
   // not what it draws.
-  MenuUi::BeginInspectorIsland("flyout_capture_island",
-                               T("Capture", "Захват", "Захоплення"), 10.f,
-                               ObsBypass::StatusText(), true);
-  ImGui::TextDisabled("%s", ObsBypass::StatusDetail());
+  ImGui::Dummy(ImVec2(0.f, MenuTheme::Sizes().space2 * scale));
+  ImDrawList* draw = ImGui::GetWindowDrawList();
+  ImFont* titleFont = MenuType::Title();
+  const float titleSize = MenuType::TitleSize();
+  const ImVec2 titlePos = ImGui::GetCursorScreenPos();
+  const char* captureLabel = T("Capture", "Запись", "Запис");
+  const ImVec2 titleSz = titleFont->CalcTextSizeA(titleSize, FLT_MAX, 0.f, captureLabel);
+  draw->AddText(titleFont, titleSize, titlePos, gui->get_clr(MenuTheme::Colors().textPrimary, 1.f), captureLabel);
+  ImGui::Dummy(ImVec2(0.f, titleSz.y + MenuTheme::Sizes().space2 * scale));
   MenuUi::SettingRowDesc obs{};
   obs.icon = ICON_FA_VIDEO;
   obs.label = T("OBS bypass", "Обход OBS", "Обхід OBS");
@@ -258,6 +266,18 @@ void DrawGlobalKeysCard() {
   obs.bindable = false;
   if (MenuUi::SettingRow("flyout_obs_bypass", obs).toggled)
     ObsBypass::SetEnabled(set->obs_bypass);
+
+  MenuUi::SettingRowDesc nv{};
+  nv.icon = ICON_FA_FILM;
+  nv.label = T("Total bypass", "Полный обход", "Повний обхід");
+  nv.enabled = &set->nvidia_bypass;
+  nv.bindable = false;
+  nv.tipEn = "(works only in borderless windowed mode)";
+  nv.tipRu = "(работает только в режиме \"Оконный без рамки\")";
+  nv.tipUa = "(працює тільки в режимі \"Віконний без рамки\")";
+  if (MenuUi::SettingRow("flyout_nvidia_bypass", nv).toggled)
+    NvidiaBypass::SetEnabled(set->nvidia_bypass);
+
   MenuUi::EndInspectorIsland();
 }
 } // namespace
@@ -403,7 +423,7 @@ void RenderMenuSettingsFlyout() {
   // two columns above ending at the same height.
   SetRenderPhase("flyout:language");
   MenuUi::BeginInspectorIsland("flyout_language_island",
-                               T("Language", "Язык", "Мова"), 10.f, nullptr,
+                               T("Language", "Язык", "Мова"), -1.f, nullptr,
                                true);
   const MenuUi::ChipDesc langChips[] = {
       {"en", "English"}, {"ru", "Русский"}, {"ua", "Українська"}};

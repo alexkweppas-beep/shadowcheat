@@ -17,13 +17,18 @@ namespace FiveRpAdminScan
 {
     inline constexpr int kCapacity = 128;
 
+    // inSpec: handle === 0 means server removed the ped from the world
+    //         (freecam / spectate). This is the only reliable signal.
+    // streamed: handle !== 0, ped is physically rendered in our client.
     struct Entry final
     {
         std::uint16_t remoteId{};
         int characterId{};
-        bool streamed{};
+        bool streamed{};    // handle != 0 -> ped rendered in our client
+        bool inSpec{};      // handle == 0 while admin flag set -> in spectate/freecam
         char name[64]{};
         char factionTag[32]{};
+        int dimension{};    // virtual world
     };
 
     struct Status final
