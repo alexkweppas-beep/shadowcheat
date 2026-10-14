@@ -50,9 +50,9 @@
 // Defined in dllmain.cpp, which owns the single-instance claim.
 void ReleaseSoleInstanceClaim() noexcept;
 
-// ----------------------------------------------------------------
+ 
 // External linkage  (see declarations in Hooks.h)
-// ----------------------------------------------------------------
+ 
 namespace hooks {
     ID3D11Device*         g_Device         = nullptr;
     ID3D11DeviceContext*  g_Context        = nullptr;
@@ -111,9 +111,9 @@ namespace hooks {
     LogFn   g_LogFn       = nullptr;
 }
 
-// ----------------------------------------------------------------
+ 
 // Forward declarations
-// ----------------------------------------------------------------
+ 
 extern IMGUI_IMPL_API LRESULT ImGui_ImplWin32_WndProcHandler(
     HWND, UINT, WPARAM, LPARAM);
 
@@ -704,13 +704,13 @@ namespace hooks
         }
     }
 
-    // ------------------------------------------------------------
+     
     //  ImGui init (lazy — needs device/swapchain backbuffers)
-    // ------------------------------------------------------------
-    // --------------------------------------------------------------------
+     
+     
     //  Private-heap allocator funcs for ImGui. Defined in dllmain.cpp.
     //  Declared at namespace scope so the linker can find them.
-    // --------------------------------------------------------------------
+     
     void* ImHeapAllocFn(size_t sz, void* user_data);
     void  ImHeapFreeFn(void* ptr, void* user_data);
 
@@ -857,9 +857,9 @@ namespace hooks
         NotifyInjectReady();
     }
 
-    // ------------------------------------------------------------
+     
     //  Helpers
-    // ------------------------------------------------------------
+     
     static bool PresentInsideDxgi(void* present)
     {
         if (!present) return false;
@@ -877,13 +877,13 @@ namespace hooks
 
 
 
-    // ------------------------------------------------------------
+     
     //  OnDxgiSwapChainCreated — ReShade pattern: when the game
     //  creates its swapchain (via D3D11CreateDeviceAndSwapChain or
     //  IDXGIFactory::CreateSwapChain), we patch THAT swapchain's
     //  vtable Present (slot 8) and Present1 (slot 22) slots directly.
     //  This guarantees we hook the REAL Present the game calls.
-    // ------------------------------------------------------------
+     
     // Both patch sites need these, and a resize that is not intercepted is
     // fatal, so failures are logged rather than passed over.
     static void PatchResizeSlots(void** vt, const char* where)
@@ -972,7 +972,7 @@ namespace hooks
         PatchResizeSlots(vt, "real swapchain");
     }
 
-    // ------------------------------------------------------------
+     
     //  TryVtablePatchFromDummy — create a throwaway HARDWARE device
     //  + swapchain. The dummy's vtable pointer IS the canonical shared
     //  IDXGISwapChain vtable in dxgi.dll .rdata — the game's swapchain
@@ -981,7 +981,7 @@ namespace hooks
     //  slot is called directly (no trampoline, no stolen bytes, no
     //  RIP-relative relocation bugs that froze the game in v8).
     //  This is exactly how ReShade's hook_manager patches vtables.
-    // ------------------------------------------------------------
+     
     static bool TryVtablePatchFromDummy()
     {
         HLog("Init: dummy HARDWARE device resolve (vtable patch)");
@@ -1047,14 +1047,14 @@ namespace hooks
         return hooked;
     }
 
-    // ------------------------------------------------------------
+     
     //  Initialize — v1 pattern (proven to work):
     //    1. Create dummy HARDWARE device FIRST and inline-detour the
     //       REAL Present/Present1 resolved from its vtable.
     //    2. Install D3D11 + DXGI export hooks AFTER (so the dummy's
     //       own D3D11CreateDeviceAndSwapChain call isn't intercepted
     //       by our own hook, which caused a stall in v6).
-    // ------------------------------------------------------------
+     
     bool Initialize()
     {
         if (g_VtableHookInstalled || g_InlineHookInstalled ||
@@ -1218,12 +1218,12 @@ namespace hooks
         Diagnostics::Shutdown();
     }
 
-    // ------------------------------------------------------------
+     
     // Capture ViewProjection matrix from D3D11 vertex shader constant buffers.
     // Called every frame from hkPresent before rendering ESP.
     // The game uploads the camera VP matrix as a cbuffer bound to VS slot 0.
     // We read it back here so WorldToScreen works without a code pattern.
-    // ------------------------------------------------------------
+     
     static void CaptureViewProjection()
     {
         if (!g_Context) return;
@@ -1280,7 +1280,7 @@ namespace hooks
         vsCB[0]->Release();
     }
 
-    // ------------------------------------------------------------
+     
     void RenderMenu() {}
 
     static void ReleaseMenuInputCapture(bool unloading)
@@ -1368,10 +1368,10 @@ namespace hooks
         g_RestoreGameMouseCapture = false;
     }
 
-    // ------------------------------------------------------------
+     
     //  Shared frame-rendering logic — called from both hkPresent
     //  and hkPresent1 to avoid code duplication.
-    // ------------------------------------------------------------
+     
     static void RenderFrame(IDXGISwapChain* pSwap, const char* caller)
     {
         const std::int64_t profileFrame =
@@ -1883,9 +1883,9 @@ namespace hooks
         s_LastEntry = now;
     }
 
-    // ------------------------------------------------------------
+     
     // hkPresent — IDXGISwapChain::Present hook (vtable slot 8).
-    // ------------------------------------------------------------
+     
     extern "C" HRESULT __stdcall hkPresent(
         IDXGISwapChain* pSwap, UINT SyncInterval, UINT Flags)
     {
@@ -1940,10 +1940,10 @@ namespace hooks
         return presentHr;
     }
 
-    // ------------------------------------------------------------
+     
     // hkPresent1 — IDXGISwapChain1::Present1 hook (vtable slot 22).
     // This is the call path for modern games (GTA V / RageMP).
-    // ------------------------------------------------------------
+     
     extern "C" HRESULT __stdcall hkPresent1(
         IDXGISwapChain1* pSwap, UINT SyncInterval, UINT PresentFlags,
         const DXGI_PRESENT_PARAMETERS* pPresentParameters)
@@ -1987,13 +1987,13 @@ namespace hooks
         return presentHr;
     }
 
-    // ------------------------------------------------------------
+     
     // hkResizeBuffers — IDXGISwapChain::ResizeBuffers hook (slot 13).
     // DXGI refuses the call while any reference to a back buffer is alive,
     // and we keep a render target view on buffer 0 between frames. Dropping
     // it here is the whole point: the previous build failed the game's
     // resize and took the renderer down with it.
-    // ------------------------------------------------------------
+     
     extern "C" HRESULT __stdcall hkResizeBuffers(
         IDXGISwapChain* pSwap,
         UINT BufferCount,
@@ -2047,10 +2047,10 @@ namespace hooks
         return hr;
     }
 
-    // ------------------------------------------------------------
+     
     // hkSetFullscreenState — slot 10. A fullscreen transition resizes the
     // buffers internally, so the same references have to go first.
-    // ------------------------------------------------------------
+     
     extern "C" HRESULT __stdcall hkSetFullscreenState(
         IDXGISwapChain* pSwap,
         BOOL Fullscreen,
@@ -2088,9 +2088,9 @@ namespace hooks
         return hr;
     }
 
-    // ------------------------------------------------------------
+     
     // hkWndProc — input hook for ImGui.
-    // ------------------------------------------------------------
+     
     static void SubmitRawMouseInputToImGui(LPARAM lParam)
     {
         RAWINPUT input{};

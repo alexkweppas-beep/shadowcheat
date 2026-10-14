@@ -1,7 +1,7 @@
 #pragma once
 #include <cstdint>
 
-// =====================================================================
+ 
 //  RAGEMP — Modern Minimalist ImGui Cheat Menu
 //
 //  Anti-cheat safe:
@@ -18,7 +18,7 @@
 //  UI Scale:
 //    s_UIScalePercent — 75..200 in steps of 25, selects DPI font + layout
 //      scale. Each step has its own rasterised font atlas.
-// =====================================================================
+ 
 
 struct ImGuiIO;
 struct ImFont;

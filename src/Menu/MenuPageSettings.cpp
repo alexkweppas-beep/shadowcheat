@@ -89,7 +89,7 @@ namespace Menu
             ImDrawList* draw = ImGui::GetWindowDrawList();
             const float width = ImMax(ImGui::GetContentRegionAvail().x, 1.f);
 
-            // --- Header: avatar, nickname, status pill -------------------
+            // --- Header: avatar, nickname, status pill
             // railExpand 0 keeps NavRailAccount to the avatar disc so the
             // nickname can be clipped against the status pill below.
             const float avatar = 34.f * scale;
@@ -162,7 +162,7 @@ namespace Menu
             draw->PopClipRect();
             ImGui::Dummy(ImVec2(0.f, avatar + metrics.space3 * scale));
 
-            // --- Remaining time -----------------------------------------
+            // --- Remaining time
             char value[32]{};
             const char* caption = nullptr;
             if (expired)
@@ -219,7 +219,7 @@ namespace Menu
             ImGui::Dummy(
                 ImVec2(0.f, valueSz.y + metrics.space2 * scale));
 
-            // --- Gauge ---------------------------------------------------
+            // --- Gauge
             // One tick per day of the span the gauge measures against, so a lit
             // tick is a real remaining day and not a decorative notch.
             constexpr int kGaugeTicks =
@@ -259,7 +259,7 @@ namespace Menu
             ImGui::Dummy(
                 ImVec2(0.f, trackH + metrics.space2 * scale));
 
-            // --- Expiry date --------------------------------------------
+            // --- Expiry date
             char expiry[64]{};
             SYSTEMTIME parts{};
             if (TimeUtil::LocalTimeFromUnix(expiresAt, parts))
@@ -888,7 +888,7 @@ namespace Menu
         return action;
     }
 
-    // ── Cloud configs ────────────────────────────────────────────────
+    // ── Cloud configs
     // The account library shares the Supabase backend with the rest of the
     // cheat. The calls block, and this build cannot spawn a thread (the game's
     // minifilter kills new threads), so they run on a deliberate click, never
@@ -1116,7 +1116,7 @@ namespace Menu
         }
         ImGui::EndChild();
 
-        // ── Cloud configs ────────────────────────────────────────────
+        // ── Cloud configs
         ImGui::Dummy(ImVec2(0.f, 6.f * scale));
         MenuUi::BeginInspectorIsland(
             "config_cloud",

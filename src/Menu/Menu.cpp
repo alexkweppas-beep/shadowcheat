@@ -1916,11 +1916,11 @@ namespace Menu
 
 
 
-    // ------------------------------------------------------------------
+     
     //  Shell
     //  Fixed icon rail (pin to expand), 44 px header with the page identity,
     //  flat canvas, and an instrument bar fed only by authoritative state.
-    // ------------------------------------------------------------------
+     
 
     static void DrawShellBackdrop(
         ImDrawList* draw,
@@ -2490,7 +2490,7 @@ namespace Menu
                 MenuMotion::kSelection);
             DrawShellBackdrop(draw, pos, size);
 
-            // ---- Top navigation ----------------------------------------
+            // ---- Top navigation
             // One row of categories; the active category slides its children
             // out on a second row underneath. No side rail.
             const float padX = 16.f * scale;
@@ -2515,7 +2515,7 @@ namespace Menu
                 // gui->get_clr applies the menu's current fade alpha to the accent color
                 const ImU32 col = gui->get_clr(tokens.accent.brand, 1.f);
 
-                // ── Path 0: left wing ─────────────────────────────────────
+                // ── Path 0: left wing
                 draw->PathClear();
                 draw->PathLineTo(S(2.115f, 18.673f));
                 draw->PathBezierCubicCurveTo(S(2.338f,18.237f),   S(2.830f,17.957f),   S(3.364f,17.993f),   0);
@@ -2537,7 +2537,7 @@ namespace Menu
                 draw->PathBezierCubicCurveTo(S(0.191f,33.563f),  S(-0.561f,23.896f),  S(2.115f,18.673f),   0);
                 draw->PathFillConcave(col);
 
-                // ── Path 1: right wing ────────────────────────────────────
+                // ── Path 1: right wing
                 draw->PathClear();
                 draw->PathLineTo(S(192.850f, 65.282f));
                 draw->PathBezierCubicCurveTo(S(196.136f,65.621f),  S(207.819f,81.820f),  S(209.239f,85.326f),  0);
@@ -2556,7 +2556,7 @@ namespace Menu
                 draw->PathLineTo(S(192.850f, 65.282f));
                 draw->PathFillConcave(col);
 
-                // ── Path 2: top arch ──────────────────────────────────────
+                // ── Path 2: top arch
                 draw->PathClear();
                 draw->PathLineTo(S(41.831f, 0.091f));
                 draw->PathBezierCubicCurveTo(S(51.778f,-0.059f),   S(62.177f,0.066f),   S(72.163f,0.067f),   0);
@@ -2575,7 +2575,7 @@ namespace Menu
                 draw->PathBezierCubicCurveTo(S(29.797f,0.008f),    S(34.170f,0.151f),   S(41.831f,0.091f),   0);
                 draw->PathFillConcave(col);
 
-                // ── Path 3: centre eye ring ───────────────────────────────
+                // ── Path 3: centre eye ring
                 draw->PathClear();
                 draw->PathLineTo(S(137.103f, 37.291f));
                 draw->PathBezierCubicCurveTo(S(136.689f,36.097f),  S(136.642f,34.727f),  S(137.505f,33.743f),  0);
@@ -2680,7 +2680,7 @@ namespace Menu
             }
             ImGui::PopID();
 
-            // ---- Child row ---------------------------------------------
+            // ---- Child row
             struct SubRowMotion final
             {
                 float open = 0.f;
@@ -2857,7 +2857,7 @@ namespace Menu
                 }
             }
 
-            // ---- Content ------------------------------------------------
+            // ---- Content
             set->selection_alpha = ImClamp(
                 set->selection_alpha +
                     (MenuMotion::Delta() / MenuMotion::kPage) *
@@ -2946,7 +2946,7 @@ namespace Menu
                 }
             }
 
-            // ---- Bottom bar ---------------------------------------------
+            // ---- Bottom bar
             SetRenderPhase("bottom-bar");
             const float barTop = pos.y + size.y - bottomH;
             const float barCenterY = barTop + bottomH * 0.5f;

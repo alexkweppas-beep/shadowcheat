@@ -14,9 +14,9 @@
 
 namespace {
 
-// ---------------------------------------------------------------------------
+ 
 // RP name resolver debug (C:\RAGEMP\cheat_log.txt via hooks::HLog)
-// ---------------------------------------------------------------------------
+ 
 struct NameResolveDbg {
     DWORD lastReportTick = 0;
     bool  modulesLogged  = false;

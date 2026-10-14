@@ -1,26 +1,5 @@
-/*
- * CloudStorage.cpp — Shadow Backend edition
- *
- * Replaces the Supabase edge-function transport with our own
- * Express backend (api.shadowcheats.cc).
- *
- * Token source: reads JWT from the loader's shared memory
- * (ShadowSharedAuth::token) instead of cloud.session.
- *
- * Endpoint mapping:
- *   kind="config"  → /api/configs/{list|save|load|delete}  (product=ragemp)
- *   kind="script"  → /api/scripts/{list|save|load|delete}
- *
- * Public API (CloudStorage.h) is unchanged:
- *   List   → enumerate names
- *   Get    → load one item by name (we use name as key, not UUID)
- *   Upsert → create or update
- *   Delete → remove by name
- *
- * NOTE: IsSafeId / Base64 helpers kept for source-compat but Get/Delete
- * now accept a name string, not a UUID.  The header still exposes the
- * old signatures so the rest of the DLL doesn't need to change.
- */
+/* Конфиги и скрипты хранятся через Express API. JWT читается из ShadowSharedAuth::token.
+ * Get/Delete принимают имя, а не UUID; прежние сигнатуры сохранены для совместимости. */
 
 #define WIN32_LEAN_AND_MEAN
 #include <Windows.h>
@@ -311,9 +290,9 @@ namespace CloudStorage
 
     } // anonymous namespace
 
-    // ────────────────────────────────────────────────────────────
+     
     //  Public API
-    // ────────────────────────────────────────────────────────────
+     
 
     void Initialize()
     {
