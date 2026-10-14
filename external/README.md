@@ -1,7 +1,5 @@
 # External
 
-Внешний чит, собирается в отдельный `shadow_external.exe` и работает со стороны,
-без инжекта в процесс.
+В этой папке находится каркас цели `shadow_external`, а не полная реализация клиента.
 
-Весь код лежит в `src/`. Не правьте отсюда `internal/` и `shared/` — это зона
-второго разработчика и общая территория соответственно.
+Исходники клиента лежат в [components/external](https://github.com/alexkweppas-beep/shadowcheat-portfolio/tree/components/external).
