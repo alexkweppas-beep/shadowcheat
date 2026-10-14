@@ -1,9 +1,5 @@
 # Internal
 
-Внутренний чит, собирается в `shadow_internal.dll` и инжектится в процесс игры.
+В этой папке находится каркас DLL и настройки CMake.
 
-Весь код лежит в `src/`. Не правьте отсюда `external/` и `shared/` — это зона
-второго разработчика и общая территория соответственно.
-
-В dev-сборке (`-DSHADOW_DEV_BUILD=ON`) DLL при загрузке открывает консоль и пишет логи.
-В user-сборке ни консоли, ни логов в бинарнике нет.
+Полная реализация находится в [components/internal](https://github.com/alexkweppas-beep/shadowcheat-portfolio/tree/components/internal); другая версия — в [components/internal-next](https://github.com/alexkweppas-beep/shadowcheat-portfolio/tree/components/internal-next).
