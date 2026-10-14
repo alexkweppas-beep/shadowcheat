@@ -1,30 +1,7 @@
 #pragma once
 #include "security/xorstr.hpp"
 
-/*
- * shadow cheats — ADVANCED ANTI-REVERSE TRICKS v2
- *
- * Дополнительный слой поверх anti_analysis.hpp:
- *
- *  Блок A — Anti-Breakpoint (INT3 scan, SW BP detect)
- *  Блок B — Kernel Debugger Detection (NtQuerySystemInformation)
- *  Блок C — Anti-Attach (BreakOnTermination, CriticalProcess)
- *  Блок D — VEH Control Flow Obfuscation
- *  Блок E — Self-Modifying Code (decrypt/run/re-encrypt)
- *  Блок F — Import Table Corruption (post-mapping)
- *  Блок G — Anti-Dump (erase export/import dirs, section headers)
- *  Блок H — Memory Heap Scan (detect allocations from bad modules)
- *  Блок I — NtSetInformationProcess tricks (hide from kernel tools)
- *  Блок J — Exception-based Control Flow (SEH/VEH trampolines)
- *  Блок K — Code Checksums per-function (runtime verification)
- *  Блок L — Fake Thread Injection Detection
- *  Блок M — WOW64 Heaven's Gate monitoring
- *  Блок N — Hyper-V MSR timing tricks
- *  Блок O — Anti-Fuzzer (detect memory fuzzing patterns)
- *  Блок P — Process Mitigation Policies (raise ACG, CIG)
- *  Блок Q — Kernel Object Handle Checks
- *  Блок R — Anti-Kernel-Patch-Protection bypass detect
- */
+/* Дополнительные проверки для anti_analysis.hpp. */
 
 #ifndef WIN32_LEAN_AND_MEAN
 #define WIN32_LEAN_AND_MEAN
@@ -48,9 +25,9 @@
 
 namespace shadow::advanced {
 
-// ---------------------------------------------------------
+ 
 //  Helpers
-// ---------------------------------------------------------
+ 
 static constexpr uint32_t crc32_byte(uint32_t crc, uint8_t b) {
     crc ^= b;
     for (int i = 0; i < 8; i++) crc = (crc >> 1) ^ (0xEDB88320 & -(crc & 1));
@@ -62,9 +39,9 @@ static uint32_t crc32_buf(const uint8_t* p, size_t n) {
     return ~c;
 }
 
-// ---------------------------------------------------------
+ 
 //  БЛОК A — Anti-Breakpoint (Software BP = 0xCC INT3)
-// ---------------------------------------------------------
+ 
 namespace anti_bp {
 
     // A.1 Сканировать .text секцию на наличие INT3 (0xCC)
@@ -147,9 +124,9 @@ namespace anti_bp {
 
 } // namespace anti_bp
 
-// ---------------------------------------------------------
+ 
 //  БЛОК B — Kernel Debugger Detection
-// ---------------------------------------------------------
+ 
 namespace kernel_dbg {
 
     // B.1 NtQuerySystemInformation: SystemKernelDebuggerInformation (0x23)
@@ -208,9 +185,9 @@ namespace kernel_dbg {
 
 } // namespace kernel_dbg
 
-// ---------------------------------------------------------
+ 
 //  БЛОК C — Anti-Attach (BreakOnTermination + CriticalProcess)
-// ---------------------------------------------------------
+ 
 namespace anti_attach {
 
     // C.1 NtSetInformationProcess: ProcessBreakOnTermination
@@ -305,10 +282,10 @@ namespace anti_attach {
 
 } // namespace anti_attach
 
-// ---------------------------------------------------------
+ 
 //  БЛОК D — VEH Control Flow Obfuscation
 //  Переходы между функциями через намеренные исключения
-// ---------------------------------------------------------
+ 
 namespace veh_flow {
 
     // Под отладчиком Single-Step трассировка ломается на каждом исключении
@@ -376,10 +353,10 @@ namespace veh_flow {
 
 } // namespace veh_flow
 
-// ---------------------------------------------------------
+ 
 //  БЛОК E — Self-Modifying Code
 //  Функции хранятся в зашифрованном виде, дешифруются прямо перед вызовом
-// ---------------------------------------------------------
+ 
 namespace smc {
 
     // XOR-шифр для демонстрации (в production — AES-256)
@@ -428,11 +405,11 @@ namespace smc {
 
 } // namespace smc
 
-// ---------------------------------------------------------
+ 
 //  БЛОК F — Import Table & Export Table Corruption
 //  После того как DLL импорты разрешены — стираем таблицу
 //  Дампер не сможет восстановить импорты
-// ---------------------------------------------------------
+ 
 namespace anti_dump {
 
     // F.1 Стереть Import Directory из PE headers
@@ -558,9 +535,9 @@ namespace anti_dump {
 
 } // namespace anti_dump
 
-// ---------------------------------------------------------
+ 
 //  БЛОК G — Thread Analysis Detection
-// ---------------------------------------------------------
+ 
 namespace thread_analysis {
 
     // G.1 Проверить есть ли потоки созданные не нами
@@ -647,9 +624,9 @@ namespace thread_analysis {
 
 } // namespace thread_analysis
 
-// ---------------------------------------------------------
+ 
 //  БЛОК H — Process Mitigation Policies (ACG/CIG)
-// ---------------------------------------------------------
+ 
 namespace mitigation {
 
     // H.1 Arbitrary Code Guard (ACG)
@@ -696,9 +673,9 @@ namespace mitigation {
 
 } // namespace mitigation
 
-// ---------------------------------------------------------
+ 
 //  БЛОК I — Timing & CPU Consistency Checks
-// ---------------------------------------------------------
+ 
 namespace cpu_checks {
 
     // I.1 Количество логических ядер vs CPUID
@@ -772,10 +749,10 @@ namespace cpu_checks {
 
 } // namespace cpu_checks
 
-// ---------------------------------------------------------
+ 
 //  БЛОК J — Network Reachability Check
 //  Sandbox/VM часто не имеют доступа к сети или имеют fake DNS
-// ---------------------------------------------------------
+ 
 namespace net_checks {
 
     // J.1 Проверить что наш домен резолвится в ожидаемый IP
@@ -803,9 +780,9 @@ namespace net_checks {
 
 } // namespace net_checks
 
-// ---------------------------------------------------------
+ 
 //  БЛОК K — Anti-Fuzzing
-// ---------------------------------------------------------
+ 
 namespace anti_fuzz {
 
     // K.1 Детект AFL/libFuzzer: они устанавливают __AFL_COVERAGE_INIT
@@ -846,9 +823,9 @@ namespace anti_fuzz {
 
 } // namespace anti_fuzz
 
-// ---------------------------------------------------------
+ 
 //  БЛОК L — Anti-Tamper: Multi-Layer Checksums
-// ---------------------------------------------------------
+ 
 namespace checksums {
 
     // Хешируем не всю .text, а отдельные "ключевые" функции
@@ -883,10 +860,10 @@ namespace checksums {
 
 } // namespace checksums
 
-// ---------------------------------------------------------
+ 
 //  БЛОК M — Polymorphic Decoy Code
 //  Генерирует фиктивный "похожий" код который реверсер будет анализировать впустую
-// ---------------------------------------------------------
+ 
 namespace decoy {
 
     // Это функции которые ВЫГЛЯДЯТ как настоящая защита
@@ -941,9 +918,9 @@ namespace decoy {
 
 } // namespace decoy
 
-// ---------------------------------------------------------
+ 
 //  МАСТЕР — RunAdvancedChecks()
-// ---------------------------------------------------------
+ 
 
 struct AdvancedCheckResult {
     bool int3_found         = false;

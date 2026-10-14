@@ -176,11 +176,11 @@ namespace overlay
         ::ShowWindow(hwnd, SW_SHOWDEFAULT);
         ::UpdateWindow(hwnd);
 
-        // ---------- ImGui init ----------
+        // ImGui init
         IMGUI_CHECKVERSION();
         ImGui::CreateContext();
         ImGuiIO& io = ImGui::GetIO(); (void)io;
-        // NOTE: NavEnableKeyboard intentionally disabled — VK_INSERT is ImGui's
+        // NavEnableKeyboard intentionally disabled — VK_INSERT is ImGui's
         // default nav-activate key and conflicts with our ToggleMenuKey (Insert).
         // io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;
         io.IniFilename = nullptr; // Disable imgui.ini saving
@@ -188,7 +188,7 @@ namespace overlay
         ImGui_ImplWin32_Init(hwnd);
         ImGui_ImplDX11_Init(g_pd3dDevice, g_pd3dDeviceContext);
 
-        // ---------- Loveup system init ----------
+        // Loveup system init
         // Provide DX device pointers to loveup
         var->dx.device     = g_pd3dDevice;
         var->dx.ctx        = g_pd3dDeviceContext;
@@ -233,7 +233,7 @@ namespace overlay
             }
             if (done) break;
 
-            // ── Проверяем жив ли ПРОЦЕСС (не окно, не отклик) ───────────────────
+            // ── Проверяем жив ли ПРОЦЕСС (не окно, не отклик)
             // Выходим ТОЛЬКО если GTA5.exe завершился (ExitCode != STILL_ACTIVE).
             // Зависшая игра — не повод закрываться.
             if (!g.Run)

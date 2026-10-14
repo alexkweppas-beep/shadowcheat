@@ -32,10 +32,10 @@ namespace shadow::honeypot {
         if (g_on_detect) g_on_detect(trigger);
     }
 
-    // ─────────────────────────────────────────────────────────
+     
     //  1. FAKE LICENSE FUNCTIONS
     //  Крякер ищет в IDA "license/auth/bypass" → патчит первые байты
-    // ─────────────────────────────────────────────────────────
+     
 
     // Эти функции выглядят как проверка лицензии, но на самом деле — приманки
     // Крякер найдёт их по xref от сравнения результата с true/false
@@ -95,10 +95,10 @@ namespace shadow::honeypot {
             || IsFnPatched(&AuthBypass);
     }
 
-    // ─────────────────────────────────────────────────────────
+     
     //  2. MEMORY CANARIES
     //  Страницы-приманки в важных местах памяти
-    // ─────────────────────────────────────────────────────────
+     
 
     struct CanaryPage {
         uint8_t* page     = nullptr;
@@ -125,11 +125,11 @@ namespace shadow::honeypot {
         return current != g_canary.expected; // true = canary убит
     }
 
-    // ─────────────────────────────────────────────────────────
+     
     //  3. ANTI-DUMP PAGE
     //  Страница заполнена данными и защищена PAGE_GUARD
     //  При дампе процесса — дампер пытается прочитать её → исключение → детект
-    // ─────────────────────────────────────────────────────────
+     
 
     static uint8_t* g_dump_page  = nullptr;
     static bool     g_dump_hit   = false;
@@ -171,11 +171,11 @@ namespace shadow::honeypot {
         return false;
     }
 
-    // ─────────────────────────────────────────────────────────
+     
     //  4. NAMED PIPE HONEYPOT
     //  Cheat Engine и другие инструменты могут искать inter-process channels
     //  Создаём pipe с "интересным" именем и ждём подключения
-    // ─────────────────────────────────────────────────────────
+     
 
     static bool g_pipe_hit   = false;
     static HANDLE g_pipe     = INVALID_HANDLE_VALUE;
@@ -211,11 +211,11 @@ namespace shadow::honeypot {
         return false;
     }
 
-    // ─────────────────────────────────────────────────────────
+     
     //  5. FAKE EXPORTS (для DLL-варианта чита)
     //  Если чит грузится как DLL — экспортируем "вкусные" функции
     //  Любой кто попробует их вызвать — попадает в ловушку
-    // ─────────────────────────────────────────────────────────
+     
 
     __declspec(noinline) __declspec(dllexport)
     void* GetInternalPointer() {
@@ -231,9 +231,9 @@ namespace shadow::honeypot {
         return -1;
     }
 
-    // ─────────────────────────────────────────────────────────
+     
     //  MASTER INIT + CHECK
-    // ─────────────────────────────────────────────────────────
+     
 
     inline void InitAll() {
         InitCanary();

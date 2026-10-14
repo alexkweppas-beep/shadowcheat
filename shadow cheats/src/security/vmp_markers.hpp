@@ -1,23 +1,7 @@
 #pragma once
 
-/*
- * shadow cheats — Packer dispatch (was vmp_markers.hpp)
- *
- * Refaktor -*- v1.1 -*- теперь agnostic по packer'у: тот же набор
- * SHADOW_PROTECT_* макросов раскрывается в маркеры выбранного packer'а.
- *
- *   -DSHADOW_PACKER=1  → VMProtect
- *   -DSHADOW_PACKER=2  → Themida
- *   -DSHADOW_PACKER=0  (default) → NONE (no-op, debug-билд)
- *
- * Plus /DSHADOW_HAVE_VMP_SDK или /DSHADOW_HAVE_THEMIDA_SDK — реально ли
- * в include path лежит официальный SDK packer'а. Без этого — stub'ы.
- *
- * Call sites в security.cpp, ban_reporter.hpp и др. используют ТОЛЬКО
- * SHADOW_PROTECT_*. Изменение packer'а = compile flag, без правок кода.
- *
- * Для исторического backward-compat оставлены VMP_* имена (VMP_SanityCheck).
- */
+/* SHADOW_PROTECT_* выбирают маркеры VMProtect, Themida или пустые операции по SHADOW_PACKER.
+ * Наличие SDK задаётся отдельно. Имена VMP_* сохранены для совместимости. */
 
 #include "protection_config.hpp"
 

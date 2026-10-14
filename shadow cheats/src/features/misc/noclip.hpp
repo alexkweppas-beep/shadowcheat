@@ -11,7 +11,7 @@
 
 
 namespace features {
-// ─── NoClip ──────────────────────────────────────────────────────────────
+// ─── NoClip
 // Механика: каждый тик читаем направление камеры из view-матрицы,
 // двигаем позицию игрока по клавишам W/A/S/D/E/Q (без коллизий).
 
@@ -58,8 +58,8 @@ inline void NoclipLoop() {
     g.localplayer->SetRagdoll(false);
     g.localplayer->SetCollision(-1.0f);
 
-    // ── 1. Читаем View-матрицу из камеры ─────────────────────────────
-    // ── 1. Читаем направление камеры через Viewport / Camera ─────────────
+    // ── 1. Читаем View-матрицу из камеры
+    // ── 1. Читаем направление камеры через Viewport / Camera
     Matrix viewMat = read<Matrix>(g.Viewport + offsets::viewport::ViewMatrix);
 
     // В глобальной матрице View (от World к View) вектора лежат по столбцам:
@@ -99,7 +99,7 @@ inline void NoclipLoop() {
       noclip_pos = read<Vector3>(g.localplayer->ptr + offsets::ped::Position);
     }
 
-    // ── 4. Клавиши движения ───────────────────────────────────────────
+    // ── 4. Клавиши движения
     int key_fw = overlay::menu_open ? 'W' : cfg::noclip_key_forward;
     int key_bw = overlay::menu_open ? 'S' : cfg::noclip_key_back;
     int key_lt = overlay::menu_open ? 'A' : cfg::noclip_key_left;
@@ -140,7 +140,7 @@ inline void NoclipLoop() {
       noclip_pos.z -= speed;
     }
 
-    // ── 5. Всегда перезаписываем позицию и обнуляем Velocity ──────────
+    // ── 5. Всегда перезаписываем позицию и обнуляем Velocity
     write<Vector3>(g.localplayer->ptr + offsets::ped::Position, noclip_pos);
 
     // Также пишем в navigation structure (обязательно для камеры)

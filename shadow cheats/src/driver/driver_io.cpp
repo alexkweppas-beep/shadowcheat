@@ -10,7 +10,7 @@
 
 #pragma comment(lib, "ntdll.lib")
 
-// ─────────────────────────────────────────────────────────────
+ 
 //  Usermode memory backend (no kernel driver).
 //
 //  The external cheat reads GTA5 from a separate process. That used to go
@@ -27,7 +27,7 @@
 //  The public interface (driver::read_physical_memory / write_physical_memory /
 //  find_process / find_image) is unchanged so entity_list, esp, aimbot and
 //  trigger keep working.
-// ─────────────────────────────────────────────────────────────
+ 
 
 namespace driver
 {
@@ -145,10 +145,10 @@ namespace driver
         WriteProcessMemory(h, address, buffer, size, &written);
     }
 
-    // ─────────────────────────────────────────────────────────
+     
     //  Driver-only management features. With no driver loaded there is nothing
     //  to handshake with, so these report unavailable instead of pretending.
-    // ─────────────────────────────────────────────────────────
+     
     bool do_handshake(uint64_t, uint32_t) { return false; }
     bool heartbeat() { return g_process_handle != nullptr; }
     bool set_target_pid(uint32_t) { return true; }

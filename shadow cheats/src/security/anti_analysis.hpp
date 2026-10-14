@@ -1,22 +1,7 @@
 #pragma once
 #include "security/xorstr.hpp"
 
-/*
- * shadow cheats — ANTI-ANALYSIS ENGINE
- * Tier: EXTREME
- *
- * Содержит десятки низкоуровневых методов обнаружения:
- *  - Anti-Debug (PEB, NtQuery, Heap, TLS, Exception tricks)
- *  - Anti-VM / Anti-Sandbox
- *  - Anti-Hook (Inline, SSDT, IAT)
- *  - Anti-Dump (PE header erasure, section crypt)
- *  - Timing Attacks (RDTSC, GetTickCount, QueryPerformance)
- *  - Hardware Fingerprint (DR registers, CPU id, MSR)
- *  - Process / Window enumeration
- *  - ETW / Telemetry Patching
- *  - Parent Process Spoofing Detection
- *  - Driver / Module integrity
- */
+/* Проверки отладчика, виртуального окружения и целостности процесса. */
 
 #include "../../../../launcher/src/obfuscation.hpp"
 #include "skCrypter.h"
@@ -40,9 +25,9 @@
 #pragma comment(lib, "iphlpapi.lib")
 #pragma comment(lib, "wbemuuid.lib")
 
-// ---------------------------------------------------------
+ 
 //  Undocumented NT structures & function typedefs
-// ---------------------------------------------------------
+ 
 
 typedef LONG NTSTATUS;
 #define NT_SUCCESS(s) ((NTSTATUS)(s) >= 0)
@@ -86,9 +71,9 @@ struct HEAP_ENTRY_S {
   UCHAR ExtendedBlockSignature;
 };
 
-// ---------------------------------------------------------
+ 
 //  Helper: resolve NT function dynamically (no GetProcAddress trace)
-// ---------------------------------------------------------
+ 
 namespace shadow::nt {
 
 static HMODULE ntdll_base() {
@@ -156,9 +141,9 @@ static constexpr uint32_t H_NtClose = fnv1a("NtClose");
 static constexpr uint32_t H_NtYieldExecution = fnv1a("NtYieldExecution");
 } // namespace shadow::nt
 
-// ---------------------------------------------------------
+ 
 //  БЛОК 1 — ANTI-DEBUG (PEB / NtQuery)
-// ---------------------------------------------------------
+ 
 namespace shadow::anti_debug {
 
 // 1.1 Классический PEB.BeingDebugged
@@ -346,9 +331,9 @@ inline bool suspicious_handle_count() {
 
 } // namespace shadow::anti_debug
 
-// ---------------------------------------------------------
+ 
 //  БЛОК 2 — TIMING ATTACKS
-// ---------------------------------------------------------
+ 
 namespace shadow::timing {
 
 // 2.1 RDTSC — инструкция читает Time Stamp Counter
@@ -431,9 +416,9 @@ inline bool dual_timer_mismatch() {
 
 } // namespace shadow::timing
 
-// ---------------------------------------------------------
+ 
 //  БЛОК 3 — ANTI-HOOK (Inline Hooks, IAT Hooks, SSDT)
-// ---------------------------------------------------------
+ 
 namespace shadow::anti_hook {
 
 struct FuncSignature {
@@ -606,9 +591,9 @@ inline bool ntdll_unhooked_check() {
 
 } // namespace shadow::anti_hook
 
-// ---------------------------------------------------------
+ 
 //  БЛОК 4 — ANTI-VM / ANTI-SANDBOX (расширенный)
-// ---------------------------------------------------------
+ 
 namespace shadow::anti_vm {
 
 // 4.1 CPUID: Hypervisor Present bit (ECX[31] в leaf 1)
@@ -832,9 +817,9 @@ inline bool rdmsr_check() {
 
 } // namespace shadow::anti_vm
 
-// ---------------------------------------------------------
+ 
 //  БЛОК 5 — PROCESS / WINDOW ENUMERATION
-// ---------------------------------------------------------
+ 
 namespace shadow::process_scan {
 
 // 5.1 Список процессов реверс-инструментов (максимальный)
@@ -1015,9 +1000,9 @@ inline bool find_bad_module() {
 
 } // namespace shadow::process_scan
 
-// ---------------------------------------------------------
+ 
 //  БЛОК 6 — PARENT PROCESS CHECK
-// ---------------------------------------------------------
+ 
 namespace shadow::parent_check {
 
 // 6.1 Проверить родительский процесс
@@ -1087,9 +1072,9 @@ inline bool bad_parent_process() {
 
 } // namespace shadow::parent_check
 
-// ---------------------------------------------------------
+ 
 //  БЛОК 7 — MEMORY ENVIRONMENT CHECKS
-// ---------------------------------------------------------
+ 
 namespace shadow::memory_checks {
 
 // 7.1 Проверить что .text секция не имеет PAGE_EXECUTE_READWRITE
@@ -1143,9 +1128,9 @@ inline bool debug_heap_pattern() {
 
 } // namespace shadow::memory_checks
 
-// ---------------------------------------------------------
+ 
 //  БЛОК 8 — INTEGRITY CHECKS (anti-patch)
-// ---------------------------------------------------------
+ 
 namespace shadow::integrity {
 
 static uintptr_t g_text_base = 0;
@@ -1226,9 +1211,9 @@ inline bool check_fn_crc(void *fn_start, size_t fn_size) {
 
 } // namespace shadow::integrity
 
-// ---------------------------------------------------------
+ 
 //  БЛОК 9 — NETWORK / ENVIRONMENT CHECKS
-// ---------------------------------------------------------
+ 
 namespace shadow::env_checks {
 
 // 9.1 Проверить что запущены нужные системные процессы
@@ -1324,9 +1309,9 @@ inline bool no_recent_files() {
 
 } // namespace shadow::env_checks
 
-// ---------------------------------------------------------
+ 
 //  БЛОК 10 — MASTER CHECK & REACTION
-// ---------------------------------------------------------
+ 
 namespace shadow::security {
 
 enum class ThreatLevel : uint8_t {

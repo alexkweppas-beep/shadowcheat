@@ -8,11 +8,11 @@
 #define FILE_SPECIAL_ACCESS (FILE_ANY_ACCESS)
 #endif
 
-// ─────────────────────────────────────────────────────────
+ 
 //  Protocol synced with driver-side util.h (фикс/main/util.h).
 //  CHANGE ANYTHING HERE → SYNC driver util.h!
 //  Layout структур обязан совпадать (одинаковые типы/offsets).
-// ─────────────────────────────────────────────────────────
+ 
 
 // ─── Существующие IOCTL коды — синхронизированы с driver util.h ───
 // (функциональные коды взяты из main/util.h — не менять!)
@@ -65,7 +65,7 @@ static inline void shadow_format_device_path(char* buf, size_t buf_sz) {
 
 namespace driver
 {
-    // ─── Layout sync'd with driver util.h ─────────────────────────────────
+    // ─── Layout sync'd with driver util.h
     #pragma pack(push, 8)
 
     // Базовые операции (security_code auth — sync с t_virtual/t_physical/t_image)

@@ -12,10 +12,10 @@
 #include <atomic>
 #include <string>
 
-// ─────────────────────────────────────────────────────────
+ 
 //  TLS Callback — вызывается ДО WinMain / DllMain
 //  Критически важно: ставим здесь базовые проверки
-// ─────────────────────────────────────────────────────────
+ 
 static void NTAPI ShadowTlsCallback(PVOID, DWORD dwReason, PVOID) {
     SHADOW_PROTECT_MUT("TlsCallback");
     if (dwReason == DLL_PROCESS_ATTACH) {
@@ -72,9 +72,9 @@ namespace shadow::security {
         return;
     }
 
-    // ─────────────────────────────────────────────────────────
+     
     //  Init — вызвать первым в WinMain, до всего
-    // ─────────────────────────────────────────────────────────
+     
     void Init(const std::string& token, const std::string& hwid) {
         SHADOW_PROTECT_MUT("SecurityInit");
         SecLog("[2.1] SecInit: entering");
@@ -94,9 +94,9 @@ namespace shadow::security {
         SHADOW_PROTECT_END();
     }
 
-    // ─────────────────────────────────────────────────────────
+     
     //  ErasePEHeaders
-    // ─────────────────────────────────────────────────────────
+     
     void ErasePEHeaders(void* base) {
         DWORD old;
         if (!base) return;
@@ -109,9 +109,9 @@ namespace shadow::security {
         // API::HideThreadFromDebugger(hThread);
     }
 
-    // ─────────────────────────────────────────────────────────
+     
     //  ГЛАВНЫЙ SECURITY LOOP
-    // ─────────────────────────────────────────────────────────
+     
     void SecurityLoop(const std::string& token, const std::string& hwid) {
         SHADOW_PROTECT_MUT("SecurityLoop");
 
@@ -135,9 +135,9 @@ namespace shadow::security {
             );
 
 
-            // ════════════════════════════════════════════════
+             
             //  КРИТИЧЕСКИЕ — немедленный бан
-            // ════════════════════════════════════════════════
+             
 
             // VMProtect utilizes hardware debug registers, modifies PEB debug flags, and triggers heap flags.
             //
@@ -156,13 +156,13 @@ namespace shadow::security {
             //}
             //
 
-            // ════════════════════════════════════════════════
+             
             //  DEBUGGER — каждый тик
             //   OBF: вместо 4 прямых OR (одна сигнатура в дампе),
             //   соберём результат в bitmask и проверим через mba_equals.
             //   Крякер приплывёт патчить всё по одной function — каждая
             //   ветка из Trigger'а должна быть отдельно вырезана.
-            // ════════════════════════════════════════════════
+             
             /*
             {
                 uint32_t dbg_mask = 0;
@@ -198,9 +198,9 @@ namespace shadow::security {
             }
             */
 
-            // ════════════════════════════════════════════════
+             
             //  HOOKS — каждый тик
-            // ════════════════════════════════════════════════
+             
 
             //
             //if (shadow::anti_hook::ntdll_unhooked_check()
@@ -223,9 +223,9 @@ namespace shadow::security {
             }
             */
 
-            // ════════════════════════════════════════════════
+             
             //  BAD PROCESSES / WINDOWS / MODULES
-            // ════════════════════════════════════════════════
+             
 
             /*
             if (shadow::process_scan::find_bad_process()) {
@@ -243,9 +243,9 @@ namespace shadow::security {
             }
             */
 
-            // ════════════════════════════════════════════════
+             
             //  ADVANCED TRICKS — каждый тик
-            // ════════════════════════════════════════════════
+             
             /*
             {
                 auto adv = shadow::advanced::RunAdvancedChecks();
@@ -257,9 +257,9 @@ namespace shadow::security {
             }
             */
 
-            // ════════════════════════════════════════════════
+             
             //  HONEYPOT
-            // ════════════════════════════════════════════════
+             
             /*
             {
                 auto hp = shadow::honeypot::CheckAll();
@@ -289,9 +289,9 @@ namespace shadow::security {
             }
             */
 
-            // ════════════════════════════════════════════════
+             
             //  MEMORY (каждые 5 тиков)
-            // ════════════════════════════════════════════════
+             
             /*
             if (tick % 5 == 0) {
                 if (shadow::memory_checks::suspicious_rwx_regions()) {
@@ -320,9 +320,9 @@ namespace shadow::security {
             //}
             //
 
-            // ════════════════════════════════════════════════
+             
             //  VM / ENV (каждые 20 тиков — медленные проверки)
-            // ════════════════════════════════════════════════
+             
             // VMProtect creates a virtualized environment that triggers VM and heuristic checks.
             //
             //if (tick % 20 == 0) {
@@ -362,9 +362,9 @@ namespace shadow::security {
             //}
             //
 
-            // ════════════════════════════════════════════════
+             
             //  PARENT PROCESS (один раз при старте)
-            // ════════════════════════════════════════════════
+             
             /*
             if (tick == 0 && shadow::parent_check::bad_parent_process()) {
                 shadow::ban::Trigger(shadow::ban::Reason::BAD_PARENT,

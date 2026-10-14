@@ -4,7 +4,7 @@
 #include <cstdint>
 #include <vector>
 
-// ─── Одиночное чтение / запись (один DeviceIoControl) ────────────────────────
+// ─── Одиночное чтение / запись (один DeviceIoControl)
 
 template <typename T>
 inline T read(uint64_t address)
@@ -32,7 +32,7 @@ inline bool read_string(uint64_t address, char* buffer, size_t maxLen)
     return true;
 }
 
-// ─── Bulk read: читаем N элементов типа T подряд — ОДИН DeviceIoControl ──────
+// ─── Bulk read: читаем N элементов типа T подряд — ОДИН DeviceIoControl
 // Используй вместо цикла из N отдельных read<T>(base + i*stride)
 
 template <typename T>
@@ -46,7 +46,7 @@ inline bool read_array(uint64_t base, T* out, size_t count)
     return true;
 }
 
-// ─── Читаем массив указателей с шагом stride — ОДИН DeviceIoControl ──────────
+// ─── Читаем массив указателей с шагом stride — ОДИН DeviceIoControl
 // GTA5 хранит списки как: ptr @ base+i*stride (stride обычно 0x10).
 // Функция читает блок целиком и возвращает только ненулевые указатели.
 // count    — максимум элементов для чтения

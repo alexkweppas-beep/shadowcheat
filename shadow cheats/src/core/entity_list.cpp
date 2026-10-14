@@ -11,7 +11,7 @@
 #include <chrono>
 
 
-// ─── Лимиты сканирования объектов ────────────────────────────────────────────
+// ─── Лимиты сканирования объектов
 static constexpr int MAX_SCAN_PICKUPS = 512;
 static constexpr int MAX_SCAN_OBJECTS = 512;
 
@@ -19,7 +19,7 @@ static constexpr int MAX_SCAN_OBJECTS = 512;
 static uint64_t s_pickup_ptrs[MAX_SCAN_PICKUPS];
 static uint64_t s_object_ptrs[MAX_SCAN_OBJECTS];
 
-// ─── Множество интересующих хэшей оружия ──────────────────────────────
+// ─── Множество интересующих хэшей оружия
 static constexpr uint32_t WEAPON_HASHES[] = {
     0xB7E2DDAF, 0x83BF0278, 0x291381DC, // Carbine Rifle
     0x97F39713, 0xC0A3098D, 0xA8B3F2A7, // Special Carbine
@@ -202,7 +202,7 @@ void UpdateEntityListLoop() {
     };
 
     // ─── Pickups: 2-фазная фильтрация по хэшам
-    // ──────────────────────────────── Фаза 1: modelInfo ptr (8 б) + hash (4 б)
+    // Фаза 1: modelInfo ptr (8 б) + hash (4 б)
     // — если не оружие, skip Фаза 2: nav + pos — только для совпавших хэшей
     if (cfg::esp_objects_enabled) {
       uintptr_t pickupInterface = read<uintptr_t>(g.Replayinterface + 0x20);
@@ -249,7 +249,7 @@ void UpdateEntityListLoop() {
       }
     }
 
-    // ─── Objects: аналогично Pickups, 2-фазная фильтрация ──────────────────
+    // ─── Objects: аналогично Pickups, 2-фазная фильтрация
     if (cfg::esp_objects_enabled) {
       uintptr_t objectInterface = read<uintptr_t>(g.Replayinterface + 0x28);
       if (objectInterface) {

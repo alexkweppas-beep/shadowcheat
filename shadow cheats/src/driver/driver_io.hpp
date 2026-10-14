@@ -30,7 +30,7 @@ namespace driver
     bool trim_working_set(uint32_t target_pid = 0);
     bool wipe_pe_header(uint32_t target_pid, uint64_t base_address, uint32_t header_size);
 
-    // ─────────────────────────────────────────────────────────
+     
     //  Protection Watchdog
     //  Фоновый поток: поллит access_log каждые poll_ms мс.
     //  При детекте опасного подключения — вызывает on_detect,
@@ -43,7 +43,7 @@ namespace driver
     //  Использование:
     //    driver::start_protection_watchdog(2000,
     //        []{ /* опционально: вайп своих данных */ });
-    // ─────────────────────────────────────────────────────────
+     
     void start_protection_watchdog(uint32_t poll_ms = 2000,
                                    std::function<void()> on_detect = nullptr);
     void stop_protection_watchdog();

@@ -138,7 +138,7 @@ namespace bones
                 row1.z * br.x + row4.z + row2.z * br.y + row3.z * br.z);
         }
 
-        // ─── Чтение двух костей за один read (128 байт) ────────────────────
+        // ─── Чтение двух костей за один read (128 байт)
         struct TwoBones { Vector3 a, b; };
 
         TwoBones GetTwoBonePosComplex(CPed* ped, cSkeleton_t& skel,
