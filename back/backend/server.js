@@ -738,9 +738,9 @@ const radarStore = createRadarStore(15_000);
 // Apply rate limiter to all /api/ routes
 app.use('/api/', apiLimiter);
 
-// ─────────────────────────────────────────────────────────
+ 
 //  AUTH ROUTES
-// ─────────────────────────────────────────────────────────
+ 
 // ─── /api/ping — проверка соединения (нет авторизации) ───
 app.get('/api/ping', (req, res) => res.json({ ok: true, ts: Date.now() }));
 
@@ -938,9 +938,9 @@ app.post('/api/auth/activate', authenticateToken, (req, res) => {
     }
 });
 
-// ─────────────────────────────────────────────────────────
+ 
 //  USER ROUTES
-// ─────────────────────────────────────────────────────────
+ 
 app.get('/api/user/me', authenticateToken, (req, res) => {
     const rawSubs = db.prepare('SELECT * FROM subscriptions WHERE user_id=? AND days_left > 0').all(req.user.id);
     const subMap = {};
@@ -1219,9 +1219,9 @@ app.post('/api/user/me/buy', authenticateToken, (req, res) => {
     }
 });
 
-// ─────────────────────────────────────────────────────────
+ 
 //  WEBHOOKS ДЛЯ ОПЛАТЫ
-// ─────────────────────────────────────────────────────────
+ 
 
 // Вебхук от Платеги
 app.post('/api/payments/platega/webhook', (req, res) => {
@@ -1339,9 +1339,9 @@ app.get('/api/payments/platega/status/:invoiceId', authenticateToken, async (req
 });
 
 
-// ─────────────────────────────────────────────────────────
+ 
 //  LOADER ROUTES
-// ─────────────────────────────────────────────────────────
+ 
 
 // ─── Инициализация сессии без скачивания чита (для trigger) ───
 app.post('/api/loader/session', authenticateToken, async (req, res) => {
@@ -1714,7 +1714,7 @@ app.post('/api/loader/heartbeat', authenticateToken, (req, res) => {
     });
 });
 
-// ─────────────────────────────────────────────────────────
+ 
 //  /api/loader/driver — скачать зашифрованный kernel driver (fix 2.1)
 //
 //  Драйвер больше НЕ вшивается в лоадер (IDR_DRIVER убран).
@@ -1723,7 +1723,7 @@ app.post('/api/loader/heartbeat', authenticateToken, (req, res) => {
 //
 //  Шифрование: тот же AES-256-GCM + session_key что и для чита.
 //  Доступ: только авторизованный пользователь с активной подпиской.
-// ─────────────────────────────────────────────────────────
+ 
 app.post('/api/loader/driver', authenticateToken, async (req, res) => {
     const { product_id, hwid, timestamp } = req.body;
 
@@ -1805,7 +1805,7 @@ app.post('/api/loader/driver', authenticateToken, async (req, res) => {
     }
 
     // Шаг 2: перешифровываем session_key пользователя
-    // ВАЖНО: формат = IV(12) + ciphertext + TAG(16) (tag в КОНЦЕ, как в /download чита)
+    // формат = IV(12) + ciphertext + TAG(16) (tag в КОНЦЕ, как в /download чита)
     //   Раньше здесь было [s_iv, s_tag, s_ct] → loader DecryptPayload не находил tag
     //   в конце, driver decrypt fail → "error:Driver load failed".
     const session_key_buf = Buffer.from(session_key_hex, 'hex');
@@ -2077,10 +2077,10 @@ app.post('/api/configs/delete', express.text({ type: '*/*' }), (req, res) => {
     }
 });
 
-// ─────────────────────────────────────────────────────────
+ 
 //  CLOUD SCRIPTS (RAGE:MP internal)
 //  Используют ту же resolveConfigUser авторизацию (HWID/JWT)
-// ─────────────────────────────────────────────────────────
+ 
 
 app.all('/api/scripts/list', express.text({ type: '*/*' }), (req, res) => {
     try {
@@ -2183,9 +2183,9 @@ app.post('/api/configs/delete', express.text({ type: '*/*' }), (req, res) => {
     }
 });
 
-// ─────────────────────────────────────────────────────────
+ 
 //  CHEAT VERIFY — чит посылает сигнал для проверки подписки
-// ─────────────────────────────────────────────────────────
+ 
 const cheatVerifyLimiter = rateLimit({ validate: { trustProxy: false }, windowMs: 10_000, max: 10 });
 app.post('/api/cheat/verify', cheatVerifyLimiter, (req, res) => {
     const { token, hwid, loader_session_uuid, ts, sig } = req.body;
@@ -2230,9 +2230,9 @@ app.post('/api/cheat/verify', cheatVerifyLimiter, (req, res) => {
 });
 
 
-// ─────────────────────────────────────────────────────────
+ 
 //  SECURITY ROUTES
-// ─────────────────────────────────────────────────────────
+ 
 
 // POST /api/security/ban — теперь с HMAC подписью (клиент должен подписывать)
 app.post('/api/security/ban', banLimiter, (req, res) => {
@@ -2275,9 +2275,9 @@ app.post('/api/security/ban', banLimiter, (req, res) => {
     res.json({ ok: true });
 });
 
-// ─────────────────────────────────────────────────────────
+ 
 //  HONEYPOT ENDPOINTS
-// ─────────────────────────────────────────────────────────
+ 
 app.post('/api/auth/bypass', (req, res) => {
     console.warn(`[HONEYPOT HIT] IP=${req.ip} body=${JSON.stringify(req.body)}`);
     bannedIPs.add(req.ip);
@@ -2298,9 +2298,9 @@ app.get('/api/v1/crack', (req, res) => {
     res.json({ status: 'cracked', license: 'unlimited', expires: 'never' });
 });
 
-// ─────────────────────────────────────────────────────────
+ 
 //  ADMIN ROUTES (API)
-// ─────────────────────────────────────────────────────────
+ 
 
 app.get('/api/admin/stats', authenticateToken, requireAdmin, (req, res) => {
     const stats = {
@@ -2785,10 +2785,10 @@ app.get('/api/admin/payments', authenticateToken, requireAdmin, (req, res) => {
     res.json(payments);
 });
 
-// ─────────────────────────────────────────────────────────
+ 
 //  ПЕРИОДИЧЕСКАЯ ОЧИСТКА (9.5: download_log retention + old sessions)
 //  + ЕЖЕДНЕВНЫЙ ДЕКРЕМЕНТ ДНЕЙ ПОДПИСКИ
-// ─────────────────────────────────────────────────────────
+ 
 
 // Добавляем колонку frozen_at если её нет
 try { db.exec("ALTER TABLE subscriptions ADD COLUMN frozen_at TEXT DEFAULT NULL"); } catch (e) { }
@@ -2863,13 +2863,13 @@ setInterval(runMaintenance, 60 * 60 * 1000);
 // И сразу при старте
 runMaintenance();
 
-// ─────────────────────────────────────────────────────────
+ 
 //  START
-// ─────────────────────────────────────────────────────────
+ 
 const PORT = process.env.PORT || 3001;
 app.listen(PORT, '0.0.0.0', () => console.log(`[shadow backend] Running on port ${PORT}`));
 
-// ─── 9.2 + 9.3 fix: periodic retention cleanup ─────────────────────────
+// ─── 9.2 + 9.3 fix: periodic retention cleanup
 //   • loader_sessions старше 24 часов — удаляются (фикс стейлаHandlers-session'ов
 //     которые висят после выключенной машины юзера).
 //   • download_log старше 30 дней — удаляются (в нём лежит сырой HWID каждого
@@ -2891,9 +2891,9 @@ setInterval(() => {
     }
 }, 60 * 60 * 1000); // каждый час
 
-// ─────────────────────────────────────────────────────────
+ 
 //  MEDIA PARTNERS
-// ─────────────────────────────────────────────────────────
+ 
 
 app.get('/api/media/stats', authenticateToken, (req, res) => {
     if (!req.user.media_access) return res.status(403).json({ error: 'Доступ запрещен' });
@@ -2910,9 +2910,9 @@ app.get('/api/media/stats', authenticateToken, (req, res) => {
     });
 });
 
-// ─────────────────────────────────────────────────────────
+ 
 //  DISTRIBUTORS
-// ─────────────────────────────────────────────────────────
+ 
 
 app.get('/api/distributor/keys', authenticateToken, (req, res) => {
     if (!req.user.is_distributor) return res.status(403).json({ error: 'Доступ запрещен' });
@@ -2922,9 +2922,9 @@ app.get('/api/distributor/keys', authenticateToken, (req, res) => {
     res.json({ ok: true, keys });
 });
 
-// ─────────────────────────────────────────────────────────
+ 
 //  ADMIN: DISTRIBUTOR & MEDIA MANAGEMENT
-// ─────────────────────────────────────────────────────────
+ 
 
 app.post('/api/admin/distributor/issue', authenticateToken, requireAdmin, (req, res) => {
     const { distributor_id, product_id, days, count } = req.body;
@@ -3015,7 +3015,7 @@ app.get('/api/radar/stream', authenticateToken, (req, res) => {
     });
 });
 
-// ─── Session ban check in checkLoaderVersion ─────────────────────────────────
+// ─── Session ban check in checkLoaderVersion
 
 
 

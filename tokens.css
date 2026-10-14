@@ -1,7 +1,4 @@
-/* Hallmark · pre-emit critique: P5 H4 E5 S4 R4 V4
- * genre: atmospheric · theme: Midnight · design-system: design.md · designed-as-app
- * paper: dark / display: grotesk-sans / accent: warm
- */
+ 
 :root {
   --color-paper:      oklch(13.4% 0.022 250);
   --color-paper-2:    oklch(17.2% 0.020 250);

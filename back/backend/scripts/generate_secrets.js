@@ -1,20 +1,7 @@
 #!/usr/bin/env node
-/**
- * shadow cheats — Release Setup Script
- * Генерирует все секреты и создаёт .env файл
- *
- * Запуск: node scripts/generate_secrets.js
- *
- * Обязательные env vars для server.js (без них сервер не запустится):
- *   JWT_SECRET                  — JWT token signing (64 hex)
- *   CLIENT_SHARED_SECRET        — HMAC loader↔server (32 hex)
- *   SESSION_KEY_MASTER_SECRET   — AES-GCM encrypt session_key at rest (32 hex)
- *   ADMIN_USERNAME              — Admin username
- *   ADMIN_PASSWORD              — Admin password (≥ 12 chars)
- *   DRIVER_MASTER_KEY           — AES-GCM encrypt driver.enc at rest (32 hex)
- * Опциональные:
- *   ALLOWED_ORIGIN, PORT, NODE_ENV, API_DOMAIN
- */
+/* Створює секрети й файл .env: node scripts/generate_secrets.js.
+ * Сервер потребує JWT_SECRET, CLIENT_SHARED_SECRET, SESSION_KEY_MASTER_SECRET,
+ * ADMIN_USERNAME, ADMIN_PASSWORD і DRIVER_MASTER_KEY. Налаштування домену, порту й CORS необов’язкові. */
 
 const crypto = require('crypto')
 const fs     = require('fs')

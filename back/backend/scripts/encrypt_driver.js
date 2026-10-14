@@ -1,22 +1,7 @@
 #!/usr/bin/env node
-/**
- * encrypt_driver.js — зашифровать driver.sys мастер-ключом перед деплоем
- *
- * Использование:
- *   node scripts/encrypt_driver.js <путь к driver.sys> <product_id>
- *
- * Пример:
- *   node scripts/encrypt_driver.js ./driver.sys rage
- *   node scripts/encrypt_driver.js ./driver_altv.sys altv
- *
- * Результат:
- *   backend/drivers/<product_id>/driver.enc
- *
- * Формат driver.enc: IV(12) + GCM_TAG(16) + ciphertext
- * (тот же формат что использует /api/loader/driver для расшифровки)
- *
- * Требует: DRIVER_MASTER_KEY в .env или переменной окружения
- */
+/* Шифрує драйвер перед розгортанням: node scripts/encrypt_driver.js <driver.sys> <product_id>.
+ * Потрібен DRIVER_MASTER_KEY. Результат — drivers/<product_id>/driver.enc,
+ * формат: IV(12) + GCM_TAG(16) + ciphertext. */
 
 'use strict';
 require('dotenv').config({ path: require('path').join(__dirname, '..', '.env') });
