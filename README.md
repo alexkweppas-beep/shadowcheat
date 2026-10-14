@@ -14,3 +14,5 @@
 - `shadow cheats/external/` — ImGui и FreeType.
 
 Для сборки нужен C++-инструментарий Visual Studio и Windows SDK. Пути к библиотекам и параметры конфигураций находятся в `.vcxproj`.
+
+[Другие компоненты проекта](https://github.com/alexkweppas-beep/shadowcheat).
