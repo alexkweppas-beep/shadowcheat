@@ -1,18 +1,18 @@
 # Лаунчер
 
-Release собирается отдельно:
+Windows-приложение на C++. Проект Visual Studio находится в `loader.sln`, основные исходники — в `src/`.
 
-```powershell
-msbuild loader.sln /m /p:Configuration=Release /p:Platform=x64 `
-  /p:ShadowVmpRoot=D:\tools\VMProtect
-```
+Release собирается отдельно от остальных компонентов. В `loader.vcxproj` настроены MSBuild и обработка результата через VMProtect; путь к установленному протектору задаётся параметром `ShadowVmpRoot`.
 
-Линкер создаёт только временный `build/loader.raw.exe`. Post-build обязательно
-пропускает его через VMProtect, проверяет секции/импорты и удаляет raw/PDB.
-Shipping-файл — только `build/loader.exe`.
+Итоговый файл — `build/loader.exe`. `build/loader.raw.exe` используется на промежуточном этапе, а проверки результата находятся в `tools/`.
 
-Для internal сервер возвращает персонализированный защищённый payload,
-cohort `variant_id`, customer tag и короткоживущий product ticket. После
-проверки SHA-256 loader передаёт variant/ticket через `DllMain::lpReserved`;
-DLL принимает bootstrap только если cohort совпадает с её build identity.
-Именованная IPC-секция для internal не используется.
+## Файлы
+
+- `src/main.cpp` — запуск приложения.
+- `src/ui_imgui.hpp` — интерфейс.
+- `src/network.hpp` — обмен с сервером.
+- `src/mapper/` — загрузка компонентов.
+- `driver/` — отдельный проект драйвера.
+- `protection/`, `tools/` — настройки защиты и проверки сборки.
+
+Сетевая часть использует билеты запуска и проверку SHA-256 загружаемых файлов. Контракт с сервером и внутренним компонентом задан в исходниках соответствующих веток.
