@@ -1,16 +1,37 @@
-# React + Vite
+# Shadow Web
 
-This template provides a minimal setup to get React working in Vite with HMR and some Oxlint rules.
+Web application and backend for shadowcheat.cc. The interface includes product pages, account access, subscriptions, a distributor area, an administration panel, and a radar page.
 
-Currently, two official plugins are available:
+## Stack
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Oxc](https://oxc.rs)
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/)
+- React 19, React Router, Vite, and plain CSS.
+- Leaflet for the radar map; Lucide for interface icons.
+- Express with SQLite, JWT authentication, and bcrypt.
+- Docker and nginx configuration alongside the application.
 
-## React Compiler
+## Source layout
 
-The React Compiler is not enabled on this template because of its impact on dev & build performances. To add it, see [this documentation](https://react.dev/learn/react-compiler/installation).
+| Path | Purpose |
+| --- | --- |
+| `src/pages/` | Public pages and account views |
+| `src/components/` | Shared interface components |
+| `src/layouts/` | Dashboard layout |
+| `public/` | Static images, icons, and map assets |
+| `back/backend/` | API, database integration, and backend tests |
 
-## Expanding the Oxlint configuration
+## Local frontend
 
-If you are developing a production application, we recommend using TypeScript with type-aware lint rules enabled. Check out the [TS template](https://github.com/vitejs/vite/tree/main/packages/create-vite/template-react-ts) for information on how to integrate TypeScript and Oxlint's TypeScript related rules in your project.
+```sh
+npm ci
+npm run dev
+```
+
+The package also exposes `build`, `preview`, and `lint` scripts. Backend dependencies and scripts are defined separately in `back/backend/package.json`; the backend tests use Node's built-in test runner.
+
+## Configuration
+
+Frontend environment files and backend configuration are separate. The backend provides `.env.example`. Review local configuration and database contents before distributing this branch publicly.
+
+## Repository
+
+See the [project overview](https://github.com/alexkweppas-beep/shadowcheat-portfolio) for the native components and preserved development history. Existing source files and third-party notices are retained. This documentation update does not claim a new build or runtime verification.
