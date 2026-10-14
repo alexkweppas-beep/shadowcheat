@@ -25,3 +25,5 @@ CRT подключён статически, точка входа — `_DllMain
 - `third_party/minhook/` и `src/imgui/` — сторонние библиотеки.
 
 Настройки пользовательской сборки заданы в [src/SDK/RageBuildFlavor.h](src/SDK/RageBuildFlavor.h). Конфиги, скрипты и авторизация обрабатываются в `MenuConfig.cpp`, `ScriptBridge.cpp` и `CloudStorage.cpp`.
+
+[Другие компоненты проекта](https://github.com/alexkweppas-beep/shadowcheat).
