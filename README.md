@@ -1,4 +1,4 @@
-# Сайт Shadow
+# Shadow — сайт і API
 
 React-сайт і Express API для shadowcheat.cc. Тут є сторінки продуктів, особистий кабінет, підписки, адмінка та веб-радар.
 
@@ -24,4 +24,4 @@ npm run dev
 
 Перед відкритою публікацією потрібно перевірити `.env` і бази даних, зокрема їхні старі версії в історії.
 
-Інші компоненти — в [основному README](https://github.com/alexkweppas-beep/shadowcheat-portfolio).
+Інші компоненти — в [основному README](https://github.com/alexkweppas-beep/shadowcheat).
