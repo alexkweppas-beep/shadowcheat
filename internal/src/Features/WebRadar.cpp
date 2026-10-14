@@ -57,7 +57,7 @@ ULONGLONG g_LastCaptureMs{0};
 char   g_RadarToken[16]{};
 char   g_PageUrlBuffer[128]{};
 
-// ── Token ──────────────────────────────────────────────────────────────
+// ── Token
 void EnsureToken() noexcept {
     if (g_RadarToken[0] != '\0') return;
     constexpr char charset[] =
@@ -68,7 +68,7 @@ void EnsureToken() noexcept {
     g_RadarToken[12] = '\0';
 }
 
-// ── Helpers ────────────────────────────────────────────────────────────
+// ── Helpers
 void SetStatus(const char* text) noexcept { lstrcpynA(g_Status, text, sizeof(g_Status)); }
 
 bool InRadius(float ax, float ay, float bx, float by, float radius) noexcept {
@@ -76,7 +76,7 @@ bool InRadius(float ax, float ay, float bx, float by, float radius) noexcept {
     return dx * dx + dy * dy <= radius * radius;
 }
 
-// ── Snapshot ───────────────────────────────────────────────────────────
+// ── Snapshot
 int FillPlayers(Frame& frame, float radius) noexcept {
     RagePlayerNames::SnapshotEntry entries[256]{};
     const int count = RagePlayerNames::CopySnapshot(entries, 256);
@@ -122,7 +122,7 @@ void CaptureFrame(Frame& frame) noexcept {
     frame.playerCount = FillPlayers(frame, g_Settings.radius);
 }
 
-// ── JSON builder (minimal, no sprintf loops) ───────────────────────────
+// ── JSON builder (minimal, no sprintf loops)
 void Append(char*& cur, char* end, const char* text) noexcept {
     if (!cur || !text) return;
     while (*text && cur + 1 < end) *cur++ = *text++;
@@ -196,7 +196,7 @@ void BuildJson(const Frame& frame, char* out, int capacity) noexcept {
     Append(cur, end, "]}");
 }
 
-// ── Network thread ─────────────────────────────────────────────────────
+// ── Network thread
 void SendFrame(const Frame& frame) noexcept {
     if (g_Busy.exchange(true)) return;
     char body[kJsonBytes]{};
@@ -265,7 +265,7 @@ void Publish(const Frame& frame) noexcept {
 
 } // namespace
 
-// ── Public API ─────────────────────────────────────────────────────────
+// ── Public API
 Settings& GetSettings() noexcept { return g_Settings; }
 
 void Update() noexcept {

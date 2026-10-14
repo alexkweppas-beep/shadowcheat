@@ -258,9 +258,9 @@ namespace Menu
         return false;
     }
 
-    // -------------------------------------------------------------------------
+     
     // Sub-tab 0: Friends (Друзья)
-    // -------------------------------------------------------------------------
+     
     static void RenderFriendsSubPage(
         const MenuUi::MasterDetailMetrics& layout,
         float scale) noexcept
@@ -736,9 +736,9 @@ namespace Menu
         MenuUi::EndGlassPanel();
     }
 
-    // -------------------------------------------------------------------------
+     
     // Sub-tab 1: Factions (Фракции)
-    // -------------------------------------------------------------------------
+     
     static char s_FactionSearch[64]{};
 
     static void RenderFactionsSubPage(
@@ -875,9 +875,9 @@ namespace Menu
         MenuUi::EndGlassPanel();
     }
 
-    // -------------------------------------------------------------------------
+     
     // Sub-tab 2: Objects (Объекты)
-    // -------------------------------------------------------------------------
+     
     static char s_ObjHashInput[32]{};
     static char s_ObjNameInput[32]{};
     static int s_ObjListChoice = 0; // 0 = Shown (Whitelist), 1 = Hidden (Blacklist)
@@ -1153,9 +1153,9 @@ namespace Menu
         MenuUi::EndGlassPanel();
     }
 
-    // -------------------------------------------------------------------------
+     
     // Sub-tab 3: Items (Предметы)
-    // -------------------------------------------------------------------------
+     
     struct GroundItemEntry final
     {
         char name[64]{};
@@ -1617,9 +1617,9 @@ namespace Menu
         MenuUi::EndGlassPanel();
     }
 
-    // -------------------------------------------------------------------------
+     
     // Main Entry: Filters Page
-    // -------------------------------------------------------------------------
+     
     void RenderPlayersPage()
     {
         const float availY = ImGui::GetContentRegionAvail().y;

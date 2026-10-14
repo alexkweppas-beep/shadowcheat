@@ -1,7 +1,7 @@
 #pragma once
 #include <cstdint>
 
-// =====================================================================
+ 
 //  RAGEMP — Modern Minimalist ImGui Cheat Menu
 //
 //  Anti-cheat safe:
@@ -18,7 +18,7 @@
 //  UI Scale:
 //    s_UIScalePercent — 75..200 in steps of 25, selects DPI font + layout
 //      scale. Each step has its own rasterised font atlas.
-// =====================================================================
+ 
 
 struct ImGuiIO;
 struct ImFont;
@@ -599,7 +599,7 @@ namespace Menu
     extern float s_Vec_CameraShakeAmt;
     extern bool s_Vec_DrawFov;
 
-    // ── Cloud config quick-access (used by top-bar dropdown) ──────────────
+    // ── Cloud config quick-access (used by top-bar dropdown)
     // Returns the number of configs currently cached from the server.
     int  CloudConfigCount() noexcept;
     // Returns the display name of cloud config at index, or nullptr if out of range.

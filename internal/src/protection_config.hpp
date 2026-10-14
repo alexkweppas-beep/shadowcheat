@@ -1,25 +1,8 @@
 #pragma once
 
-/*
- * shadow cheats — Protection Config
- *
- * Central compile-time switch for the binary packer/protector.
- *
- *   /DSHADOW_PACKER=VMP      → расширить SHADOW_PROTECT_* в VMProtect маркеры
- *   /DSHADOW_PACKER=THEMIDA → расширить в Themida маркеры
- *   /DSHADOW_PACKER=NONE    (default) → no-op (debug/dev билд, голый MSVC)
- *
- * Plus:
- *   /DSHADOW_DEV_BUILD  → позволяет собрать release И с mock TLS-pinning байтами
- *                        (anti-bug guard в network.hpp / ban_reporter.hpp обходит
- *                         static_assert). Для dev-сборок и юнит-тестов.
- *
- * Что это даёт:
- *   - один и тот же исходный код собирается в 3 варианта без правок в call-sites
- *   - switch packer — это compile flag, не патч 14 файлов
- *   - "real SDK file наличествует?" проверяется отдельно (SHADOW_HAVE_VMP_SDK /
- *     SHADOW_HAVE_THEMIDA_SDK) — если SDK нет, fallback на stub'ы (mock-режим)
- */
+/* SHADOW_PACKER выбирает VMProtect, Themida или сборку без упаковщика.
+ * Наличие SDK задаётся отдельно через SHADOW_HAVE_*_SDK.
+ * SHADOW_DEV_BUILD допускает тестовые значения TLS pinning и не предназначен для доставки пользователям. */
 
 #ifndef SHADOW_PROTECTION_CONFIG_HPP
 #define SHADOW_PROTECTION_CONFIG_HPP

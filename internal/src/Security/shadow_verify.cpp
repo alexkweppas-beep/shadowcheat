@@ -21,11 +21,11 @@ struct ShadowSharedAuth {
 
 #define SHADOW_SHARED_MAGIC 0x53484457u
 
-// ─────────────────────────────────────────────────────────────────────────────
+ 
 // Real _impl functions — exported with C linkage so ida_cloak.asm can link
 // them as EXTERN symbols. The public API (shadow_verify.hpp) routes through
 // the MASM thunks, so IDA < 9.5 never decompiles these bodies.
-// ─────────────────────────────────────────────────────────────────────────────
+ 
 extern "C" {
 
 void ShadowSecurity_VerifySharedMemory_impl() {
@@ -110,11 +110,11 @@ void ShadowSecurity_StartPeriodicSubscriptionCheck_impl() {
 
 } // extern "C"
 
-// ─────────────────────────────────────────────────────────────────────────────
+ 
 // Public API (namespace ShadowSecurity) — routes through the MASM thunks.
 // ida_cloak.asm provides the actual symbols; we just declare them here so
 // that callers in dllmain.cpp and Hooks.cpp link correctly.
-// ─────────────────────────────────────────────────────────────────────────────
+ 
 extern "C" {
     void ShadowSecurity_VerifySharedMemory();
     void ShadowSecurity_VerifyLoaderPidOnce();

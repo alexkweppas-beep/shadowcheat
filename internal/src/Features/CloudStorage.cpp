@@ -1,26 +1,5 @@
-/*
- * CloudStorage.cpp — Shadow Backend edition
- *
- * Replaces the Supabase edge-function transport with our own
- * Express backend (api.shadowcheats.cc).
- *
- * Token source: reads JWT from the loader's shared memory
- * (ShadowSharedAuth::token) instead of cloud.session.
- *
- * Endpoint mapping:
- *   kind="config"  → /api/configs/{list|save|load|delete}  (product=ragemp)
- *   kind="script"  → /api/scripts/{list|save|load|delete}
- *
- * Public API (CloudStorage.h) is unchanged:
- *   List   → enumerate names
- *   Get    → load one item by name (we use name as key, not UUID)
- *   Upsert → create or update
- *   Delete → remove by name
- *
- * NOTE: IsSafeId / Base64 helpers kept for source-compat but Get/Delete
- * now accept a name string, not a UUID.  The header still exposes the
- * old signatures so the rest of the DLL doesn't need to change.
- */
+/* Конфиги и скрипты хранятся через Express API. JWT читается из ShadowSharedAuth::token.
+ * Get/Delete принимают имя, а не UUID; прежние сигнатуры сохранены для совместимости. */
 
 #define WIN32_LEAN_AND_MEAN
 #include <Windows.h>
@@ -54,7 +33,7 @@ struct ShadowSharedAuth {
 
 #define SHADOW_SHARED_MAGIC 0x53484457u
 
-// NOTE: SHADOW_SHARED_MEMORY_NAME is now inlined via xorstr_ at each use site
+// SHADOW_SHARED_MEMORY_NAME is now inlined via xorstr_ at each use site
 // to prevent the string from appearing in .rdata
 
 namespace CloudStorage {
@@ -435,7 +414,7 @@ static __declspec(noinline) bool RefreshTokenFromSharedMem() {
           g_ExpiresAt = 0;
         }
       }
-      // NOTE: Do NOT wipe the token from shared memory here.
+      // Do NOT wipe the token from shared memory here.
       // The shared memory section is owned by the loader process; when the
       // loader closes g_hSharedMemory the OS releases the backing store.
       // Wiping early causes EnsureSession() re-reads to find an empty token
@@ -491,9 +470,9 @@ bool RequestJsonPost(
 
 } // anonymous namespace
 
-// ────────────────────────────────────────────────────────────
+ 
 //  Public API
-// ────────────────────────────────────────────────────────────
+ 
 
 void Initialize() {
   ClearToken();

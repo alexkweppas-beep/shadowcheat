@@ -758,10 +758,10 @@ namespace d3d
         ReleaseDummy();
     }
 
-    // ----------------------------------------------------------------
+     
     // ReShade-style vtable slot patching — modifies data, not code.
     // Safer than inline detours: no CFG issues, no code integrity checks.
-    // ----------------------------------------------------------------
+     
     bool PatchSwapChainVtableSlot(void** vtable, UINT slotIndex,
                                   void* hookFn, void** outOriginal)
     {

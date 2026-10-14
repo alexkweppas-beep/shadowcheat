@@ -464,7 +464,7 @@ float4 ps_main(VS_OUT i, bool isFront : SV_IsFrontFace) : SV_TARGET
 #endif
 	}
 
-	// ====================================================================
+	 
 	// Releases per-primitive base color SRVs from a previous load. Called at
 	// the start of every load_* function so re-loading doesn't leak textures.
 	static void release_primitives()
@@ -480,7 +480,7 @@ float4 ps_main(VS_OUT i, bool isFront : SV_IsFrontFace) : SV_TARGET
 	// recognizable rotating cube with this, the rendering pipeline (matrices,
 	// shaders, RT, viewport, state save/restore) is healthy and any visible
 	// glitch is OBJ-specific (parser, vertex format, scaling, etc.).
-	// ====================================================================
+	 
 	bool LoadTestCube()
 	{
 		if (!g_inited) return false;
@@ -834,12 +834,12 @@ float4 ps_main(VS_OUT i, bool isFront : SV_IsFrontFace) : SV_TARGET
 		}
 	};
 
-	// ====================================================================
+	 
 	// .glb loader (binary glTF). Pulls geometry + UVs + base-color textures
 	// for every primitive in every mesh, decodes embedded PNG/JPEG via
 	// stb_image, uploads each as an SRV, and records per-primitive draw
 	// ranges so each chunk gets its own texture in render().
-	// ====================================================================
+	 
 	// Internal: take a parsed cgltf_data (no matter how it was loaded) and
 	// build the vertex buffer + per-primitive textures. Owned by both
 	// load_glb (file path) and load_glb_from_memory (RC resource).
@@ -1172,13 +1172,13 @@ float4 ps_main(VS_OUT i, bool isFront : SV_IsFrontFace) : SV_TARGET
 
 
 
-	// ====================================================================
+	 
 	// Skeleton overlay ? loads only the armature/joints from a .glb and
 	// renders bones as 2D ImGui lines on top of the model preview. Avoids
 	// the 3D pipeline entirely (which previously had trouble with this
 	// project's .glb geometry accessors), so it just needs the joint
 	// positions and the parent index per joint.
-	// ====================================================================
+	 
 	int GetBoneCount()
 	{
 		return g_bones.empty() ? 16 : static_cast<int>(g_bones.size());
@@ -1663,13 +1663,13 @@ std::string ResolveDefaultModelPath()
     return "";
 }
 
-// =====================================================================
+ 
 // Two-phase async asset load:
 //   Phase 1 — CPU-only parse, runs in a background thread.
 //   Phase 2 — D3D resource creation, runs on the render thread next frame.
 // This keeps the render thread unblocked during the slow file/mesh parse
 // while correctly serialising all D3D calls through the render thread.
-// =====================================================================
+ 
 struct TexStaging final
 {
     uint32_t w{0};

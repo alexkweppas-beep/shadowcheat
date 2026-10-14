@@ -1,6 +1,6 @@
 #pragma once
 
-// =====================================================================
+ 
 //  d3d11_helpers.h — DXGI Present hook helpers
 //
 //  ReShade pattern (correct for injected DLL):
@@ -8,7 +8,7 @@
 //    - Hook CreateDXGIFactory1 export; patch only factories returned
 //      to the game AFTER our hook is installed.
 //    - Present resolve: scan dxgi.dll .rdata only (no D3D device, no heap walk).
-// =====================================================================
+ 
 
 #include <Windows.h>
 #include <d3d11.h>

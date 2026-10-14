@@ -1,30 +1,5 @@
-/*
- * RAGEMP.DLL - Internal cheat with ImGui menu.
- *
- * CRITICAL DESIGN CONSTRAINT:
- *   CreateThread / NtCreateThreadEx is NOT safe in this target — the
- *   EAC EOS kernel minifilter kills newly-created threads at the
- *   LdrInitializeThunk DLL_THREAD_ATTACH stage. We measured this:
- *   CreateThread returned a valid handle, but the worker function's
- *   first instruction never executed.
- *
- *   Therefore we initialize the D3D11 Present VTable hook SYNCHRONOUSLY
- *   inside DllMain. DllMain runs on the hijacked GTA5 thread (which is
- *   spinning in the syscall-return path of NtWaitForSingleObject), so
- *   we install the hook, return, and let the thread continue its normal
- *   execution. On the next frame, the render thread calls Present()
- *   and our hook fires.
- *
- * CRT handling: This DLL is manual-mapped (no LoadLibrary), so startup
- *   code must avoid relying on C++ dynamic initializers. Lumin singletons
- *   and embedded fonts are lazy/POD-backed, and ImGui uses a private heap
- *   via SetAllocatorFunctions.
- *
- *   The image is entered through _DllMainCRTStartup rather than here, so the
- *   static CRT does initialise; see the entry point comment in CMakeLists.txt
- *   for what skipping it cost. The heap overrides below are kept anyway: they
- *   are correct either way and route every allocation through the process heap.
- */
+/* Хук Present устанавливается синхронно в DllMain: новый поток в целевом процессе может не запуститься.
+ * CRT инициализируется через _DllMainCRTStartup; выделение памяти направлено в кучу процесса. */
 
 #define WIN32_LEAN_AND_MEAN
 #include <Windows.h>
@@ -50,7 +25,7 @@ HMODULE g_ThisModule = nullptr;
 // uses it to range-check pointers without reading the (zeroed) header.
 uint32_t g_ThisModuleSize = 0;
 
-// ===================================================================
+ 
 // Heap strategy for C++ allocations.
 //
 // We override operator new/delete to route through GetProcessHeap()
@@ -69,7 +44,7 @@ uint32_t g_ThisModuleSize = 0;
 // ImGui's per-frame allocations are also routed through GetProcessHeap()
 // (we do NOT set a private allocator) — UI frame volume is small enough
 // that heap-lock contention is negligible.
-// ===================================================================
+ 
 #pragma region Heap Overrides (GetProcessHeap - required for manual-mapped DLL)
 
 void* operator new(size_t sz) {
@@ -234,12 +209,12 @@ void ReleaseSoleInstanceClaim() noexcept
     g_InstanceClaim = nullptr;
 }
 
-// -------------------------------------------------------------------
+ 
 // Entry point — called by manual-mapper thunk SYNCHRONOUSLY on the
 // hijacked GTA5 thread.
 //   We install the D3D11 Present VTable hook here. The hook itself
 //   runs on the next frame, on the game's render thread.
-// -------------------------------------------------------------------
+ 
 extern "C" SHADOW_INIT_CODE BOOL WINAPI DllMain(
     HMODULE hModule,
     DWORD reason,
@@ -265,7 +240,7 @@ extern "C" SHADOW_INIT_CODE BOOL WINAPI DllMain(
         ShadowSecurity::VerifySharedMemory();
         ShadowSecurity::VerifyLoaderPidOnce();
 
-        // NOTE: NotifyInjectReady() is called from inside InitImGui() after the
+        // NotifyInjectReady() is called from inside InitImGui() after the
         // D3D11 Present hook is confirmed active. Calling it here would unblock
         // the loader before DllMain returns, causing a race where shared-memory
         // credentials are wiped by the loader while the cheat still needs them.

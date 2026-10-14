@@ -2,17 +2,8 @@
 
 #include "protection_config.hpp"
 
-/*
- * VMProtect is deliberately limited to cold, high-value paths. Never wrap the
- * Present hook, ESP/aim per-frame passes, menu Render, or anything else that
- * runs at display rate: mutation and virtualization there make frame time and
- * UI input hitch. Protecting the whole image also makes the manually mapped
- * payload much harder to initialise reliably.
- *
- * Development builds keep these as no-ops. Release builds configured through
- * CMake define SHADOW_HAVE_VMP_SDK and are rejected if VMProtect_Con does not
- * produce the protected output.
- */
+/* Маркеры VMProtect ограничены инициализацией и другими редкими вызовами.
+ * Не ставить их в Present, покадровый ESP, аим и рендер меню. В dev-сборке маркеры отключены. */
 #if defined(SHADOW_PACKER_VMP) && defined(SHADOW_HAVE_VMP_SDK)
 #include <VMProtectSDK.h>
 

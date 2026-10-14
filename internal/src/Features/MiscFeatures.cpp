@@ -3869,7 +3869,7 @@ mp.events.add('render',g.__bfPlFn);
         const ImU32 col = IM_COL32(220, 220, 220, static_cast<int>(220.f * pulse));
         constexpr float kThick = 1.35f;
 
-        // ── Wireframe box (noctua draw_overlay_box style) ────────────────────
+        // ── Wireframe box (noctua draw_overlay_box style)
         // Person-sized box centred at the hit point.
         constexpr float kHX =  0.35f;
         constexpr float kHY =  0.35f;

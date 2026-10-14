@@ -3,7 +3,7 @@
 #include <d3d11.h>
 #include <dxgi.h>
 
-// ---------------------------------------------------------------------------
+ 
 // NvidiaBypass — External transparent overlay for Streamproof
 //
 // Uses a completely separate ID3D11Device + IDXGISwapChain in a background
@@ -11,7 +11,7 @@
 // so there is no lock contention with hkPresent at all.
 // The overlay window is owned by the same background thread, so DXGI's
 // internal SendMessage calls during CreateSwapChain are handled immediately.
-// ---------------------------------------------------------------------------
+ 
 namespace NvidiaBypass {
 
 bool IsAvailable() noexcept;

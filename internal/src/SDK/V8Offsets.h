@@ -1,7 +1,7 @@
 #pragma once
 #include <cstdint>
 
-// =====================================================================
+ 
 //  V8Offsets — V8 API и RAGE MP JS-loader адреса в multiplayer.dll.
 //
 //  Все адреса — ABSOLUTE (из live-дампа от 02.07.2026, imagebase
@@ -14,12 +14,12 @@
 //  Версия RAGE MP: "RAGE Multiplayer Legacy 1.1 ("
 //  Версия V8: встроенная, Script::Compile и Script::Run INLINED
 //             (не существуют как standalone функции).
-// =====================================================================
+ 
 
 namespace V8Offsets {
     constexpr uintptr_t LiveImagebase = 0x7FFE59840000; // multiplayer.dll base в live-процессе
 
-    // ----- V8 API функции (RVA от multiplayer.dll) -----
+    // V8 API функции (RVA от multiplayer.dll)
     namespace Api {
         // v8::String::NewFromUtf8(Isolate* rcx, const char* rdx, NewStringType r8, int length r9)
         // -> MaybeLocal<String>  (50+ callers, частоиспользуемая)
@@ -51,7 +51,7 @@ namespace V8Offsets {
         constexpr uintptr_t Function_NewInstance    = 0x7FFE59D9A150 - LiveImagebase;
 
         // v8::Object::Get(this rcx, Context rdx, Value key r8, ...) -> MaybeLocal<Value>
-        // NOTE: 0x552210 — это overload Get(context, uint32_t index).
+        // 0x552210 — это overload Get(context, uint32_t index).
         //       Он принимает численный индекс, а не Local<Value> key.
         constexpr uintptr_t Object_Get              = 0x7FFE59D92210 - LiveImagebase;
 
@@ -133,7 +133,7 @@ namespace V8Offsets {
         // v8::ArrayBuffer::New(...)
         constexpr uintptr_t ArrayBuffer_New         = 0x7FFE59D980D0 - LiveImagebase;
 
-        // ----- Дополнительные адреса, подтверждённые анализом IDA -----
+        // Дополнительные адреса, подтверждённые анализом IDA
 
         // GetIsolate->GetCurrentContext-style getter:
         //   sub_7FFE59D92F40(Isolate* rcx, Local<Context>* rdx)
@@ -155,7 +155,7 @@ namespace V8Offsets {
         constexpr uintptr_t Isolate_Exit            = 0x7FFE59E58700 - LiveImagebase;
     }
 
-    // ----- Внутренние offsets в V8 Isolate (подтверждены IDA + live-дампом) -----
+    // Внутренние offsets в V8 Isolate (подтверждены IDA + live-дампом)
     namespace IsolateOffsets {
         // *(Isolate + kContextOffset) = текущий Context как tagged heap pointer
         //   Подтверждено: v8::Context::Exit пишет сюда saved_context:
@@ -167,7 +167,7 @@ namespace V8Offsets {
 
         // *(Isolate + kHandleScopeDataNext) = HandleScope::next (handle slot ptr)
         //   Используется каждым V8 API для выделения handle slots.
-        //   ВАЖНО: 42792 decimal = 0xA728 (не 0xA748!).
+        // 42792 decimal = 0xA728 (не 0xA748!).
         constexpr uintptr_t kHandleScopeDataNext    = 0xA728;
         constexpr uintptr_t kHandleScopeDataLimit   = 0xA730;
         // level (int, 4 bytes) — инкрементируется HandleScope ctor.
@@ -198,7 +198,7 @@ namespace V8Offsets {
         constexpr uintptr_t kIsolateTlsKeyRva       = 0x15602C8;
     }
 
-    // ----- RAGE MP JS-loader -----
+    // RAGE MP JS-loader
     namespace RageMp {
         // ГЛАВНЫЙ JS-LOADER: sub_7FFE59A97AC0 (10018 bytes)
         //   Строки: "script", "module", "current_path()", "absolute(p1,p2)",
@@ -227,7 +227,7 @@ namespace V8Offsets {
         //   Также использует "480fps", "720fps", "960fps" — VIDEO/RENDERING, НЕ JS
         constexpr uintptr_t VideoFpsFunc            = 0x7FFE599AA520 - LiveImagebase;
 
-        // ----- V8 helpers (найдены при анализе JS-loader) -----
+        // V8 helpers (найдены при анализе JS-loader)
         // V8 HandleScope constructor (78 bytes, 50+ callers)
         //   Инициализирует структуру V8 handle'ов: копирует поля из source
         //   sub_7FFE59D8D150(rcx=output, rdx=source) -> rcx
@@ -267,7 +267,7 @@ namespace V8Offsets {
         constexpr uintptr_t V8_internal_2           = 0x7FFE5B3A02DA - LiveImagebase;  // 0x21C02DA
     }
 
-    // ----- V8 API строки в .rdata (для xref-анализа) -----
+    // V8 API строки в .rdata (для xref-анализа)
     namespace Strings {
         constexpr uintptr_t V8_Script_Run           = 0x7FFE5A8AD260 - LiveImagebase;
         constexpr uintptr_t V8_ScriptCompiler_Compile = 0x7FFE5A8AD458 - LiveImagebase;
@@ -283,7 +283,7 @@ namespace V8Offsets {
     }
 }
 
-// =====================================================================
+ 
 //  ИТОГИ АНАЛИЗА:
 //
 //  1. V8 статически слинкован в multiplayer.dll (нет отдельного v8.dll)
@@ -300,4 +300,4 @@ namespace V8Offsets {
 //    Option A: 0.3.7 hijack trick — HWBP на NewFromUtf8, подмена input string
 //    Option B: Найти C++ биндинги entity.getVariable / player.name напрямую
 //    Option C: Через v8::Function::Call вызвать eval() (нужно Isolate+Context)
-// =====================================================================
+ 

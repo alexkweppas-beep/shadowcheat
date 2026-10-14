@@ -598,10 +598,10 @@ void* GetWeaponIconImGui(const char* iconFile) noexcept
     return reinterpret_cast<void*>(GetWeaponIcon(iconFile));
 }
 
-// ---------------------------------------------------------------------------
+ 
 // LoadPngMemoryStb — decode PNG/JPEG with stb_image (no COM/WIC, no
 // CoInitialize needed, works on any thread, any COM apartment model).
-// ---------------------------------------------------------------------------
+ 
     static bool LoadPngMemoryStb(
         const unsigned char* data,
         std::uint32_t size,

@@ -2,13 +2,13 @@
 
 #include "../imgui/imgui.h"
 
-// ---------------------------------------------------------------------------
+ 
 // Stream-sensitive overlay layer.
 //
 // ESP / glow / menu draw lists go through Overlay::GetDrawList().
 // ObsBypass draws ImGui AFTER OBS Game Capture copies the backbuffer so the
 // stream stays clean while the local monitor still shows overlays.
-// ---------------------------------------------------------------------------
+ 
 namespace Overlay {
 
 inline bool& StreamProofEnabled() noexcept

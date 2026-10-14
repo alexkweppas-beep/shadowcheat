@@ -1,6 +1,6 @@
 #pragma once
 
-// =====================================================================
+ 
 //  Hooks.h
 //  D3D11 IDXGISwapChain::Present hook + WndProc hook.
 //
@@ -10,7 +10,7 @@
 //       — modifies data pointers, NOT code. No CFG issues, no integrity checks.
 //    3. CreateDXGIFactory export hooks for NEW factories only.
 //    4. Inline detour as last-resort fallback only.
-// =====================================================================
+ 
 
 #include <Windows.h>
 #include <d3d11.h>
@@ -22,7 +22,7 @@ struct ImGui_ImplDX11_Data; // forward
 
 namespace hooks
 {
-    // ----------------- state -----------------
+    // state
     extern ID3D11Device*           g_Device;
     extern ID3D11DeviceContext*    g_Context;
     extern IDXGISwapChain*         g_SwapChain;
@@ -41,7 +41,7 @@ namespace hooks
     inline void HLog(const char* msg) { if (g_LogFn) g_LogFn(msg); }
 #endif
 
-    // ----------------- API -----------------
+    // API
 
     // Installs Present hook.  Returns true on success.
     bool Initialize();
