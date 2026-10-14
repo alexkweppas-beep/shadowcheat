@@ -1,79 +1,33 @@
-# shadowcheat.cc
+# Shadow
 
-Монорепозиторий: internal, external, лаунчер и сайт.
+Source portfolio for shadowcheat.cc: Windows clients, a native launcher, and a web application for a GTA V / RAGE Multiplayer project.
 
-## Структура
+The project spans C++, Direct3D 11, Dear ImGui, React, and an Express / SQLite backend. This branch provides the project overview; implementation histories live in the component branches below.
 
-- `shared/` — общий код: крипта, протокол, утилиты. Используется обоими продуктами.
-- `internal/` — внутренний чит, собирается в `shadow_internal.dll`.
-- `external/` — внешний чит, собирается в `shadow_external.exe`.
-- `launcher/` — лаунчер, своя система сборки.
-- `website/` — сайт, своя система сборки.
+## Components
 
-Папки не пересекаются, поэтому правки в `internal/` физически не могут задеть `external/`
-и наоборот. У каждого продукта свой CMake-таргет, так что сломанный код в одном
-не мешает собрать другой. Единственная общая точка — `shared/`.
+| Component | Stack | Source branch |
+| --- | --- | --- |
+| Internal client | C++, Direct3D 11, Dear ImGui, CMake | [components/internal](https://github.com/alexkweppas-beep/shadowcheat-portfolio/tree/components/internal) |
+| Alternate internal implementation | C++, CMake | [components/internal-next](https://github.com/alexkweppas-beep/shadowcheat-portfolio/tree/components/internal-next) |
+| External client | C++, Dear ImGui | [components/external](https://github.com/alexkweppas-beep/shadowcheat-portfolio/tree/components/external) |
+| Windows launcher | C++, Visual Studio / MSBuild | [components/launcher](https://github.com/alexkweppas-beep/shadowcheat-portfolio/tree/components/launcher) |
+| Website and backend | React, Vite, Express, SQLite | [components/website](https://github.com/alexkweppas-beep/shadowcheat-portfolio/tree/components/website) |
 
-## Кто где работает
+## Repository layout
 
-Ветки названы по компонентам, а не по людям, поэтому роли можно менять в любой момент.
+`main` is the documentation entry point. Each `components/*` branch retains its own source layout and development history. The components have not been combined into a single working build.
 
-Кто взялся за internal — работает в ветке `internal` и трогает только папку `internal/`.
-Кто взялся за external — работает в ветке `external` и трогает только `external/`.
+The directories on `main` are the original integration skeleton. Full implementations are in the branches listed above. `archive/dev-skeleton` preserves the former integration branch, and the `archive/monorepo-presplit` tag preserves the earlier combined source tree.
 
-Так как папки разные, ветки правят разные файлы и merge между ними не конфликтует.
+## Exploring the project
 
-### Если оба на одном компоненте
+Start with the website branch to inspect the user interface and backend. Use the internal branch for the native rendering and configuration code, and the launcher branch for the Windows application.
 
-Заводите от ветки компонента короткие ветки под задачу:
+Component-specific requirements and build configuration are stored alongside their sources. The launcher depends on a local VMProtect installation. Website configuration and database files require review before public distribution.
 
-```bash
-git checkout internal
-git checkout -b feat/aimbot-smoothing
-```
+## Development history
 
-Поток в этом случае: `feat/*` → PR в `internal` → PR в `dev`.
+The source history contains 176 commits. Author identities from the owner's alternate accounts have been consolidated under `alexkweppas-beep`; original source snapshots and commit dates were retained during that migration.
 
-### Правило про shared/
-
-Это единственное место, где можно помешать друг другу. Поэтому:
-
-- правки `shared/` не делаются из веток `internal` и `external`;
-- под них создаётся отдельная короткая ветка `shared/<что-меняем>` и PR в `dev`;
-- после мержа оба подтягивают `dev` к себе.
-
-## Ветки
-
-- `main` — стабильная, то что уходит юзерам. Только merge через PR, напрямую не пушим.
-- `dev` — интеграционная, здесь всё собирается вместе.
-- `internal` — ветка internal-компонента.
-- `external` — ветка external-компонента.
-- `shared/<задача>` — короткая ветка под правку общего кода.
-
-Поток: `internal` / `external` → PR в `dev` → проверили что всё собирается вместе → PR `dev` → `main`.
-
-Долгоживущих веток под лаунчер и сайт нет — они идут короткими ветками вида
-`feat/launcher-login` сразу в `dev`.
-
-### Синхронизация
-
-Раз в пару дней подтягивайте `dev`, чтобы ветка не отставала:
-
-```bash
-git checkout internal
-git merge origin/dev
-```
-
-## Dev- и user-сборка
-
-Разделяются флагом CMake, собрать любую можно из любой ветки:
-
-```bash
-cmake -B build -DSHADOW_DEV_BUILD=ON   # dev: логи, отладочная консоль
-cmake -B build                         # user: то что уходит клиенту
-cmake --build build
-```
-
-В коде флаг виден как макрос `SHADOW_DEV`, константа `shadow::kDevBuild` и функция
-`shadow::log()` из `shared/include/shadow/dev.hpp`. В user-сборке вызовы `shadow::log()`
-вырезаются компилятором целиком, в бинарник не попадают ни строки логов, ни сам вывод.
+Third-party code retains its existing copyright and license notices. Build success and runtime behavior have not been revalidated as part of the repository presentation update.
