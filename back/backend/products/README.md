@@ -1,19 +1,11 @@
-# Protected product templates
+# Файли продуктів
 
-Only protected variants belong here. For RAGE:MP deploy 32–64 cohorts:
+Папка для підготовлених варіантів продукту. Для RAGE:MP використовується структура `ragemp/variants/<номер>/cheat.dll`.
 
-`ragemp/variants/00/cheat.dll` … `ragemp/variants/31/cheat.dll`
+Кількість варіантів задає `RAGEMP_VARIANT_COUNT`. Вибір залежить від користувача й HWID; зміна кількості вплине на цей розподіл.
 
-The DLL must pass `internal/scripts/audit_protected_artifact.py` and contain
-exactly one `SHADOW_CUSTOMER_TAG_...` placeholder. The backend replaces it
-with an HMAC-derived customer tag before encryption. Cohort selection is a
-stable HMAC of user/HWID and `RAGEMP_VARIANT_COUNT`.
-Treat the count as release metadata: changing it remaps existing users.
+У шаблоні DLL має бути одна мітка `SHADOW_CUSTOMER_TAG_...`. Бекенд замінює її перед шифруванням. Перевірка артефакту описана в `internal/scripts/audit_protected_artifact.py` у гілці `components/internal-next`.
 
-Set a unique production `WATERMARK_SECRET` of at least 32 characters. Rotating
-it changes future customer tags and should be treated as a release operation.
+`WATERMARK_SECRET` має бути окремим виробничим секретом щонайменше з 32 символів. Його заміна змінює майбутні мітки користувачів.
 
-`ragemp/features/` contains server-only source for the Quant, FiveRP and
-Ukraine bundles. The files are ignored by git and exported by
-`Build-ProtectedVariants.ps1`. The backend adds a launch-specific semantic
-canary and encrypts each response independently.
+`ragemp/features/` містить серверні файли пакетів Quant, FiveRP та Ukraine. Вони не зберігаються в Git; їх готує `Build-ProtectedVariants.ps1`. Бекенд додає мітку конкретного запуску й шифрує відповідь.
