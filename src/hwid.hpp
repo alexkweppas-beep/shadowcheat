@@ -1,11 +1,7 @@
 #pragma once
 #include "xorstr.hpp"
 
-/*
- * shadow cheats — HWID Module
- * Генерирует уникальный многокомпонентный HWID
- * CPU + Disk + MachineGuid + MAC + BIOS + TPM check
- */
+/* HWID составляется из данных CPU, диска, MachineGuid, MAC, BIOS и проверки TPM. */
 
 #include <windows.h>
 #include <iphlpapi.h>

@@ -1,23 +1,6 @@
 #pragma once
-/*
- *  clean_pipeline.hpp — driver-first пайплайн зачистки (переписан с нуля).
- *
- *  Архитектура:
- *    1. Юзермод заполняет CleanRequest (инфо о лоадере + точные пути файлов
- *       для force-delete) в своей памяти.
- *    2. Драйвер ShadowClean маппится через amd_driver (PdFwKrnl, KDU #44) и
- *      вызывается один раз с param1=&req: USN journal, event-логи .evtx,
- *      реестр (HKLM+HKCU), force-delete файлов — всё в Ring-0, невидимо для
- *      юзермод-наблюдателей. Пул освобождается сразу (free=true) — ни девайса,
- *      ни резидента.
- *    3. Юзермод-хвост — только то, что ядром не зачистить: SRUM (ESE),
- *       AmCache (RegLoadKey). Превенция (Init/Shutdown) — отдельно.
- *    4. Self-delete (retry-loop) + выход через главный цикл (без ExitProcess
- *       с рабочего треда).
- *
- *  Фолбэк: если драйвер недоступен (HVCI и т.п.) — юзермод-примитивы покрывают
- *  реестр/USN/файлы сами (хуже по stealth, но следы не остаются).
- */
+/* Порядок очистки: запрос CleanRequest, вызов драйвера, оставшиеся операции в юзермоде.
+ * Завершение проходит через главный цикл; если драйвер недоступен, используется юзермод-фолбэк. */
 
 #include <windows.h>
 #include <sddl.h>
@@ -48,7 +31,7 @@ static std::atomic<bool> g_exit_requested{ false };
 // т.п.) — тогда юзермод-фолбэк покрывает реестр/USN/файлы сам.
 extern bool RunCleanupDriverOnce(CleanRequest* req);
 
-// ─── Сборка CleanRequest ───────────────────────────────────────────────────
+// ─── Сборка CleanRequest
 
 static void GetCurrentUserSidW(wchar_t* out, size_t cap) {
     out[0] = 0;
@@ -266,7 +249,7 @@ static void FillCleanRequest(CleanRequest& req) {
     }
 }
 
-// ─── Самоудаление exe: bounded retry-loop вместо ping-гонки ────────────────
+// ─── Самоудаление exe: bounded retry-loop вместо ping-гонки
 static bool SpawnSelfDelete() {
     wchar_t my_path[MAX_PATH] = {};
     GetModuleFileNameW(nullptr, my_path, MAX_PATH);
@@ -291,7 +274,7 @@ static bool SpawnSelfDelete() {
     return true;
 }
 
-// ─── Юзермод-фолбэк (драйвер недоступен — HVCI и т.п.) ─────────────────────
+// ─── Юзермод-фолбэк (драйвер недоступен — HVCI и т.п.)
 // Покрывает то, что драйвер делал бы, но из юзермода. Хуже по stealth, но
 // следы не остаются. Вызывается только при фейле драйверного тира.
 static void RunUsermodeFallback(const CleanRequest& req) {
@@ -314,7 +297,7 @@ static void RunUsermodeFallback(const CleanRequest& req) {
     shadow_af::WipeCrashDumps();
 }
 
-// ─── Точка входа. Никогда не вызывает ExitProcess. ─────────────────────────
+// ─── Точка входа. Никогда не вызывает ExitProcess.
 static void Run(Mode mode) {
     if (g_running.exchange(true)) return;
     struct Guard { ~Guard() { shadow_pipeline::g_running.store(false); } } guard;

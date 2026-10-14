@@ -12,42 +12,7 @@
 #include <bcrypt.h>
 #pragma comment(lib, "bcrypt.lib")
 
-/*
- * shadow cheats — Manual MSVC-compatible obfuscation primitives
- *
- * Эти макросы/шаблоны работают в стандартном MSVC (без LLVM/clang/VMP/Themida),
- * и добавляют существенное сопротивление статическому анализу:
- *
- *   1. MBA (Mixed Boolean Arithmetic) — арифметически эквивалентные, но
- *      визуально нечитаемые выражения. Например `x == 5` → `(x^0x55)+0x55==0x5`.
- *      Hex-Rays (IDA decompiler) выдаёт неузнаваемую кашу, распознаёт через
- *      framinther'ы уже после deobfuscation pass D810 — это лишние часы работы.
- *
- *   2. Opaque Predicates — условия, значение которых известно на этапе
- *      компиляции ( всегда true/false ), но компилятор не выкидывает их из
- *      кода (volatile, indirect call, global state). СОЗДАЮТ фейковый
- *      control flow graph, который реверсер тратит время анализируя.
- *
- *   3. Control Flow Flattening — превращают функцию в один switch-based
- *      dispatcher, где каждый basic block = case в default switch. CFG
- *      дизассемблера сваливается в один единственный node, любые хождения
- *      для человека почти невозможны без symbolic execution.
- *
- *   4. Junk code insertion — мёртвые блоки с MBA, дублирующие реальную
- *      логику, но без сайд-эффектов. Засоряют дамп.
- *
- *   5. Function splitting indirection — split одной функции на N подфункций,
- *      вызываемых через function pointer по индексу. IDA не видит call-graph.
- *
- *   6. Anti-tamper canary checks — inline фикс функция `__forceinline`,
- *      встроит домой это в рандомных местах, проверяет canary; ломается
- *      при патче любого surrounding function.
- *
- * Документация по использованию — в SECURITY_OBFUSCATION.md после этого.
- * Применять только к критическим функциям (anti-debug, ban::Trigger,
- * integrity::check, HWID). Не ставить на hot loops (ESP/aimbot),
- * иначе FPS пострадает.
- */
+/* Макросы обфускации для MSVC. Не использовать в покадровых циклах ESP и аима. */
 
 #include <cstdint>
 #include <windows.h>
@@ -55,13 +20,13 @@
 
 namespace shadow::obf {
 
-// ─────────────────────────────────────────────────────────
+ 
 //  1. MBA (Mixed Boolean Arithmetic) primitives
 //
 //  Каждый MACRO берёт простой операнд и возвращает то же самое значение через
 //  арифметически equivное, но ВСЕГДА неUEZmожное-to-recognize выражение.
 //  Компилятор MSVC не упростит (volatile, side-effect), hex-rays не свернёт.
-// ─────────────────────────────────────────────────────────
+ 
 
 // x == K  →  ((x ^ K_MASK) + K_MASK_ADJ) == K_TARGET
 //   где K_MASK и K_MASK_ADJ подбираются так, что
@@ -110,12 +75,12 @@ __forceinline T mba_const(T k, uintptr_t mask) {
     return (T)((uintptr_t)r ^ mask);
 }
 
-// ─────────────────────────────────────────────────────────
+ 
 //  2. Opaque Predicates
 //
 //  Условия, всегда true/false — компилятор не может выкинуть из-за volatile,
 //  реверсер тратит время выводя "что-то тут всегда exit через case 1".
-// ─────────────────────────────────────────────────────────
+ 
 
 // Всегда TRUE: (x^2 + 2x + 1) == ((x+1)^2) для любого x.
 //   Компилятор не упрощает из-за volatile.
@@ -139,7 +104,7 @@ __forceinline bool opaque_false_never(int seed = 0) {
 #define OBF_ALWAYS_TRUE()  shadow::obf::opaque_true_always((int)__rdtsc())
 #define OBF_ALWAYS_FALSE() shadow::obf::opaque_false_never((int)__rdtsc())
 
-// ─────────────────────────────────────────────────────────
+ 
 //  3. Junk code block — мёртвый код с MBA и CANARY-ща
 //
 //  Использование:
@@ -150,7 +115,7 @@ __forceinline bool opaque_false_never(int seed = 0) {
 //    )
 //
 //  MSVC не выкинет (volatile marker), реверсер подумает «crypto-ish».
-// ─────────────────────────────────────────────────────────
+ 
 
 #define OBF_JUNK_BLOCK(code) \
     do { \
@@ -159,13 +124,13 @@ __forceinline bool opaque_false_never(int seed = 0) {
         (void)_obf_junk_marker; \
     } while(0)
 
-// ─────────────────────────────────────────────────────────
+ 
 //  4. Anti-tamper canary
 //
 //  Перед вызовом критичной функции, кладём canary на стек, после — проверяем.
 //  Крякер который поставил BP внутри функции не заметит как canary сломается.
 //  Банит не как break point, а как integrity violation.
-// ─────────────────────────────────────────────────────────
+ 
 
 struct ObfCanary {
     uintptr_t value;
@@ -232,12 +197,12 @@ struct ObfCanary {
         shadow::loader_antidbg::kill_local(); \
     }
 
-// ─────────────────────────────────────────────────────────
+ 
 //  5. Indirect call (split + dispatch)
 //
 //  Вместо прямого вызова fn(x), делаем间接ный call черезMBA-obfuscated индекс.
 //  IDA не может статически раскрыть CFG, только динамический trace покажет цель.
-// ─────────────────────────────────────────────────────────
+ 
 
 // Простейший indirect dispatcher — массив функций, индексируется
 // MBA-обёрнутой константой. Вручнуюhinline каждой критической функции.

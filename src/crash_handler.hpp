@@ -1,10 +1,5 @@
 #pragma once
-/*
- * crash_handler.hpp — перехват необработанных исключений лоадера
- *
- * Logging DISABLED — shadow_crash_*.log not written to disk.
- * Install() still exists so call sites compile correctly.
- */
+/* Обработчик исключений. Файловый лог отключён; Install сохранён для совместимости вызовов. */
 
 #ifndef WIN32_LEAN_AND_MEAN
 #define WIN32_LEAN_AND_MEAN
@@ -13,7 +8,7 @@
 
 namespace crash_handler {
 
-// ─── Человекочитаемое описание кода исключения ────────────────────────────
+// ─── Человекочитаемое описание кода исключения
 static const char *ExceptionName(DWORD code) {
   switch (code) {
   case EXCEPTION_ACCESS_VIOLATION:
@@ -41,7 +36,7 @@ static const char *ExceptionName(DWORD code) {
   }
 }
 
-// ─── Главный обработчик исключений (silent — no file written) ─────────────
+// ─── Главный обработчик исключений (silent — no file written)
 static LONG WINAPI ShadowCrashHandler(EXCEPTION_POINTERS *ep) {
   if (!ep || !ep->ExceptionRecord)
     return EXCEPTION_CONTINUE_SEARCH;
@@ -55,7 +50,7 @@ static LONG WINAPI ShadowCrashHandler(EXCEPTION_POINTERS *ep) {
   return EXCEPTION_EXECUTE_HANDLER;
 }
 
-// ─── Установить обработчик ────────────────────────────────────────────────
+// ─── Установить обработчик
 static void Install() { SetUnhandledExceptionFilter(ShadowCrashHandler); }
 
 } // namespace crash_handler

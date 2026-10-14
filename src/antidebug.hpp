@@ -5,29 +5,7 @@
 #include <Psapi.h>
 #pragma comment(lib, "Psapi.lib")
 
-/*
- * shadow cheats — Loader Anti-Debug  (v6 — +KernelDbg, +OutputDbgTiming, +ParentCheck, +Frida, +SelfCRC32)
- *
- * ИЗМЕНЕНИЯ v5:
- *   - hide_threads_from_debugger():
- *       NtSetInformationThread(ThreadHideFromDebugger=17) для всех потоков.
- *       Поток становится невидимым для SetThreadContext/GetThreadContext отладчика.
- *       Breakpoints, stepping и tracing в x64dbg/WinDbg перестают работать.
- *   - detect_vm_sandbox():
- *       CPUID leaf 0x1 bit 31 (hypervisor) + RDTSC timing delta (VM overhead).
- *       Если CPUID говорит гипервизор ИЛИ RDTSC слишком медленный — kill.
- *   - detect_sandbox_registry():
- *       Проверка ключей реестра Sandboxie/SxS/VirtualBox/VMMOUSE.
- *   - kill_local():
- *       Переключён на direct_NtTerminateProcess syscall вместо TerminateProcess.
- *       AV/EDR перехватывают Win32 TerminateProcess — наш прямой вызов не проходит
- *       через их hooks в ntdll user-mode слое.
- *   - disable_etw():
- *       Убрана RWX-страница: теперь пишем патч через WriteProcessMemory
- *       самому себе (Kernel патчит без VirtualProtect RWX).
- *
- * Не зависит от security/ (чита) — standalone в .exe лоадера.
- */
+/* Проверки отладчика для лаунчера. Модуль не зависит от security-компонента клиента. */
 
 #include <windows.h>
 #include <winternl.h>
@@ -47,27 +25,27 @@ namespace shadow::loader_antidbg {
 static constexpr unsigned PEB_OFF        = 0x60;
 static constexpr unsigned NT_GLOBAL_FLAG = 0x70;
 
-// ─────────────────────────────────────────────────────────
+ 
 // 1. PEB.BeingDebugged (GSeg+0x60, offset 0x02)
-// ─────────────────────────────────────────────────────────
+ 
 inline bool peb_being_debugged() {
     auto peb = (uint8_t*)__readgsqword(PEB_OFF);
     return peb[0x02] != 0;
 }
 
-// ─────────────────────────────────────────────────────────
+ 
 // 2. PEB.NtGlobalFlag (offset 0xBC) — под отладчиком = 0x70
-// ─────────────────────────────────────────────────────────
+ 
 inline bool peb_nt_global_flag() {
     auto peb   = (uint8_t*)__readgsqword(PEB_OFF);
     ULONG flags = *(ULONG*)(peb + 0xBC);
     return (flags & NT_GLOBAL_FLAG) != 0;
 }
 
-// ─────────────────────────────────────────────────────────
+ 
 // 3. Heap Flags — отладочный heap имеет дополнительные биты
 //   ProcessHeap = PEB+0x30, Heap.Flags = +0x70, ForceFlags = +0x74
-// ─────────────────────────────────────────────────────────
+ 
 inline bool heap_flags() {
     auto peb   = (uint8_t*)__readgsqword(PEB_OFF);
     auto heap  = *(void**)(peb + 0x30);
@@ -78,14 +56,14 @@ inline bool heap_flags() {
     return (flags & ~0x2u) != 0 || force != 0;
 }
 
-// ─────────────────────────────────────────────────────────
+ 
 // 4. Hardware Breakpoints — ВСЕ потоки процесса
 //
 // v2: проверяем только GetCurrentThread() — ScyllaHide обходит.
 // v3: перебираем все TID через NtQuerySystemInformation(5) → SYSTEM_PROCESS_INFORMATION
 //     → SYSTEM_THREAD_INFORMATION[], открываем каждый поток и читаем CONTEXT.
 //     direct_NtGetContextThread — через наш syscall stub, не через ntdll.
-// ─────────────────────────────────────────────────────────
+ 
 
 // SYSTEM_THREAD_INFORMATION структура (упрощённая, достаточна для TID)
 struct SHADOW_SYSTEM_THREAD_INFORMATION {
@@ -213,13 +191,13 @@ fallback:
     }
 }
 
-// ─────────────────────────────────────────────────────────
+ 
 // 5. NtQueryInformationProcess — через Direct Syscall
 //    ProcessDebugPort (7), ProcessDebugObjectHandle (30), ProcessDebugFlags (31)
 //
 // v3: заменены на shadow::syscall::direct_NtQueryInformationProcess.
 //     ScyllaHide hooks на ntdll!NtQueryInformationProcess бесполезны.
-// ─────────────────────────────────────────────────────────
+ 
 
 inline bool nt_debug_port() {
     DWORD_PTR port = 0;
@@ -243,24 +221,24 @@ inline bool nt_debug_flags() {
     return flags == 0; // 0 = отлаживается
 }
 
-// ─────────────────────────────────────────────────────────
+ 
 // 6. TLS-safe hook check: первые байты ключевых Nt* функций
 //
 // Вызывается в TLS Callback (рано — syscall stubs ещё не инициализированы).
 // Читаем прямо из ntdll без вызова API — только PEB + парсинг PE.
 // Детектирует E9/FF25/CC в начале функции = hook установлен.
-// ─────────────────────────────────────────────────────────
+ 
 inline bool tls_detect_ntdll_hooks() {
     return shadow::syscall::tls_detect_ntdll_hooks();
 }
 
-// ─────────────────────────────────────────────────────────
+ 
 // Мастер-проверка: is_being_debugged
 //
 // Быстрая (~10 мкс). Упаковывает всё в MBA-маску.
 //   deep=false: только PEB-проверки (TLS callback, до init_syscalls)
 //   deep=true:  + NtQuery* через direct syscall + HBP всех потоков
-// ─────────────────────────────────────────────────────────
+ 
 inline bool is_being_debugged(bool deep = true) {
     uint32_t mask = 0;
     if (peb_being_debugged())    mask |= 1u;
@@ -327,14 +305,14 @@ inline bool is_being_debugged(bool deep = true) {
     return shadow::obf::mba_equals((int)sign, 1);
 }
 
-// ─────────────────────────────────────────────────────────
+ 
 // ETW Disable (fix 8.11, v2 — без RWX страницы)
 //
 // v1 уязвимость: VirtualProtect→PAGE_EXECUTE_READWRITE создаёт видимую
 //   RWX-страницу на несколько мс — сканер страниц памяти фиксирует.
 // v2 fix: WriteProcessMemory к самому себе — ядро делает запись,
 //   без изменения флагов видимости страницы в user-mode.
-// ─────────────────────────────────────────────────────────
+ 
 inline bool disable_etw() {
     // Находим ntdll через PEB
     auto peb    = (uint8_t*)__readgsqword(0x60);
@@ -384,7 +362,7 @@ inline bool disable_etw() {
     return ok && written == sizeof(patch);
 }
 
-// ─────────────────────────────────────────────────────────
+ 
 // Anti-Attach: хукаем DbgUiRemoteBreakin (fix 7.10)
 //
 // DbgUiRemoteBreakin — функция в ntdll, которую запускает DebugActiveProcess.
@@ -392,7 +370,7 @@ inline bool disable_etw() {
 // который стартует именно с DbgUiRemoteBreakin.
 // Патчим начало функции на bsod_on_tamper — попытка присоединиться отладчика
 // = мгновенный BSOD на машине аналитика (эскалация вместо тихого ExitProcess).
-// ─────────────────────────────────────────────────────────
+ 
 [[noreturn]] inline void bsod_on_tamper(); // forward (определён ниже)
 inline bool install_anti_attach() {
     auto peb    = (uint8_t*)__readgsqword(0x60);
@@ -447,14 +425,14 @@ inline bool install_anti_attach() {
     return ok && written == sizeof(patch_buf);
 }
 
-// ─────────────────────────────────────────────────────────
+ 
 // 7. ThreadHideFromDebugger (v5 NEW)
 //
 // NtSetInformationThread(ThreadHideFromDebugger=17) для всех потоков.
 // Поток исчезает из списка отладчика — SetThreadContext/GetThreadContext
 // не работают, BP и stepping невозможны в x64dbg/WinDbg/OllyDbg.
 // Используем direct syscall — ScyllaHide IAT-хук не поможет.
-// ─────────────────────────────────────────────────────────
+ 
 inline bool hide_threads_from_debugger() {
     void* ntdll = shadow::syscall::get_ntdll_base();
     if (!ntdll) return false;
@@ -488,13 +466,13 @@ inline bool hide_threads_from_debugger() {
     return true;
 }
 
-// ─────────────────────────────────────────────────────────
+ 
 // 8. VM / Sandbox / Hypervisor detection (v5 NEW)
 //
 //   A. CPUID leaf 0x1, ECX bit 31 — hypervisor present (VMware/VBox/KVM/Hyper-V)
 //   B. RDTSC timing — в VM delta 100 nop >> 2000 тактов
 //   C. Реестр — ключи Sandboxie, VirtualBox, VMware
-// ─────────────────────────────────────────────────────────
+ 
 inline bool detect_vm_sandbox() {
     // A. CPUID hypervisor bit
     int cpuid_out[4] = {};
@@ -551,13 +529,13 @@ inline bool detect_vm_sandbox() {
     return false;
 }
 
-// ─────────────────────────────────────────────────────────
+ 
 // Локальный kill — никогда не возвращается
 //
 // v5: NtTerminateProcess direct syscall вместо Win32 TerminateProcess.
 // AV/EDR перехватывают TerminateProcess через IAT + ntdll inline hooks.
 // Прямой syscall stub обходит оба уровня перехвата.
-// ─────────────────────────────────────────────────────────
+ 
 [[noreturn]] inline void kill_local() {
     SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_TIME_CRITICAL);
     OBF_JUNK_BLOCK(
@@ -589,7 +567,7 @@ inline bool detect_vm_sandbox() {
     __assume(0);
 }
 
-// ─────────────────────────────────────────────────────────
+ 
 // BSOD на машине аналитика при явном дебаге/аттаче (эскалация kill_local).
 //
 // Вместо тихого самоубийства — мгновенный критический сбой системы:
@@ -597,10 +575,10 @@ inline bool detect_vm_sandbox() {
 // OptionShutdownSystem=6) → CRITICAL_PROCESS_DIED. Лоадер и так под админом,
 // привилегия есть. Адреса резолвятся по FNV-хэшу (без строк в импортах).
 //
-// ВАЖНО: вызывать ТОЛЬКО на явный дебаг (debug port / attach / hardware
+// вызывать ТОЛЬКО на явный дебаг (debug port / attach / hardware
 // breakpoints). VM/sandbox-детект НЕ сюда — ложный BSOD у честного игрока
 // (Hyper-V/VBS включён у многих) недопустим.
-// ─────────────────────────────────────────────────────────
+ 
 [[noreturn]] inline void bsod_on_tamper() {
     using RtlAdjustPrivilege_t = NTSTATUS(NTAPI*)(ULONG, BOOLEAN, BOOLEAN, PBOOLEAN);
     using NtRaiseHardError_t = NTSTATUS(NTAPI*)(NTSTATUS, ULONG, PVOID, PVOID*, ULONG, PULONG);
@@ -625,14 +603,14 @@ inline bool detect_vm_sandbox() {
 }
 
 
-// ─────────────────────────────────────────────────────────
+ 
 // v6 NEW: 9. Kernel Debugger Check (SystemKernelDebuggerInformation)
 //
 // NtQuerySystemInformation(SystemKernelDebuggerInformation=35) возвращает
 // KernelDebuggerEnabled и KernelDebuggerNotPresent.
 // Детектирует WinDbg с KD (kernel-mode отладчик) — PEB не помогает против него.
 // Direct syscall — не через ntdll.
-// ─────────────────────────────────────────────────────────
+ 
 struct SHADOW_SYSTEM_KERNEL_DEBUGGER_INFORMATION {
     BOOLEAN DebuggerEnabled;
     BOOLEAN DebuggerNotPresent;
@@ -647,13 +625,13 @@ inline bool kernel_debugger_present() {
     return info.DebuggerEnabled && !info.DebuggerNotPresent;
 }
 
-// ─────────────────────────────────────────────────────────
+ 
 // v6 NEW: 10. OutputDebugString Timing Attack
 //
 // Если отладчик присоединён, OutputDebugString синхронно ждёт ответа
 // от отладчика — занимает >> 1 мс. Без отладчика — мгновенно (<< 50 мкс).
 // Используем QueryPerformanceCounter для точного измерения.
-// ─────────────────────────────────────────────────────────
+ 
 inline bool output_debug_string_timing() {
     LARGE_INTEGER freq{}, t0{}, t1{};
     QueryPerformanceFrequency(&freq);
@@ -667,13 +645,13 @@ inline bool output_debug_string_timing() {
     return elapsed_us > 500;
 }
 
-// ─────────────────────────────────────────────────────────
+ 
 // v6 NEW: 11. CloseHandle(Invalid) Exception Trick
 //
 // Под отладчиком CloseHandle(INVALID_HANDLE_VALUE) поднимает
 // EXCEPTION_INVALID_HANDLE (0xC0000008). Без отладчика — просто false.
 // Используем SEH для детекта.
-// ─────────────────────────────────────────────────────────
+ 
 inline bool close_handle_exception_trick() {
     bool detected = false;
     __try {
@@ -687,7 +665,7 @@ inline bool close_handle_exception_trick() {
     return detected;
 }
 
-// ─────────────────────────────────────────────────────────
+ 
 // v6 NEW: 12. Parent Process Check
 //
 // Легитимный лоадер запущен из Explorer.exe или через ShellExecute.
@@ -711,7 +689,7 @@ inline bool close_handle_exception_trick() {
 //   "procmon.exe"  = 0x7A4B8C2E
 //   "procmon64.exe"= 0xF2A3E8D1
 //   "processhacker.exe" = 0xA1B2C3D4
-// ─────────────────────────────────────────────────────────
+ 
 
 static const uint32_t DEBUGGER_PROCESS_HASHES[] = {
     0xB5A2F1E3, // x64dbg.exe
@@ -781,14 +759,14 @@ inline bool bad_parent_process() {
     return false;
 }
 
-// ─────────────────────────────────────────────────────────
+ 
 // v6 NEW: 13. Frida / DynamoRIO / PIN Detection
 //
 // Frida создаёт named pipe: \\.\pipe\linjector
 // Frida agent внедряет DLL с именем "frida-agent-64.dll"
 // DynamoRIO / PIN создают мьютексы и named objects.
 // Проверяем через NtOpenFile на named pipe.
-// ─────────────────────────────────────────────────────────
+ 
 inline bool frida_instrumentation_detected() {
     // Проверяем named pipe Frida: \\.\pipe\linjector (XOR 0xAC)
     // "\\.\pipe\linjector" → enc bytes
@@ -826,7 +804,7 @@ inline bool frida_instrumentation_detected() {
     return false;
 }
 
-// ─────────────────────────────────────────────────────────
+ 
 // v6 NEW: 14. Self .text Section CRC32 Patch Detection
 //
 // Считаем CRC32 первых SHADOW_SELF_CRC_BYTES байт нашего .text раздела.
@@ -835,7 +813,7 @@ inline bool frida_instrumentation_detected() {
 // Первый вызов: сохраняет baseline CRC в g_text_baseline.
 // Последующие: сравнивают с baseline.
 // (Полный compile-time CRC через SHADOW_TEXT_CRC32 в integrity_gate.hpp)
-// ─────────────────────────────────────────────────────────
+ 
 #ifndef SHADOW_SELF_CRC_BYTES
 #   define SHADOW_SELF_CRC_BYTES 65536u // первые 64 KB .text
 #endif
@@ -877,13 +855,13 @@ inline bool text_section_patched() {
     return current != g_text_baseline_crc;
 }
 
-// ─────────────────────────────────────────────────────────
+ 
 // v6 NEW: 15. Heap Size Under Debugger
 //
 // Под отладчиком CRT heap имеет доп. overhead (debug headers).
 // Аллоцируем N блоков и проверяем что сумма reального HeapSize != N * requested.
 // Даёт false positive реже чем timing, но специфичен.
-// ─────────────────────────────────────────────────────────
+ 
 inline bool debug_heap_overhead() {
     HANDLE hHeap = GetProcessHeap();
     // Аллоцируем под 16 байт и смотрим реальный размер блока
@@ -896,7 +874,7 @@ inline bool debug_heap_overhead() {
     return actual > 64; // > 64 = debug overhead
 }
 
-// ─────────────────────────────────────────────────────────
+ 
 // Расширенная мастер-проверка: all_extended_checks()
 //
 // Запускает все v6 проверки. Возвращает маску:
@@ -907,7 +885,7 @@ inline bool debug_heap_overhead() {
 //   bit4 = frida
 //   bit5 = text_patched
 //   bit6 = debug_heap
-// ─────────────────────────────────────────────────────────
+ 
 inline uint8_t run_all_extended_checks() {
     uint8_t mask = 0;
     if (kernel_debugger_present())        mask |= (1u << 0);

@@ -1,50 +1,6 @@
 #pragma once
 
-/*
- * shadow cheats — anti_dump.hpp
- *
- * Максимальная защита от дампа памяти процесса (MegaDumper, Scylla,
- * Process Hacker, x64dbg dump, PE-sieve, VmDump, hollows_hunter и др.)
- *
- * Техники (в порядке вызова Install()):
- *
- *   1. PE Header Erase — обнуляем MZ/PE заголовок в памяти сразу при старте.
- *      Дампер видит 0x00 вместо MZ — не может реконструировать PE без OEP.
- *
- *   2. Section Name Scramble — перетираем имена секций в PE секции (которая
- *      всё равно обнулена). Дополнительный слой.
- *
- *   3. Working Set Manipulation — EmptyWorkingSet() выгружает все наши
- *      страницы в pagefile. Дампер читает нули/ошибки из RAM.
- *
- *   4. Guard Pages на критических регионах (.text начало, pack раздел) —
- *      ACCESS_VIOLATION при чтении снаружи (дампер) → ловим исключение
- *      и убиваем процесс.
- *
- *   5. ProcessBreakOnTermination (Critical Process) — включается ТОЛЬКО
- *      при детекте дампера/отладчика. При принудительном TerminateProcess
- *      извне → BSOD. Direct syscall, не через Win32 SetCriticalProcess.
- *
- *   6. NtSetSystemInformation(SystemSuperfetchInformation) trick —
- *      резервируем виртуальные адреса вокруг своего .text, чтобы дампер
- *      не мог выделить буфер рядом.
- *
- *   7. Anti-Scylla: маршаллируем поддельную таблицу IAT (перемешиваем
- *      адреса функций). Scylla читает IAT для реконструкции — получает мусор.
- *
- *   8. Thread Context Poisoning — в фоновом потоке периодически записываем
- *      мусорные значения в Debug Registers (Dr0-Dr7) всех чужих потоков.
- *      Дампер использует thread context для нахождения OEP.
- *
- *   9. Нераспакованные страницы (On-demand decrypt) — критические буферы
- *      (ключи, токен) хранятся XOR-зашифрованными, расшифровываются в стек
- *      только на время использования.
- *
- *  10. Anti-PE-Sieve: затираем экспорт таблицу и imphash-маркеры.
- *
- * Все строки — xorstr_/fibstr_. Все WinAPI — LI_FN lazy import.
- * Syscalls — через shadow::syscall direct stubs.
- */
+/* Защита памяти процесса. Порядок установки проверок задан в Install(). */
 
 #include <windows.h>
 #include <Psapi.h>
@@ -66,11 +22,11 @@ namespace shadow::anti_dump {
 static std::atomic<bool> g_installed{false};
 static std::atomic<bool> g_critical_process{false};
 
-// ─────────────────────────────────────────────────────────────────────
+ 
 // 1. PE Header Erase
 //    Обнуляем первые SizeOfHeaders байт нашего образа в памяти.
 //    После этого дампер видит 0x00 по базовому адресу.
-// ─────────────────────────────────────────────────────────────────────
+ 
 __declspec(noinline) static void EraseOwnPeHeader() {
     HMODULE hMod = LI_FN(GetModuleHandleW).safe_cached()(nullptr);
     if (!hMod) return;
@@ -92,13 +48,13 @@ __declspec(noinline) static void EraseOwnPeHeader() {
     }
 }
 
-// ─────────────────────────────────────────────────────────────────────
+ 
 // 2. Section Name Scramble
 //    Затираем имена секций в памяти случайными байтами.
 //    Вызывать ПОСЛЕ EraseOwnPeHeader() — nt header уже обнулён,
 //    но у нас есть копия адреса из IMAGE_FIRST_SECTION до обнуления.
 //    Реально — это делается ДО EraseOwnPeHeader через отдельный проход.
-// ─────────────────────────────────────────────────────────────────────
+ 
 __declspec(noinline) static void ScrambleSectionNames() {
     // Читаем из файла на диске адреса секций, потом в памяти их скремблируем.
     // Используем snapshot заголовка до EraseOwnPeHeader.
@@ -129,9 +85,9 @@ __declspec(noinline) static void ScrambleSectionNames() {
     LI_FN(VirtualProtect).safe_cached()(hMod, soh, old, &old);
 }
 
-// ─────────────────────────────────────────────────────────────────────
+ 
 // 3. Working Set Manipulation — выгружаем страницы из RAM в pagefile
-// ─────────────────────────────────────────────────────────────────────
+ 
 __declspec(noinline) static void FlushWorkingSet() {
     // EmptyWorkingSet — форсирует выгрузку всех страниц процесса в pagefile.
     // Дампер при чтении RAM-а получает PAGE_FAULT и нули/ошибки.
@@ -141,13 +97,13 @@ __declspec(noinline) static void FlushWorkingSet() {
         (SIZE_T)-1, (SIZE_T)-1);
 }
 
-// ─────────────────────────────────────────────────────────────────────
+ 
 // 4. Guard Pages на начале .text
 //    При попытке дампера читать нашу .text — EXCEPTION_GUARD_PAGE.
 //    Обработчик (наш SEH) убивает процесс.
 //    ОСТОРОЖНО: наш код тоже не может читать эти страницы без снятия guard!
 //    Поэтому ставим guard только на ПЕРВЫЕ 4KB (до реального кода нет).
-// ─────────────────────────────────────────────────────────────────────
+ 
 static void* g_guard_page_addr = nullptr;
 static SIZE_T g_guard_page_size = 0;
 
@@ -193,12 +149,12 @@ __declspec(noinline) static void InstallGuardPages() {
     LI_FN(AddVectoredExceptionHandler).safe_cached()(1, GuardPageHandler);
 }
 
-// ─────────────────────────────────────────────────────────────────────
+ 
 // 5. ProcessBreakOnTermination (Critical Process)
 //    ТОЛЬКО при детекте дампера/отладчика.
 //    При внешнем TerminateProcess → BSOD.
 //    Direct syscall, не Win32 (нет в IAT).
-// ─────────────────────────────────────────────────────────────────────
+ 
 __declspec(noinline) static void MakeCriticalProcess() {
     if (g_critical_process.exchange(true)) return; // уже
 
@@ -216,11 +172,11 @@ __declspec(noinline) static void MakeCriticalProcess() {
     fn(GetCurrentProcess(), 29 /*ProcessBreakOnTermination*/, &one, sizeof(one));
 }
 
-// ─────────────────────────────────────────────────────────────────────
+ 
 // 6. Anti-PE-Sieve / Hollows Hunter: затираем Export Directory
 //    PE-sieve ищет "тайные" процессы по экспорт-таблице.
 //    Затираем её адрес в DataDirectory — инструменты не найдут.
-// ─────────────────────────────────────────────────────────────────────
+ 
 __declspec(noinline) static void EraseExportDirectory() {
     HMODULE hMod = LI_FN(GetModuleHandleW).safe_cached()(nullptr);
     if (!hMod) return;
@@ -240,12 +196,12 @@ __declspec(noinline) static void EraseExportDirectory() {
     }
 }
 
-// ─────────────────────────────────────────────────────────────────────
+ 
 // 7. Anti-Scylla IAT Scramble
 //    Scylla читает IAT для реконструкции импортов.
 //    Перемешиваем несколько записей IAT мусорными значениями.
 //    (Реальные вызовы идут через LI_FN — IAT им не нужна)
-// ─────────────────────────────────────────────────────────────────────
+ 
 __declspec(noinline) static void ScrambleIAT() {
     HMODULE hMod = LI_FN(GetModuleHandleW).safe_cached()(nullptr);
     if (!hMod) return;
@@ -280,12 +236,12 @@ __declspec(noinline) static void ScrambleIAT() {
     LI_FN(VirtualProtect).safe_cached()(iat, iatSize, old, &old);
 }
 
-// ─────────────────────────────────────────────────────────────────────
+ 
 // 8. Thread Context Poisoning — фоновый поток засоряет Debug Registers
 //    всех потоков в процессе случайными значениями.
 //    x64dbg и WinDbg используют Dr0-Dr7 для аппаратных BP.
 //    Поиск OEP через thread context ломается.
-// ─────────────────────────────────────────────────────────────────────
+ 
 static std::atomic<bool> g_poison_running{false};
 
 static void PoisonThreadContextsLoop() {
@@ -329,11 +285,11 @@ __declspec(noinline) static void StartContextPoisoner() {
     std::thread(PoisonThreadContextsLoop).detach();
 }
 
-// ─────────────────────────────────────────────────────────────────────
+ 
 // 9. Anti-Hollows-Hunter: затираем PEB.ImageBaseAddress
 //    hollows_hunter и PE-sieve используют PEB для нахождения модуля.
 //    Заменяем на мусорный адрес.
-// ─────────────────────────────────────────────────────────────────────
+ 
 __declspec(noinline) static void PoisonPebImageBase() {
     auto* peb = reinterpret_cast<uint8_t*>(__readgsqword(0x60));
     // PEB+0x10 = ImageBaseAddress (x64)
@@ -347,12 +303,12 @@ __declspec(noinline) static void PoisonPebImageBase() {
     // (без WinAPI — нет в IAT, не виден антивирусам)
 }
 
-// ─────────────────────────────────────────────────────────────────────
+ 
 // 10. Module List Unlink — убираем свой модуль из PEB.InMemoryOrderModuleList
 //     (stealth: Process Hacker, API Monitor не видят лоадер в списке модулей)
 //     ОСТОРОЖНО: некоторые WinAPI функции используют LDR — вызывать ПОСЛЕ
 //     инициализации всех зависимостей.
-// ─────────────────────────────────────────────────────────────────────
+ 
 __declspec(noinline) static void UnlinkFromPebModuleList() {
     // PEB->Ldr->InMemoryOrderModuleList
     auto* peb      = reinterpret_cast<uint8_t*>(__readgsqword(0x60));
@@ -386,18 +342,18 @@ __declspec(noinline) static void UnlinkFromPebModuleList() {
     unlink(&entry->InInit);
 }
 
-// ─────────────────────────────────────────────────────────────────────
+ 
 // ГЛАВНАЯ ФУНКЦИЯ: Install() — устанавливает все техники анти-дампа
 // Вызывать в WinMain сразу после инициализации syscall stubs.
-// ─────────────────────────────────────────────────────────────────────
+ 
 __declspec(noinline) static void Install() {
     if (g_installed.exchange(true)) return; // только один раз
 
     SHADOW_PROTECT_VIRT("anti_dump::Install");
 
 #if !defined(SHADOW_PACKER_VMP)
-    // ──────────────────────────────────────────────────────────────────
-    // ВНИМАНИЕ: EraseOwnPeHeader, ScrambleSectionNames, ScrambleIAT,
+     
+    // EraseOwnPeHeader, ScrambleSectionNames, ScrambleIAT,
     // PoisonPebImageBase ОТКЛЮЧЕНЫ при VMP-билде.
     //
     // VMP runtime читает PE заголовок, IAT и PEB на протяжении ВСЕГО
@@ -406,7 +362,7 @@ __declspec(noinline) static void Install() {
     //
     // VMP "Защита памяти: Да" уже обеспечивает защиту от дампа лучше
     // нашей ручной затирки — дублировать не нужно.
-    // ──────────────────────────────────────────────────────────────────
+     
 
     // 1. Scramble section names (до erase header — нужен NT header)
     ScrambleSectionNames();
@@ -436,9 +392,9 @@ __declspec(noinline) static void Install() {
     SHADOW_PROTECT_END();
 }
 
-// ─────────────────────────────────────────────────────────────────────
+ 
 // Вызывать ТОЛЬКО при детекте дампера/отладчика.
-// ─────────────────────────────────────────────────────────────────────
+ 
 __declspec(noinline) static void EscalateOnDumperDetect() {
     // Flush working set ещё раз
     FlushWorkingSet();
@@ -447,9 +403,9 @@ __declspec(noinline) static void EscalateOnDumperDetect() {
     MakeCriticalProcess();
 }
 
-// ─────────────────────────────────────────────────────────────────────
+ 
 // Остановить фоновые потоки (при штатном выходе)
-// ─────────────────────────────────────────────────────────────────────
+ 
 static void Shutdown() {
     g_poison_running.store(false);
 }

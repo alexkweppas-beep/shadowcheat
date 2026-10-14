@@ -25,7 +25,7 @@
 
 namespace shadow_streamproof {
 
-// ─── 0. Включение SeDebugPrivilege ──────────────────────────────────────────
+// ─── 0. Включение SeDebugPrivilege
 static inline bool EnableDebugPrivilege() {
     HANDLE hToken = nullptr;
     if (!::OpenProcessToken(::GetCurrentProcess(), TOKEN_ADJUST_PRIVILEGES | TOKEN_QUERY, &hToken))
@@ -43,7 +43,7 @@ static inline bool EnableDebugPrivilege() {
     return true;
 }
 
-// ─── 1. WDA_EXCLUDEFROMCAPTURE ───────────────────────────────────────────────
+// ─── 1. WDA_EXCLUDEFROMCAPTURE
 static inline bool HideWindowFromCapture(HWND hwnd) {
     if (!hwnd || !::IsWindow(hwnd)) return false;
     // WDA_EXCLUDEFROMCAPTURE = 0x00000011 (Windows 10 2004+ / Windows 11)
@@ -60,7 +60,7 @@ static inline void ShowWindowToCapture(HWND hwnd) {
     }
 }
 
-// ─── 2. Полная запись FTS-ключей во все разделы реестра NVIDIA ───────────────
+// ─── 2. Полная запись FTS-ключей во все разделы реестра NVIDIA
 // The value is written to 15 locations and was never restored, so it outlived
 // the loader. Back up each location's prior state and restore it on exit.
 struct FtsBackup {
@@ -177,7 +177,7 @@ static inline void RestoreNvidiaFtsRegistry() {
     g_ftsBackedUp = false;
 }
 
-// ─── 3. Перезапуск процессов захвата NVIDIA ─────────────────────────────────
+// ─── 3. Перезапуск процессов захвата NVIDIA
 static inline void KillNvidiaProcesses() {
     EnableDebugPrivilege();
 
@@ -212,7 +212,7 @@ static inline void KillNvidiaProcesses() {
     ::CloseHandle(hSnap);
 }
 
-// ─── 4. Патч GetWindowDisplayAffinity во всех процессах NVIDIA ───────────────
+// ─── 4. Патч GetWindowDisplayAffinity во всех процессах NVIDIA
 static inline bool PatchAllNvidiaProcesses() {
     EnableDebugPrivilege();
 
@@ -284,7 +284,7 @@ static inline bool PatchAllNvidiaProcesses() {
     return ok;
 }
 
-// ─── 5. Включение Streamproof ────────────────────────────────────────────────
+// ─── 5. Включение Streamproof
 static inline void EnableStreamproof(HWND hwnd) {
     // 1. Применяем WDA_EXCLUDEFROMCAPTURE немедленно
     HideWindowFromCapture(hwnd);
@@ -324,7 +324,7 @@ static inline void EnableStreamproof(HWND hwnd) {
     }
 }
 
-// ─── 6. Выключение Streamproof ───────────────────────────────────────────────
+// ─── 6. Выключение Streamproof
 static inline void DisableStreamproof(HWND hwnd) {
     if (hwnd) ShowWindowToCapture(hwnd);
 }

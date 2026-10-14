@@ -66,11 +66,11 @@ static void PackerIntegrityGate() {
   shadow_loader_gate::tls_check();
 }
 
-// ─────────────────────────────────────────────────────────
+ 
 // shadow_loader_gate::tls_check — VMP project marker
 // VMP .vmp файл ссылается на этот маркер. Функция должна
 // существовать как отдельный символ (не заинлайниться).
-// ─────────────────────────────────────────────────────────
+ 
 namespace shadow_loader_gate {
   __declspec(noinline) static void tls_check() {
     SHADOW_PROTECT_ULTRA("shadow_loader_gate::tls_check");
@@ -85,7 +85,7 @@ namespace shadow_loader_gate {
   }
 } // namespace shadow_loader_gate
 
-// ─────────────────────────────────────────────────────────
+ 
 // TLS Callback — anti-debug ДО WinMain
 __declspec(noinline) static void NTAPI ShadowLoaderTls(PVOID, DWORD dwReason, PVOID) {
   (void)dwReason; // ПУСТО — добавлять по одному
@@ -95,9 +95,9 @@ __declspec(noinline) static void NTAPI ShadowLoaderTls(PVOID, DWORD dwReason, PV
 extern "C" const PIMAGE_TLS_CALLBACK shadow_loader_tls_cb = ShadowLoaderTls;
 #pragma const_seg()
 
-// ─────────────────────────────────────────────────────────
+ 
 // Глобальное состояние (идентично оригинальному main.cpp)
-// ─────────────────────────────────────────────────────────
+ 
 static std::string g_username = "";
 static HANDLE g_hSharedMemory = NULL;
 
@@ -577,20 +577,20 @@ static bool g_session_key_set = false;
 static uint64_t g_dvr_session_key = 0;
 static uint32_t g_loader_pid = 0;
 
-// ─────────────────────────────────────────────────────────
+ 
 // Версия лоадера — хардкодится в коде, обфусцируется xorstr_ + VMP mutation
 // Изменить в бинарнике нельзя: xorstr_ шифрует на этапе компиляции,
 // VMP дополнительно мутирует код вокруг.
-// ─────────────────────────────────────────────────────────
+ 
 static std::string GetLoaderVersion() {
   // Версия обфусцирована xorstr_ — в бинарнике как открытой строки нет
   std::string v = xorstr_("8345");
   return v;
 }
 
-// ─────────────────────────────────────────────────────────
+ 
 // Проверка интернета при старте (если нет — краш с ошибкой)
-// ─────────────────────────────────────────────────────────
+ 
 __declspec(noinline) static bool CheckInternetConnection() {
   SHADOW_PROTECT_ULTRA("CheckInternetConnection");
   // Быстрый ping /api/ping до 3 секунд
@@ -600,9 +600,9 @@ __declspec(noinline) static bool CheckInternetConnection() {
   return ok;
 }
 
-// ─────────────────────────────────────────────────────────
+ 
 // Named Pipe — лоадер отвечает читу на verify-запросы и выдаёт credentials
-// ─────────────────────────────────────────────────────────
+ 
 static HANDLE g_pipe_handle = INVALID_HANDLE_VALUE;
 static std::atomic<bool> g_pipe_running{false};
 
@@ -691,9 +691,9 @@ static void LoaderPipeServer() {
   }
 }
 
-// ─────────────────────────────────────────────────────────
+ 
 // LoadResourceToMemory / SecureDeleteFile (без изменений)
-// ─────────────────────────────────────────────────────────
+ 
 static std::vector<uint8_t> LoadResourceToMemory(WORD res_id) {
   HMODULE hMod = GetModuleHandle(nullptr);
   HRSRC hRes = FindResource(hMod, MAKEINTRESOURCE(res_id), RT_RCDATA);
@@ -755,9 +755,9 @@ static bool LoadDriverInMemory(const std::vector<uint8_t> &driver_bytes) {
   return mapped_base != 0;
 }
 
-// ─────────────────────────────────────────────────────────
+ 
 // Phase1_Prepare / Phase2_Inject / UnloadAll — без изменений
-// ─────────────────────────────────────────────────────────
+ 
 static std::string ComputeTextSectionHash() {
   SHADOW_PROTECT_VIRT("ComputeTextSectionHash");
   HMODULE hMod = GetModuleHandle(nullptr);
@@ -865,14 +865,14 @@ std::string DoLogin(const std::string &username, const std::string &password) {
   return xorstr_("ok");
 }
 
-// ────────────────────────────────────────────────────────────────
+ 
 // Phase1 разбита на подфункции:
 //   1A: Сеть  → MUT    (большой код, не критичный)
 //   1B: Ключ  → ULTRA  (маленький, критичный — быстрая компиляция VMP)
 //   1C: Драйвер → MUT  (большой код, совместимость)
 //   1D: Хендшейк → ULTRA (маленький, аутентификация драйвера)
 //   1E: Дешифр → ULTRA (маленький, работа с AES-ключом)
-// ────────────────────────────────────────────────────────────────
+ 
 
 // 1A: Скачаем зашифрованный чит с сервера [MUT — нетворк + большой код]
 __declspec(noinline) static std::string Phase1A_DownloadCheat(
@@ -1138,7 +1138,7 @@ Phase1E_Decrypt(std::vector<uint8_t> &encrypted) {
   return !g_pending_cheat.empty();
 }
 
-// ─── EOS null-AC gate ──────────────────────────────────────────────────────
+// ─── EOS null-AC gate
 // The game reads EOS_USE_ANTICHEATCLIENTNULL at startup; when it is 1, Epic
 // Online Services uses the null anti-cheat client. It has to be set before
 // GTA5 launches, so the gate only writes it while the game is closed.
@@ -1277,7 +1277,7 @@ std::string Phase1_Prepare(const std::string &product_id) {
       return gateErr;
   }
 
-  // ── LAZY INJECT для internal-продуктов ────────────────────────────────
+  // ── LAZY INJECT для internal-продуктов
   // DLL не скачивается сейчас. Phase2_Inject() сам будет ждать GTA5.exe,
   // затем атомарно: скачать + дешифровать + инжектировать + SecureZeroMemory.
   // Окно нахождения DLL в памяти лоадера < 200мс.
@@ -1286,7 +1286,7 @@ std::string Phase1_Prepare(const std::string &product_id) {
     return xorstr_("ok");
   }
 
-  // ── External/ragemp: обычный путь (без изменений) ──────────────────
+  // ── External/ragemp: обычный путь (без изменений)
   HWID::Components comp = HWID::GetComponents();
 
   // Шаг 1 [MUT]: скачать зашифрованный чит
@@ -1314,11 +1314,11 @@ std::string Phase1_Prepare(const std::string &product_id) {
   return xorstr_("ok");
 }
 
-// ────────────────────────────────────────────────────────────────
+ 
 // Phase2 разбита на подфункции:
 //   2A: Патч кредов → ULTRA (маленький, патчит токен + ключ в DLL чита)
 //   2B: Маппер  → MUT   (большой код, не критичный)
-// ────────────────────────────────────────────────────────────────
+ 
 
 // 2A: Патчим session_key + креды в чит [MUT — поиск и замена в памяти]
 __declspec(noinline) static std::string Phase2A_PatchPayload() {
@@ -1416,7 +1416,7 @@ std::string Phase2_Inject() {
   // Координатор — нет своей VMP-защиты:
   // VMP видит только вызовы 2A (ULTRA) и 2B (MUT) + хертбит (ULTRA).
 
-  // ── Guard: не инжектить повторно пока чит уже работает ──────────────
+  // ── Guard: не инжектить повторно пока чит уже работает
   if (is_cheat_running())
     return xorstr_("error:Лоадер уже запущен. Проверьте панель задач.");
 
@@ -1610,9 +1610,9 @@ void UnloadAll() {
   // SRUM-зачистка и рестарт DPS теперь в пайплайне/превенции — не здесь.
 }
 
-// ─────────────────────────────────────────────────────────
+ 
 // D3D11 globals
-// ─────────────────────────────────────────────────────────
+ 
 static ID3D11Device *g_pd3dDevice = nullptr;
 static ID3D11DeviceContext *g_pd3dDeviceContext = nullptr;
 static IDXGISwapChain *g_pSwapChain = nullptr;
@@ -1734,9 +1734,9 @@ LoadTextureFromMemory(const unsigned char *image_data_in, int image_size,
   return out_srv;
 }
 
-// ─────────────────────────────────────────────────────────
+ 
 // Win32 Window Proc
-// ─────────────────────────────────────────────────────────
+ 
 extern IMGUI_IMPL_API LRESULT ImGui_ImplWin32_WndProcHandler(HWND, UINT, WPARAM,
                                                              LPARAM);
 
@@ -1776,9 +1776,9 @@ LRESULT WINAPI WndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam) {
   return DefWindowProcW(hWnd, msg, wParam, lParam);
 }
 
-// ─────────────────────────────────────────────────────────
+ 
 // WinMain
-// ─────────────────────────────────────────────────────────
+ 
 int APIENTRY wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
                       LPWSTR lpCmdLine, int nCmdShow) {
 
@@ -1890,7 +1890,7 @@ int APIENTRY wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
   DwmSetWindowAttribute(hwnd, dwmAttr, &pref, sizeof(pref));
 
   // ── NVIDIA Streamproof: предусловия при старте
-  // ────────────────────────────── Только реестр (FTS DXGI mode) + патч
+  // Только реестр (FTS DXGI mode) + патч
   // nvcontainer — без WDA на окне. WDA_EXCLUDEFROMCAPTURE применяется только по
   // кнопке в UI (fn_streamproof).
   shadow_streamproof::ApplyNvidiaFtsRegistry();
@@ -1955,7 +1955,7 @@ int APIENTRY wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
 
   g_ui_ptr = &ui;
 
-  // ── Привязываем бизнес-логику к UI ────────────────────
+  // ── Привязываем бизнес-логику к UI
   // fn_prepare вызывается из отдельного потока чтобы не блокировать рендер
   ui.fn_prepare = [&](std::string pid, std::string user,
                       std::string pass) -> std::string {
@@ -1982,7 +1982,7 @@ int APIENTRY wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
   static bool streamproof_enabled = false;
   ui.fn_streamproof = [hwnd]() {
     if (!streamproof_enabled) {
-      // ВАЖНО: WDA нужно применять ПОСЛЕ изменения стилей,
+      // WDA нужно применять ПОСЛЕ изменения стилей,
       // иначе SetWindowLong сбрасывает SetWindowDisplayAffinity
       LONG exStyle = GetWindowLong(hwnd, GWL_EXSTYLE);
       exStyle &= ~WS_EX_APPWINDOW;
@@ -2001,7 +2001,7 @@ int APIENTRY wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
     }
   };
 
-  // ── Trigger: fn_enable / fn_disable ────────────────────────────────────────
+  // ── Trigger: fn_enable / fn_disable
   static std::thread g_trig_thread;
   static std::thread g_sil_thread;
 
@@ -2082,7 +2082,7 @@ int APIENTRY wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
     // Фазу (в Ready или Launch) устанавливает ui_imgui.hpp
   };
 
-  // ── Async-результаты prepare/inject ───────────────────
+  // ── Async-результаты prepare/inject
   std::string async_login_result;
   std::string async_prepare_result;
   std::string async_inject_result;
@@ -2100,7 +2100,7 @@ int APIENTRY wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
 
   bool was_cheat_running = false;
 
-  // ── Render Loop ────────────────────────────────────────
+  // ── Render Loop
   MSG msg_win = {};
   while (!ui.want_close && !shadow_pipeline::g_exit_requested.load()) {
     // Сообщения Win32
@@ -2168,7 +2168,7 @@ int APIENTRY wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
       }
     }
 
-    // ── Обработка async результатов ──────────────────
+    // ── Обработка async результатов
     {
       std::lock_guard<std::mutex> lk(async_mutex);
 
@@ -2441,7 +2441,7 @@ int APIENTRY wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
       }
     }
 
-    // ── ImGui Frame ──────────────────────────────────
+    // ── ImGui Frame
     // Синхронизируем настройки тригера из UI (каждый кадр, лёгкая операция)
     // trigger_enabled / silent_enabled НЕ синхронизируем здесь:
     // они выставляются один раз в fn_enable (true) и fn_disable (false).
@@ -2484,7 +2484,7 @@ int APIENTRY wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
                                               {wpos.x + wsz.x, wpos.y + wsz.y},
                                               IM_COL32(10, 10, 10, 255), 40.f);
 
-    // ── Контент по экрану ─────────────────────────────
+    // ── Контент по экрану
     if (ui.screen == Screen::Login) {
       RenderLogin(ui, [&](std::string user, std::string pass) {
         ui.username_display = user;
@@ -2514,13 +2514,13 @@ int APIENTRY wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
       RenderDashboard(ui);
     }
 
-    // ── Success modal ─────────────────────────────────
+    // ── Success modal
     // Removed as requested
 
-    // ── Toasts ────────────────────────────────────────
+    // ── Toasts
     RenderToasts(ui, dt, wpos, wsz);
 
-    // ── System Compatibility Check Modal ──────────────
+    // ── System Compatibility Check Modal
     RenderSysCheckModal(ui, wpos, wsz);
 
     ImGui::End();

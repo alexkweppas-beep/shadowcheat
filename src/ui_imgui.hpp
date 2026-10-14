@@ -14,9 +14,9 @@
 #include "imgui/imgui_impl_win32.h"
 #include "imgui/imgui_internal.h"
 
-// ─────────────────────────────────────────────────────────
+ 
 //  Цветовая палитра (повторяет HTML ui.html)
-// ─────────────────────────────────────────────────────────
+ 
 namespace Colors {
 inline ImVec4 FromHex(uint32_t hex, float a = 1.f) {
   return {((hex >> 16) & 0xFF) / 255.f, ((hex >> 8) & 0xFF) / 255.f,
@@ -47,9 +47,9 @@ const ImVec4 TOAST_OK = {0.08f, 0.2f, 0.1f, 1.f};
 const ImVec4 TOAST_ERR = {0.25f, 0.05f, 0.05f, 1.f};
 } // namespace Colors
 
-// ─────────────────────────────────────────────────────────
+ 
 //  Toast notification
-// ─────────────────────────────────────────────────────────
+ 
 enum class ToastType { Info, Success, Error };
 struct Toast {
   std::string text;
@@ -58,9 +58,9 @@ struct Toast {
   float total = 3.f;
 };
 
-// ─────────────────────────────────────────────────────────
+ 
 //  Продукт
-// ─────────────────────────────────────────────────────────
+ 
 struct Product {
   std::string id;
   std::string name;
@@ -73,15 +73,15 @@ struct Product {
   bool has_silent = false; // куплен ли silent addon (только для trigger)
 };
 
-// ─────────────────────────────────────────────────────────
+ 
 //  Экраны
-// ─────────────────────────────────────────────────────────
+ 
 enum class Screen { Login, Dashboard };
 enum class Phase { Launch, Ready, Enabled };
 
-// ─────────────────────────────────────────────────────────
+ 
 //  Состояние UI
-// ─────────────────────────────────────────────────────────
+ 
 struct LoaderUI {
   // Экраны
   Screen screen = Screen::Login;
@@ -182,9 +182,9 @@ struct LoaderUI {
   }
 };
 
-// ─────────────────────────────────────────────────────────
+ 
 //  Helper: кнопка с кастомным цветом
-// ─────────────────────────────────────────────────────────
+ 
 static bool ColorButton(const char *id, const char *label, ImVec2 size,
                         ImVec4 col_normal, ImVec4 col_hover,
                         float rounding = 10.f) {
@@ -208,9 +208,9 @@ static bool ColorButton(const char *id, const char *label, ImVec2 size,
   return clicked;
 }
 
-// ─────────────────────────────────────────────────────────
+ 
 //  System Compatibility Check
-// ─────────────────────────────────────────────────────────
+ 
 static DWORD SC_ReadRegDword(HKEY root, const char *path, const char *name,
                              DWORD def = 0) {
   HKEY hk;
@@ -345,11 +345,11 @@ static void RenderSysCheckModal(LoaderUI &ui, ImVec2 wpos, ImVec2 wsz) {
 
   ImDrawList *dl = ImGui::GetWindowDrawList();
 
-  // ── Полное затемнение всего экрана ─────────────────────
+  // ── Полное затемнение всего экрана
   dl->AddRectFilled(wpos, {wpos.x + wsz.x, wpos.y + wsz.y},
                     IM_COL32(0, 0, 0, 210));
 
-  // ── Размеры и позиция модального окна (по центру) ──────
+  // ── Размеры и позиция модального окна (по центру)
   float modal_w = 420.f;
   float modal_h = 380.f;
   float modal_x = wpos.x + (wsz.x - modal_w) * 0.5f;
@@ -363,7 +363,7 @@ static void RenderSysCheckModal(LoaderUI &ui, ImVec2 wpos, ImVec2 wsz) {
   dl->AddRect({modal_x, modal_y}, {modal_x + modal_w, modal_y + modal_h},
               IM_COL32(50, 50, 55, 255), block_r, 0, 1.f);
 
-  // ── Содержимое через child window ──────────────────────
+  // ── Содержимое через child window
   ImGui::SetCursorPos({modal_x - wpos.x, modal_y - wpos.y});
   ImGui::BeginChild("##syscheck_modal", {modal_w, modal_h}, false,
                     ImGuiWindowFlags_NoBackground |
@@ -495,9 +495,9 @@ static void RenderSysCheckModal(LoaderUI &ui, ImVec2 wpos, ImVec2 wsz) {
   ImGui::EndChild();
 }
 
-// ─────────────────────────────────────────────────────────
+ 
 //  Helper: loading dots (3 анимированные точки)
-// ─────────────────────────────────────────────────────────
+ 
 static void DrawLoadingDots(ImDrawList *dl, ImVec2 center, float t) {
   const int N = 3;
   const float spacing = 10.f;
@@ -514,9 +514,9 @@ static void DrawLoadingDots(ImDrawList *dl, ImVec2 center, float t) {
   }
 }
 
-// ─────────────────────────────────────────────────────────
+ 
 //  Helper: aurora background
-// ─────────────────────────────────────────────────────────
+ 
 static void DrawAurora(ImDrawList *dl, ImVec2 pos, ImVec2 size, float t) {
   // Три волны — повторяют HTML .b1 .b2 .b3
   struct Beam {
@@ -550,9 +550,9 @@ static void DrawAurora(ImDrawList *dl, ImVec2 pos, ImVec2 size, float t) {
   }
 }
 
-// ─────────────────────────────────────────────────────────
+ 
 //  Helper: Badge
-// ─────────────────────────────────────────────────────────
+ 
 static void DrawBadge(ImDrawList *dl, ImVec2 pos, const char *text, ImU32 bg,
                       ImU32 fg, float rounding = 100.f) {
   ImVec2 ts = ImGui::CalcTextSize(text);
@@ -563,9 +563,9 @@ static void DrawBadge(ImDrawList *dl, ImVec2 pos, const char *text, ImU32 bg,
   dl->AddText({p0.x + px, p0.y + py}, fg, text);
 }
 
-// ─────────────────────────────────────────────────────────
+ 
 //  Render — Login Screen
-// ─────────────────────────────────────────────────────────
+ 
 static void RenderLogin(
     LoaderUI &ui,
     std::function<void(const std::string &, const std::string &)> on_login) {
@@ -853,9 +853,9 @@ static void RenderLogin(
   }
 }
 
-// ─────────────────────────────────────────────────────────
+ 
 //  Render — Dashboard
-// ─────────────────────────────────────────────────────────
+ 
 static void DrawTopBarTypewriter(LoaderUI &ui, ImVec2 block_min,
                                  ImVec2 block_max, float rounding) {
   ImDrawList *dl = ImGui::GetWindowDrawList();
@@ -1563,9 +1563,9 @@ static void RenderDashboard(LoaderUI &ui) {
         }
       }
 
-      // ──────────────────────────────────────────────────────────────
+       
       // Inject / Enable / Clean Buttons (fixed at bottom)
-      // ──────────────────────────────────────────────────────────────
+       
       float btn_y = block_h - 46.f - 24.f;
       float btn_w_h = (box_w - 12.f) * 0.5f;
 
@@ -1718,7 +1718,7 @@ static void RenderDashboard(LoaderUI &ui) {
                    IM_COL32(200, 200, 200, 255), pct);
   }
 
-  // ─── CLEANUP OVERLAY (синяя полоса + меняющийся текст) ─────────────────
+  // ─── CLEANUP OVERLAY (синяя полоса + меняющийся текст)
   if (ui.busy_cleanup) {
     // Читаем реальный прогресс из clean_pipeline.hpp
     float prog = shadow_pipeline::g_progress.load();
@@ -1843,9 +1843,9 @@ static void RenderDashboard(LoaderUI &ui) {
   }
 }
 
-// ─────────────────────────────────────────────────────────
+ 
 //  Render — Toast notifications
-// ─────────────────────────────────────────────────────────
+ 
 static void RenderToasts(LoaderUI &ui, float dt, ImVec2 window_pos,
                          ImVec2 window_size) {
   float y_off = window_pos.y + window_size.y - 24.f;
@@ -1883,9 +1883,9 @@ static void RenderToasts(LoaderUI &ui, float dt, ImVec2 window_pos,
   }
 }
 
-// ─────────────────────────────────────────────────────────
+ 
 //  Render — Success Modal
-// ─────────────────────────────────────────────────────────
+ 
 static bool RenderSuccessModal(bool &open, ImVec2 win_pos, ImVec2 win_sz) {
   if (!open)
     return false;

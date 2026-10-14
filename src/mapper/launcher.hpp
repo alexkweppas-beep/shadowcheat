@@ -224,7 +224,7 @@ namespace Mapper {
                                 fn_addr = GetProcAddress((HMODULE)hMod, ibn->Name);
                             }
                             if (!fn_addr) {
-                                // FIX: логируем неразрешённый импорт вместо записи null в IAT
+                                // логируем неразрешённый импорт вместо записи null в IAT
                                 // Запись 0 в IAT → вызов по адресу 0 → WRITE at 0x0 (именно этот краш)
                                 char err[256];
                                 sprintf_s(err, "IMPORT FAIL name: %s!%s (hash=0x%08X)", mod_name, ibn->Name, hash);
@@ -283,12 +283,12 @@ namespace Mapper {
         if (tls_dir.Size) {
             auto tls = (IMAGE_TLS_DIRECTORY*)(mapped + tls_dir.VirtualAddress);
             
-            // ВАЖНО: tls читается из mapped (уже релоцированного образа).
+            // tls читается из mapped (уже релоцированного образа).
             // После шага 4 (релокации) поля TLS directory содержат ACTUAL VA,
             // а НЕ preferred VA. Применять delta снова — ошибка (даёт FFFFFFFE...)
             // Просто проверяем что адрес в пределах mapped.
             uintptr_t cb_va = (uintptr_t)tls->AddressOfCallBacks;
-            // FIX: не применяем delta — просто bounds check
+            // не применяем delta — просто bounds check
             if (!cb_va || cb_va < (uintptr_t)mapped || cb_va >= (uintptr_t)mapped + image_size) {
                 map_log("Step 7.1: AddressOfCallBacks out of mapped bounds — skip TLS callbacks");
                 cb_va = 0;
@@ -296,7 +296,7 @@ namespace Mapper {
 
             // Инициализируем TLS Index — тоже уже actual VA после релокаций
             uintptr_t index_va = (uintptr_t)tls->AddressOfIndex;
-            // FIX: не применяем delta — просто bounds check
+            // не применяем delta — просто bounds check
             if (index_va && index_va >= (uintptr_t)mapped && index_va < (uintptr_t)mapped + image_size) {
                 *(DWORD*)index_va = 0;
                 map_log("Step 7.1: TlsIndex fixed");

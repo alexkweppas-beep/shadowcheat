@@ -1,20 +1,8 @@
 #pragma once
 #include "xorstr.hpp"
 
-/*
- *  loader/src/driver_ctl.hpp — Loader → Kernel Driver IOCTL bridge.
- *  Используется лоадером для:
- *    • Проверки подключения к драйверу (IsDriverLoaded / OpenDriver)
- *    • Handshake (передать session_key + loader_pid, driver строит ObCallbacks + watchdog)
- *    • SetTarget (после инжекта чита - сообщить драйверу PID игры, чтобы
- *      PID-filter в IRP_MJ_CREATE пропустил game process)
- *    • Heartbeat (пинг watchdog'а — иначе через 90 сек driver убьёт loader)
- *    • ProtectSelf, TrimWorkingSet, WipePeHeader
- *    • PatchCheatSessionKey (inline-патч placeholder байтов в g_pending_cheat
- *      перед manual map, чтобы чит получил доступ к session_key без отдельных IPC каналов)
- *
- *  Device name: \\\\.\\monitorinspect
- */
+/* IOCTL-связь лаунчера с драйвером: подключение, handshake, PID цели и heartbeat.
+ * После handshake heartbeat нужен регулярно, иначе watchdog завершит лаунчер. */
 
 #include <windows.h>
 #include <winioctl.h>
@@ -48,7 +36,7 @@ namespace shadow_driver_ctl {
         return ~crc;
     }
 
-    // ─── Открытие подключения к драйверу ─────────────────────────────────────
+    // ─── Открытие подключения к драйверу
     static bool OpenDriver() {
         if (g_driver_handle && g_driver_handle != INVALID_HANDLE_VALUE) return true;
         char dev_path[32] = {};
@@ -66,7 +54,7 @@ namespace shadow_driver_ctl {
         return true;
     }
 
-    // ─── Проверка: загружен ли драйвер и доступен ли по IOCTL ────────────────
+    // ─── Проверка: загружен ли драйвер и доступен ли по IOCTL
     static bool IsDriverLoaded() {
         return OpenDriver();
     }
@@ -79,7 +67,7 @@ namespace shadow_driver_ctl {
         g_driver_session_key = 0;
     }
 
-    // ─── Первичный handshake ─────────────────────────────────────────────────
+    // ─── Первичный handshake
     // Передаём session_key (64-bit nonce) + loader_pid.
     // Драйвер установит session_key, зарегистрирует ObCallbacks, watchdog и т.д.
     static bool DriverHandshake(uint64_t session_key, uint32_t loader_pid) {
@@ -97,7 +85,7 @@ namespace shadow_driver_ctl {
         return true;
     }
 
-    // ─── Сообщить драйверу PID целевого процесса (игры) ──────────────────────
+    // ─── Сообщить драйверу PID целевого процесса (игры)
     static bool DriverSetTarget(uint32_t target_pid) {
         if (!g_driver_handle || !g_driver_session_key) return false;
         driver::SetTargetRequest req{};
@@ -109,7 +97,7 @@ namespace shadow_driver_ctl {
                                    &req, sizeof(req), nullptr, 0, &bytes, nullptr);
     }
 
-    // ─── Watchdog ping (heartbeat) ───────────────────────────────────────────
+    // ─── Watchdog ping (heartbeat)
     static bool DriverHeartbeat() {
         if (!g_driver_handle || !g_driver_session_key) return false;
         driver::HeartbeatRequest req{};
@@ -120,7 +108,7 @@ namespace shadow_driver_ctl {
                                    &req, sizeof(req), nullptr, 0, &bytes, nullptr);
     }
 
-    // ─── Защита процесса через ObCallback ядра ───────────────────────────────
+    // ─── Защита процесса через ObCallback ядра
     static bool DriverProtectProcess(uint32_t pid, uint32_t flags = 0x3) {
         if (!g_driver_handle || !g_driver_session_key) return false;
         driver::ProtectProcessRequest req{};
@@ -133,7 +121,7 @@ namespace shadow_driver_ctl {
                                    &req, sizeof(req), nullptr, 0, &bytes, nullptr);
     }
 
-    // ─── Очистка Working Set процесса (скрытие из диспетчера задач) ──────────
+    // ─── Очистка Working Set процесса (скрытие из диспетчера задач)
     static bool DriverTrimWorkingSet(uint32_t target_pid = 0) {
         if (!g_driver_handle || !g_driver_session_key) return false;
         driver::TrimWsRequest req{};
@@ -145,7 +133,7 @@ namespace shadow_driver_ctl {
                                    &req, sizeof(req), nullptr, 0, &bytes, nullptr);
     }
 
-    // ─── Затирание PE-заголовка ──────────────────────────────────────────────
+    // ─── Затирание PE-заголовка
     static bool DriverWipePeHeader(uint32_t target_pid, uint64_t base_address, uint32_t header_size) {
         if (!g_driver_handle || !g_driver_session_key) return false;
         driver::WipeHeaderRequest req{};
@@ -159,7 +147,7 @@ namespace shadow_driver_ctl {
                                    &req, sizeof(req), nullptr, 0, &bytes, nullptr);
     }
 
-    // ─── Получение ImageBase через драйвер ──────────────────────────────────
+    // ─── Получение ImageBase через драйвер
     static uint64_t DriverGetImageBase(uint32_t pid) {
         if (!g_driver_handle || g_driver_handle == INVALID_HANDLE_VALUE) return 0;
         uint64_t image_address = 0;

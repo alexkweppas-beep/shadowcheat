@@ -1,26 +1,5 @@
-/*
- *  ShadowClean.sys — одноразовый Ring-0 драйвер зачистки следов лоадера.
- *
- *  Маппится через amd_driver (PdFwKrnl, KDU #44) и вызывается один раз:
- *  ShadowCleanEntry(req, 0), где req — CleanRequest в юзермод-памяти лоадера
- *  (entry выполняется в контексте процесса лоадера через NtAddAtom-хук
- *  маппера → юзермод-адрес валиден на PASSIVE_LEVEL). Пул освобождается
- *  маппером сразу после возврата — ни девайса, ни резидента, ни unload-trace.
- *
- *  Делает то, что из ядра надёжно/невидимо для юзермод-наблюдателей:
- *    1. USN journal delete (ZwFsControlFile) по обоим томам.
- *    2. Force-truncate System/Application/Security .evtx.
- *    3. Реестр: HKLM (BAM/NetworkList/AppCompat) + HKCU через \Registry\User\<sid>
- *       (UserAssist/ShellBags/MUICache/RecentDocs/JumpLists/Explorer MRU).
- *    4. Force-delete списка файлов из req.file_paths[] (prefetch .pf, crash
- *       dumps, sibling-копии лоадера) — удаление не светится как юзермод-операция.
- *
- *  Не делает (юзермод-хвост): SRUM (ESE), AmCache (RegLoadKey), превенция,
- *  self-delete, оркестрация.
- *
- *  Никаких логов на диске. Никаких глобальных хуков. Всё под __try — плохой
- *  доступ не должен ронять систему.
- */
+/* Одноразовый драйвер ShadowClean. Получает CleanRequest из памяти лаунчера.
+ * Память освобождает маппер после возврата. Остальные этапы очистки выполняются в юзермоде. */
 
 #include <ntifs.h>   // ZwDeleteFile / ZwFsControlFile / FILE_INFORMATION_CLASS
 #include <ntstrsafe.h>
@@ -31,9 +10,9 @@
 // FSCTL_QUERY_USN_JOURNAL / FSCTL_DELETE_USN_JOURNAL и структуры
 // USN_JOURNAL_DATA_V0 / DELETE_USN_JOURNAL_DATA — из ntifs.h.
 
-// ─────────────────────────────────────────────────────────────────────────────
+ 
 // Утилиты
-// ─────────────────────────────────────────────────────────────────────────────
+ 
 
 // case-insensitive substring: содержит ли `hay` подстроку `needle` (wide).
 static bool ScContainsCi(_In_reads_opt_(hayLen) const wchar_t* hay,
@@ -64,9 +43,9 @@ static void ScRot13W(_Inout_ wchar_t* s) {
     }
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
+ 
 // Реестр (ядро)
-// ─────────────────────────────────────────────────────────────────────────────
+ 
 
 static HANDLE KrOpenKey(_In_ PCWSTR path, _In_ ACCESS_MASK access) {
     UNICODE_STRING us;
@@ -168,10 +147,10 @@ static void KrDeleteKeyRecursive(_In_ HANDLE hRoot, _In_ PCWSTR subName) {
     } __except (EXCEPTION_EXECUTE_HANDLER) {}
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
+ 
 // Файлы (ядро): overwrite-before-delete (Recovery-утилиты не восстановят
 // контент), затем delete-on-close.
-// ─────────────────────────────────────────────────────────────────────────────
+ 
 static void KrForceDeleteFile(_In_ PCWSTR path) {
     if (!path || !path[0]) return;
     __try {
@@ -224,9 +203,9 @@ static void KrForceDeleteFile(_In_ PCWSTR path) {
     } __except (EXCEPTION_EXECUTE_HANDLER) {}
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
+ 
 // USN journal (ядро)
-// ─────────────────────────────────────────────────────────────────────────────
+ 
 static void KrDeleteUsnOnVolume(_In_ PCWSTR volumePath) {
     __try {
         UNICODE_STRING us;
@@ -260,9 +239,9 @@ static void KrDeleteUsnOnVolume(_In_ PCWSTR volumePath) {
     } __except (EXCEPTION_EXECUTE_HANDLER) {}
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
+ 
 // Event logs: force-truncate .evtx
-// ─────────────────────────────────────────────────────────────────────────────
+ 
 static void KrTruncateEvtx(_In_ PCWSTR path) {
     __try {
         UNICODE_STRING us;
@@ -285,14 +264,14 @@ static void KrTruncateEvtx(_In_ PCWSTR path) {
     } __except (EXCEPTION_EXECUTE_HANDLER) {}
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
+ 
 // Raw NTFS (SC_DO_RAWNTFS): zero $LogFile + освобождённые MFT-записи.
 //
 // BSOD-рисковая часть: пишем по сырому диску НИЖЕ файловой системы. Жёсткая
 // валидация на каждом шаге (сигнатуры NTFS/FILE, bounds по размеру тома,
 // free-флаг MFT-записи, имя файла в записи). При любом несовпадении — пропуск,
 // а не запись не туда.
-// ─────────────────────────────────────────────────────────────────────────────
+ 
 
 typedef struct _SC_NTFS_CTX {
     HANDLE   disk;              // \??\PhysicalDriveN, read+write, no buffering
@@ -557,9 +536,9 @@ static void ScDoRawNtfs(_In_ const CleanRequest* req) {
     if (ctx.disk) ZwClose(ctx.disk);
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
+ 
 // Реестр: целевые ключи
-// ─────────────────────────────────────────────────────────────────────────────
+ 
 
 // Удалить значения в HKLM-ключе, совпадающие с токенами.
 static void KrWipeHklmValues(_In_ PCWSTR path,
@@ -685,9 +664,9 @@ static void KrWipeNetworkList(_In_ PCWSTR domainToken) {
     }
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
+ 
 // Entry
-// ─────────────────────────────────────────────────────────────────────────────
+ 
 
 static void ScDoRegistry(_In_ const CleanRequest* req) {
     // Токены для совпадения: имя exe, его base, носитель, наш домен.

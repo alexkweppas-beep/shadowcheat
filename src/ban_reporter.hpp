@@ -1,22 +1,8 @@
 #pragma once
 #include "xorstr.hpp"
 
-/*
- * shadow cheats — Ban Reporter v6
- *
- * v6 (current):
- *   7. Extended JSON: loader_ver, os_build, product_id, screen_res
- *   8. Fix: removed skCrypt(xorstr_()) double-wrap (wrong strings under VMP)
- *   9. VM-detection fields on server side via screen_res + cpu_cores
- *
- * v2-v5 history:
- *   1. Multi-channel: основной домен + fallback + Telegram bot.
- *   2. Certificate pinning на каждый HTTPS-канал.
- *   3. Trigger() = LOCAL killswitch СНАЧАЛА, репорт async.
- *   4. TriggerSilent() — полностью async, не блокирует security loop.
- *   5. Локальная очередь %APPDATA%\Shadow\queue.dat с шифрованием.
- *   6. Все строки WinHTTP — xorstr_ (без skCrypt double-wrap).
- */
+/* Отправка отчётов с резервными каналами и локальной очередью.
+ * Trigger сначала завершает локальную работу; TriggerSilent отправляет отчёт асинхронно. */
 
 #include <windows.h>
 #include <wincrypt.h>

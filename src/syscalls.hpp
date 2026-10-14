@@ -1,30 +1,7 @@
 #pragma once
 #include "xorstr.hpp"
 
-/*
- * shadow cheats — Direct Syscall Stubs (x64 MSVC)
- *
- * Проблема: NtQueryInformationProcess и NtGetContextThread из ntdll.dll
- * перехватываются ScyllaHide/x64dbg hooks в user-mode (inline patches в ntdll).
- *
- * Решение: вместо вызова через ntdll, мы сами строим правильный stub-код,
- * который исполняет инструкцию SYSCALL напрямую. Хуки в ntdll игнорируются,
- * потому что код не проходит через их адрес.
- *
- * Метод: Heaven's Gate / SSN через PEB Ldr Walk
- *   1. Находим base ntdll.dll через PEB (не GetModuleHandle — IAT-чисто).
- *   2. Парсим Export Directory и находим нужную функцию по FNV-1a хэшу.
- *   3. Читаем первые 5 байт: "4C 8B D1 B8 XX" — это mov eax, <SSN>.
- *      Если байты не совпадают — ntdll уже хукнута (E9/FF 25).
- *      В этом случае ищем SSN через сортировку по адресу (Tartarus Gate).
- *   4. Вызываем собственный asm-stub (inline __asm + .byte) с найденным SSN.
- *
- * Это полностью убирает зависимость от ntdll для критических проверок.
- * Любой ScyllaHide hook на NtQueryInformationProcess будет обойдён.
- *
- * NOTE: SSN (System Service Number) привязаны к версии Windows.
- * Динамический поиск через PEB гарантирует корректную работу на Win10/11.
- */
+/* Обёртки системных вызовов для x64 MSVC. Номера сервисов зависят от версии Windows. */
 
 #include <windows.h>
 #include <winternl.h>
@@ -39,18 +16,18 @@
 
 namespace shadow::syscall {
 
-// ─────────────────────────────────────────────────────────
+ 
 // PEB/LDR helpers (без GetModuleHandle — чисто от IAT)
-// ─────────────────────────────────────────────────────────
+ 
 
 // FNV-1a hash для имён экспортов (ASCII)
 static constexpr uint32_t fnv1a_ct(const char* s, uint32_t h = 2166136261u) {
     return *s ? fnv1a_ct(s + 1, (h ^ (uint8_t)*s) * 16777619u) : h;
 }
 
-// ─────────────────────────────────────────────────────────
+ 
 // PEB/LDR helpers (без GetModuleHandle — чисто от IAT)
-// ─────────────────────────────────────────────────────────
+ 
 
 static inline void* get_ntdll_base() {
     auto peb = (uint8_t*)__readgsqword(0x60);
@@ -106,7 +83,7 @@ static inline void* get_export_by_hash(void* base, uint32_t hash) {
     return nullptr;
 }
 
-// ─────────────────────────────────────────────────────────
+ 
 // SSN (System Service Number) discovery
 //
 // Метод 1 (Halos Gate): читаем mov eax, XX из ntdll stub — если не хукнуто.
@@ -116,7 +93,7 @@ static inline void* get_export_by_hash(void* base, uint32_t hash) {
 // Pattern для Win10/11 x64 NTDLL stub:
 //   4C 8B D1   mov r10, rcx
 //   B8 XX 00 00 00   mov eax, <SSN>   ← offset +3, byte +4 = SSN low byte
-// ─────────────────────────────────────────────────────────
+ 
 
 // Признаки хука: первый байт E9 (jmp rel32) или FF 25 (jmp [rip+xxx])
 static inline bool is_hooked(uint8_t* stub) {
@@ -185,7 +162,7 @@ static inline uint16_t resolve_ssn(void* ntdll_base, uint32_t fn_hash) {
     return tartarus_ssn(ntdll_base, fn_hash);
 }
 
-// ─────────────────────────────────────────────────────────
+ 
 // Inline x64 syscall stub
 //
 // Вместо вызова ntdll, исполняем SYSCALL напрямую.
@@ -197,7 +174,7 @@ static inline uint16_t resolve_ssn(void* ntdll_base, uint32_t fn_hash) {
 // РЕАЛЬНОЕ РЕШЕНИЕ для MSVC x64:
 //   Выделяем RWX-страницу, записываем stub с динамическим SSN, вызываем.
 //   Кешируем per-SSN чтобы не выделять каждый раз.
-// ─────────────────────────────────────────────────────────
+ 
 
 #pragma pack(push, 1)
 struct SyscallStub {
@@ -272,9 +249,9 @@ static inline void finalize_stub_page() {
     FlushInstructionCache(GetCurrentProcess(), g_stub_page, 0x1000);
 }
 
-// ─────────────────────────────────────────────────────────
+ 
 // Типы для функций
-// ─────────────────────────────────────────────────────────
+ 
 
 typedef NTSTATUS(NTAPI* pfnNtOpenFile)(
     PHANDLE            FileHandle,
@@ -322,7 +299,7 @@ typedef NTSTATUS(NTAPI* pfnNtQuerySystemInformation)(
     ULONG  SystemInformationLength,
     PULONG ReturnLength);
 
-// ─────────────────────────────────────────────────────────
+ 
 // Resolve + call helpers
 //
 // FNV-1a хэши функций (compile-time):
@@ -332,7 +309,7 @@ typedef NTSTATUS(NTAPI* pfnNtQuerySystemInformation)(
 //
 // Проверить можно: echo -n "NtQueryInformationProcess" | python3 -c
 //   "import sys; h=2166136261; [setattr(sys,'h',(h^b)*16777619) for b in sys.stdin.buffer.read()]; print(hex(h))"
-// ─────────────────────────────────────────────────────────
+ 
 
 static constexpr uint32_t HASH_NtOpenFile            = fnv1a_ct("NtOpenFile");
 static constexpr uint32_t HASH_NtWriteFile           = fnv1a_ct("NtWriteFile");
@@ -394,9 +371,9 @@ static inline bool init_syscalls() {
     return true;
 }
 
-// ─────────────────────────────────────────────────────────
+ 
 // Публичные Direct Syscall обёртки
-// ─────────────────────────────────────────────────────────
+ 
 
 static inline NTSTATUS direct_NtOpenFile(
     PHANDLE FileHandle, ACCESS_MASK DesiredAccess, POBJECT_ATTRIBUTES ObjectAttributes,
@@ -446,12 +423,12 @@ static inline NTSTATUS direct_NtQuerySystemInformation(
     return g_NtQuerySysInfo(cls, buf, len, ret);
 }
 
-// ─────────────────────────────────────────────────────────
+ 
 // Hook detection в TLS Callback — проверка байт ntdll функций
 //
 // Вызывается ДО init_syscalls (TLS callback очень ранний).
 // Читаем прямо из ntdll base — без вызова каких-либо API.
-// ─────────────────────────────────────────────────────────
+ 
 
 // Проверить что первые байты функции не являются E9/CC/FF25 (hook)
 static inline bool ntdll_fn_not_hooked(uint32_t fn_hash) {

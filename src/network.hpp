@@ -2,18 +2,7 @@
 #include "xorstr.hpp"
 #include "vmp_markers.hpp"
 
-/*
- * shadow cheats — Network Module  (v4 hardened)
- * TLS 1.3 + HMAC-SHA256 + Certificate Pinning
- *
- * v4 changes:
- *   V1 fix: CLIENT_SECRET — не XOR с константным ключом (открыт в .rdata +
- * strings.exe). Теперь: ключ строится runtime из __rdtsc + PEB hash +
- * статической XOR-цепочки. V2 fix: SERVER_HOST — не raw L"" literal (виден в
- * .rdata любым Strings.exe). Теперь: строится runtime из байтов через
- * MBA-obfuscated лоп. V3 fix: timestamp больше не GetTickCount64 (replay за 60
- * сек). Теперь FILETIME + QPC mix — монотонно растёт, replay невозможен.
- */
+/* Сетевой модуль: TLS, HMAC и проверка сертификатов. Секрет и адрес сервера собираются во время выполнения. */
 
 #include "hwid.hpp"
 #include "lazy_importer.hpp"
@@ -179,7 +168,7 @@ static std::wstring GetUserAgent() {
 }
 
 // SHA-256 fingerprint TLS-сертификата сервера (certificate pinning)
-// ----------------------------------------------------------------
+ 
 // #3: pinning должен быть заполнен реальным отпечатком сертификата.
 //   Заглушка — sentinel pattern (0xAB,0xCD,0xEF,0x01,...) проверяется ниже
 //   через static_assert; в release build (#ifndef SHADOW_DEV_BUILD) любой

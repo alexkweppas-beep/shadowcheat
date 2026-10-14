@@ -1,31 +1,7 @@
 #pragma once
 
-/*
- * shadow cheats — integrity_gate.hpp
- *
- * Проверки целостности исполняемого файла при запуске.
- *
- * Что проверяется:
- *   1. Наличие VMP-секций (.vmp0, .vmp1) — если крякер снял VMP, секции исчезли
- *   2. Диапазон размера файла на диске:
- *        min = SHADOW_MIN_FILE_SIZE (задать после билда)
- *        max = SHADOW_MAX_FILE_SIZE (задать после билда)
- *      VMP раздувает файл в 2-5x. Голый лоадер << min → детект.
- *      Задаются через compile defines или дефолты ниже.
- *   3. PE OptionalHeader.CheckSum — если 0 или не соответствует (ImageHlp) → детект
- *   4. Количество секций PE — VMP добавляет минимум 2 своих.
- *      Если секций < SHADOW_MIN_SECTIONS — детект.
- *   5. Compile-time TimeDateStamp проверка — заглушка для будущего использования
- *
- * ВАЖНО:
- *   В SHADOW_DEV_BUILD все проверки — no-op (возвращают true).
- *   Задавать SHADOW_MIN_FILE_SIZE и SHADOW_MAX_FILE_SIZE ПОСЛЕ финального VMP-билда:
- *     python tools/measure_vmp_size.py <path_to_vmp_exe> → выведет значения для вставки.
- *   До этого дефолты позволяют собирать без VMP.
- *
- * Все строки через fibstr_/xorstr_ (нет plaintext в .rdata).
- * Все функции через LI_FN lazy import (нет в IAT).
- */
+/* Проверки целостности файла при запуске. В dev-сборке отключены.
+ * Границы размера SHADOW_MIN_FILE_SIZE и SHADOW_MAX_FILE_SIZE задаются после упаковки. */
 
 #include <windows.h>
 #include <cstdint>
@@ -53,9 +29,9 @@
 
 namespace shadow::integrity {
 
-// ─────────────────────────────────────────────────────────────────────
+ 
 // Вспомогательные: получаем путь к своему exe и размер на диске
-// ─────────────────────────────────────────────────────────────────────
+ 
 
 static uint64_t GetSelfFileSize() {
     wchar_t path[MAX_PATH] = {};
@@ -72,9 +48,9 @@ static uint64_t GetSelfFileSize() {
     return (uint64_t)sz.QuadPart;
 }
 
-// ─────────────────────────────────────────────────────────────────────
+ 
 // Чтение PE заголовка из памяти (без файла) — быстро и без диска
-// ─────────────────────────────────────────────────────────────────────
+ 
 
 static IMAGE_NT_HEADERS* GetNtHeaders() {
     HMODULE hMod = LI_FN(GetModuleHandleW).safe_cached()(nullptr);
@@ -87,9 +63,9 @@ static IMAGE_NT_HEADERS* GetNtHeaders() {
     return nt;
 }
 
-// ─────────────────────────────────────────────────────────────────────
+ 
 // Check #1: Размер файла в ожидаемом диапазоне
-// ─────────────────────────────────────────────────────────────────────
+ 
 __declspec(noinline) static bool CheckFileSize() {
     // УБРАНА: чтение файла с диска по имени ненадёжно после VMP:
     // - имя может быть любым (*.vmp.exe, *.exe, переименован)
@@ -98,9 +74,9 @@ __declspec(noinline) static bool CheckFileSize() {
     return true;
 }
 
-// ─────────────────────────────────────────────────────────────────────
+ 
 // Check #2: Количество секций PE и наличие .vmp* секций
-// ─────────────────────────────────────────────────────────────────────
+ 
 __declspec(noinline) static bool CheckVmpSections() {
 #if defined(SHADOW_DEV_BUILD)
     return true;
@@ -155,10 +131,10 @@ __declspec(noinline) static bool CheckVmpSections() {
 #endif
 }
 
-// ─────────────────────────────────────────────────────────────────────
+ 
 // Check #3: PE OptionalHeader.CheckSum не ноль
 // (VMP всегда проставляет корректный checksum; strip-tools часто зануляют)
-// ─────────────────────────────────────────────────────────────────────
+ 
 __declspec(noinline) static bool CheckPeChecksum() {
     // УБРАНА: VMP перезаписывает PE заголовок в памяти при инициализации.
     // Чтение checksum после VMP может вернуть некорректное значение.
@@ -166,11 +142,11 @@ __declspec(noinline) static bool CheckPeChecksum() {
     return true;
 }
 
-// ─────────────────────────────────────────────────────────────────────
+ 
 // Check #4: DllCharacteristics — VMP обычно убирает DYNAMIC_BASE если
 //           выбран конкретный base address, или наоборот сохраняет ASLR.
 //           Проверяем что у нас нет флагов stripped/debug-stripped (0x0200).
-// ─────────────────────────────────────────────────────────────────────
+ 
 __declspec(noinline) static bool CheckDllCharacteristics() {
 #if defined(SHADOW_DEV_BUILD)
     return true;
@@ -185,14 +161,14 @@ __declspec(noinline) static bool CheckDllCharacteristics() {
 #endif
 }
 
-// ─────────────────────────────────────────────────────────────────────
+ 
 // Check #5: Самоproверка — читаем .text секцию и считаем CRC32.
 //           Compile-time значение хардкодится через tools/gen_text_crc.py.
 //           Если крякер пропатчил антидебаг или NOP-нул проверку → CRC меняется.
 //
 //   В SHADOW_DEV_BUILD — пропускаем (CRC меняется на каждый билд).
 //   В prod: SHADOW_TEXT_CRC32 задаётся через /D после финального билда.
-// ─────────────────────────────────────────────────────────────────────
+ 
 #ifdef SHADOW_TEXT_CRC32
 static uint32_t ComputeTextCrc32() {
     auto* nt = GetNtHeaders();
@@ -225,10 +201,10 @@ __declspec(noinline) static bool CheckTextCrc() {
 }
 #endif // SHADOW_TEXT_CRC32
 
-// ─────────────────────────────────────────────────────────────────────
+ 
 // Мастер-функция: запускает все проверки. При провале — возвращает false.
 // Вызывающий код обязан вызвать ban::Trigger(FILE_INTEGRITY_FAIL).
-// ─────────────────────────────────────────────────────────────────────
+ 
 struct IntegrityResult {
     bool file_size_ok      = true;
     bool vmp_sections_ok   = true;

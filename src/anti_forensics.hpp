@@ -1,28 +1,6 @@
-/*
- *  anti_forensics.hpp — ПРЕВЕНЦИЯ forensic-артефактов + примитивы удаления.
- *
- *  Разделение владения после переписки стека:
- *    - Этот файл: превенция (Init/Shutdown) + примитивы удаления (Wipe*),
- *      которые по одному вызывает пайплайн. Ничего не удаляет сам по себе
- *      оркестрованно — ActiveWipe как сущность убрана.
- *    - clean_pipeline.hpp: единый упорядоченный Pipeline::Run(Mode) с
- *      верификацией и без гонок — единственное место, где примитивы
- *      собираются в зачистку.
- *
- *  ПРИНЦИПЫ:
- *    1. Удаляем ТОЛЬКО следы нашего exe/маппера/драйвера-носителя — всё
- *       остальное не трогаем. Случайное имя временного .sys регистрируется
- *       через AddTraceToken() после загрузки драйвера.
- *    2. Всё, что изменяли глобально (реестр, атрибуты) — восстанавливаем при выходе.
- *    3. Shutdown() вызывается при выходе из лоадера в любом сценарии.
- *    4. Сервисы (DPS, AeLookupSvc) останавливаются через SCM API — без
- *       cmd.exe/net.exe/wevtutil дочерних процессов.
- *
- *  USN JOURNAL: записи нельзя удалить выборочно ни из юзермода, ни из ядра —
- *  только delete всего журнала. Пайплайн делает это из юзермода через
- *  FSCTL_DELETE_USN_JOURNAL ПОСЛЕДНИМ среди файловых операций и верифицирует
- *  перечитыванием (VerifyUsnJournalDeleted).
- */
+/* Init/Shutdown управляют временными настройками, Wipe-функции выполняют отдельные операции.
+ * Порядок очистки задаёт clean_pipeline.hpp. Исходные настройки нужно восстановить при выходе.
+ * USN-журнал нельзя очистить выборочно: его удаление затрагивает журнал целиком. */
 
 #pragma once
 
@@ -59,7 +37,7 @@ extern "C" {
 
 namespace shadow_af {
 
-// ─── Вспомогательные функции ─────────────────────────────────────────────────────────────
+// ─── Вспомогательные функции
 
 static void GetSelfExeName(std::string& exe_name, std::string& exe_noext, std::string& full_path) {
     char buf[MAX_PATH] = {};
@@ -104,13 +82,13 @@ static bool IsOurTrace(const std::string& s,
     return false;
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
+ 
 // 1. PREFETCH – инжектируем PrefetchMute хук в svchost (Sysmain) in-memory.
 //    Шеллкод = скомпилированный PrefetchMuteHook.dll из PrefetchMuteInjector.
 //    Алгоритм: OpenProcess(svchost+Sysmain) → VirtualAllocEx → WriteProcessMemory
 //              → CreateRemoteThread → SendRule через named pipe.
 //    Реестр НЕ трогаем. Файлы на диск НЕ пишем.
-// ─────────────────────────────────────────────────────────────────────────────
+ 
 
 // Шеллкод из PrefetchMuteInjector (base64, len=26648)
 // Это скомпилированный PrefetchMuteHook.dll - точная копия из Program.cs
@@ -645,12 +623,12 @@ static void SafeWipeFile(const std::string& path) {
     DeleteFileA(path.c_str());
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
+ 
 // 2. AmCache (VortexAmCache)
 //    Останавливаем AeLookupSvc на время работы (она пишет в Amcache.hve),
 //    удаляем ТОЛЬКО нашу запись из хива.
 //    При выходе: восстанавливаем службу в прежнее состояние.
-// ─────────────────────────────────────────────────────────────────────────────
+ 
 static bool g_aelookup_was_running = false;
 
 static void StopAeLookupSvc() {
@@ -830,11 +808,11 @@ static void WipeAmCacheEntry() {
     RegUnLoadKeyA(HKEY_LOCAL_MACHINE, TMP_KEY);
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
+ 
 // 3. UserAssist (LastActivityView)
 //    Удаляем ТОЛЬКО наш ROT-13 encoded entry.
 //    NoRecentDocsHistory — ставим флаг на время; восстанавливаем при выходе.
-// ─────────────────────────────────────────────────────────────────────────────
+ 
 static DWORD g_recentdocs_saved   = 0;
 static bool  g_recentdocs_existed = false;
 
@@ -917,9 +895,9 @@ static void RestoreRecentDocs() {
     RegCloseKey(hKey);
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
+ 
 // 4. MUICache — удаляем ТОЛЬКО наши записи
-// ─────────────────────────────────────────────────────────────────────────────
+ 
 static void WipeMuiCacheEntry() {
     std::string exe_name, exe_ne, fp;
     GetSelfExeName(exe_name, exe_ne, fp);
@@ -943,9 +921,9 @@ static void WipeMuiCacheEntry() {
     RegCloseKey(hMui);
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
+ 
 // 5. BAM (Background Activity Monitor) — удаляем ТОЛЬКО нашу запись
-// ─────────────────────────────────────────────────────────────────────────────
+ 
 static void WipeBamEntry() {
     std::string exe_name, exe_ne, fp;
     GetSelfExeName(exe_name, exe_ne, fp);
@@ -986,9 +964,9 @@ static void WipeBamEntry() {
     }
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
+ 
 // 6. Shimcache (AppCompatCache)
-// ─────────────────────────────────────────────────────────────────────────────
+ 
 static std::vector<BYTE> g_shimcache_backup;
 
 static void BackupShimcache() {
@@ -1021,9 +999,9 @@ static void RestoreShimcache() {
     g_shimcache_backup.clear();
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
+ 
 // 7. ETW — патч EtwEventWrite → ret для НАШЕГО процесса
-// ─────────────────────────────────────────────────────────────────────────────
+ 
 static void DisableEtwForProcess() {
     HMODULE hNtdll = GetModuleHandleA(xorstr_("ntdll.dll"));
     if (!hNtdll) return;
@@ -1048,9 +1026,9 @@ static void DisableEtwForProcess() {
     }
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
+ 
 // 8. LNK / Recent — удаляем ТОЛЬКО наши .lnk файлы
-// ─────────────────────────────────────────────────────────────────────────────
+ 
 static void WipeLnkEntries() {
     std::string exe_name, exe_ne, fp;
     GetSelfExeName(exe_name, exe_ne, fp);
@@ -1080,9 +1058,9 @@ static void WipeLnkEntries() {
     }
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
+ 
 // 9. Everything — скрываем exe через HIDDEN|SYSTEM атрибуты
-// ─────────────────────────────────────────────────────────────────────────────
+ 
 static void HideExeFromEverything() {
     // Disabled per user request
 }
@@ -1091,9 +1069,9 @@ static void RestoreExeAttributes() {
     // Disabled per user request
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
+ 
 // 10. RecentDocs в реестре — удаляем только записи с нашим именем
-// ─────────────────────────────────────────────────────────────────────────────
+ 
 static void WipeRecentDocsRegistry() {
     std::string exe_name, exe_ne, fp;
     GetSelfExeName(exe_name, exe_ne, fp);
@@ -1138,9 +1116,9 @@ static void WipeRecentDocsRegistry() {
     RegCloseKey(hRD);
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
+ 
 // 11. AppCompatFlags
-// ─────────────────────────────────────────────────────────────────────────────
+ 
 static void WipeAppCompatFlags() {
     std::string exe_name, exe_ne, fp;
     GetSelfExeName(exe_name, exe_ne, fp);
@@ -1178,9 +1156,9 @@ static void WipeAppCompatFlags() {
     }
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
+ 
 // 12. ShellBags 
-// ─────────────────────────────────────────────────────────────────────────────
+ 
 static void WipeShellBagsSelective() {
     std::string exe_name, exe_ne, fp;
     GetSelfExeName(exe_name, exe_ne, fp);
@@ -1289,9 +1267,9 @@ static void WipeShellBagsSelective() {
     }
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
+ 
 // 13. Explorer MRU-ключи
-// ─────────────────────────────────────────────────────────────────────────────
+ 
 static void WipeExplorerMRUKeys() {
     std::string exe_name, exe_ne, fp;
     GetSelfExeName(exe_name, exe_ne, fp);
@@ -1328,9 +1306,9 @@ static void WipeExplorerMRUKeys() {
     }
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
+ 
 // 14. Zone.Identifier ADS
-// ─────────────────────────────────────────────────────────────────────────────
+ 
 static void WipeZoneIdentifier() {
     char path[MAX_PATH] = {};
     GetModuleFileNameA(nullptr, path, MAX_PATH);
@@ -1340,9 +1318,9 @@ static void WipeZoneIdentifier() {
     DeleteFileA(ss_ads.c_str());
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
+ 
 // 15. DNS Cache
-// ─────────────────────────────────────────────────────────────────────────────
+ 
 static void WipeDnsCache() {
     HMODULE hDns = LoadLibraryA(xorstr_("dnsapi.dll"));
     if (!hDns) return;
@@ -1363,9 +1341,9 @@ static void WipeDnsCache() {
     FreeLibrary(hDns);
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
+ 
 // 16. Windows Timeline (Activity Cache)
-// ─────────────────────────────────────────────────────────────────────────────
+ 
 static DWORD g_timeline_saved   = 1;
 static bool  g_timeline_existed = false;
 // Prior state of the two values that were previously always deleted on exit.
@@ -1451,10 +1429,10 @@ static void RestoreTimeline() {
     }
 }
 
-// в”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђ
-// 17. Windows Error Reporting вЂ” WER РјРѕР¶РµС‚ СЃРѕР·РґР°РІР°С‚СЊ .wer Рё crash-dump С„Р°Р№Р»С‹
-//     РћС‚РєР»СЋС‡Р°РµРј WER РґР»СЏ РЅР°С€РµРіРѕ РїСЂРѕС†РµСЃСЃР° С‡РµСЂРµР· РєРѕРЅС„РёРіСѓСЂР°С†РёСЋ + СѓРґР°Р»СЏРµРј temp-С„Р°Р№Р»С‹
-// в”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђ
+ 
+// 17. Windows Error Reporting — WER может создавать .wer и crash-dump файлы
+// Отключаем WER для нашего процесса через конфигурацию + удаляем temp-файлы
+ 
 static bool g_wer_disabled = false;
 // Prior values, so exit restores the user's own WER configuration instead of
 // deleting it.
@@ -1464,7 +1442,7 @@ static bool g_wer_disabled_existed = false;
 static bool g_wer_dontsend_existed = false;
 
 static void DisableWer() {
-    // РћС‚РєР»СЋС‡Р°РµРј WER С‡РµСЂРµР· LocalDumps РїРѕР»РёС‚РёРєСѓ РґР»СЏ РЅР°С€РµРіРѕ exe
+    // Отключаем WER через LocalDumps политику для нашего exe
     HKEY hKey;
     const char* WER_REG =
         xorstr_("SOFTWARE\\Microsoft\\Windows\\Windows Error Reporting");
@@ -1485,7 +1463,7 @@ static void DisableWer() {
                 ERROR_SUCCESS &&
             type == REG_DWORD;
 
-        // Disabled = 1 в†’ WER РЅРµ Р·Р°РїСѓСЃРєР°РµС‚СЃСЏ РїСЂРё РєСЂСЌС€Рµ РЅР°С€РµРіРѕ РїСЂРѕС†РµСЃСЃР°
+        // Disabled = 1 → WER не запускается при крэше нашего процесса
         DWORD one = 1;
         RegSetValueExA(hKey, xorstr_("Disabled"), 0, REG_DWORD, (BYTE*)&one, sizeof(one));
         RegSetValueExA(hKey, xorstr_("DontSendAdditionalData"), 0, REG_DWORD, (BYTE*)&one, sizeof(one));
@@ -1493,13 +1471,13 @@ static void DisableWer() {
         g_wer_disabled = true;
     }
 
-    // РЈРґР°Р»СЏРµРј СѓР¶Рµ СЃРѕР·РґР°РЅРЅС‹Рµ WER temp-С„Р°Р№Р»С‹ РґР»СЏ РЅР°С€РµРіРѕ exe
+    // Удаляем уже созданные WER temp-файлы для нашего exe
     char temp[MAX_PATH] = {};
     GetTempPathA(MAX_PATH, temp);
     std::string exe_name, exe_ne, fp;
     GetSelfExeName(exe_name, exe_ne, fp);
 
-    // WER СЃРѕР·РґР°С‘С‚ С„Р°Р№Р»С‹ РІРёРґР°: WER{pid}.tmp Рё РѕС‚С‡С‘С‚С‹ РІ %AppData%\Microsoft\Windows\WER\ReportQueue
+    // WER создаёт файлы вида: WER{pid}.tmp и отчёты в %AppData%\Microsoft\Windows\WER\ReportQueue
     char appdata[MAX_PATH] = {};
     if (SUCCEEDED(SHGetFolderPathA(nullptr, CSIDL_APPDATA, nullptr, 0, appdata))) {
         std::string wer_dir = std::string(appdata) + xorstr_("\\Microsoft\\Windows\\WER\\ReportQueue");
@@ -1512,9 +1490,9 @@ static void DisableWer() {
                 if (!(fd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY)) continue;
                 if (std::string(fd.cFileName) == "." || std::string(fd.cFileName) == "..") continue;
                 if (IsOurTrace(fd.cFileName, exe_name, exe_ne)) {
-                    // РЈРґР°Р»СЏРµРј РІСЃСЋ РїР°РїРєСѓ РѕС‚С‡С‘С‚Р°
+                    // Удаляем всю папку отчёта
                     std::string dir_path = wer_dir + xorstr_("\\") + fd.cFileName;
-                    // РЈРґР°Р»СЏРµРј С„Р°Р№Р»С‹ РІРЅСѓС‚СЂРё
+                    // Удаляем файлы внутри
                     std::string inner = dir_path + xorstr_("\\*");
                     WIN32_FIND_DATAA ifd;
                     HANDLE hInner = FindFirstFileA(inner.c_str(), &ifd);
@@ -1556,12 +1534,12 @@ static void RestoreWer() {
     g_wer_disabled = false;
 }
 
-// в”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђ
-// 18. Process Audit Policy (Event 4688) вЂ” РІСЂРµРјРµРЅРЅРѕ РѕС‚РєР»СЋС‡Р°РµРј Р°СѓРґРёС‚ СЃРѕР·РґР°РЅРёСЏ
-//     РїСЂРѕС†РµСЃСЃРѕРІ. РЎРѕР±С‹С‚РёРµ 4688 РґР»СЏ РЅР°С€РµРіРѕ РїСЂРѕС†РµСЃСЃР° СѓР¶Рµ СЃРѕР·РґР°РЅРѕ (РЅРµ СѓР±СЂР°С‚СЊ),
-//     РЅРѕ РґРѕС‡РµСЂРЅРёРµ РїСЂРѕС†РµСЃСЃС‹ (e.g. cmd.exe РґР»СЏ cleanup) РЅРµ Р±СѓРґСѓС‚ Р·Р°Р»РѕРіРёСЂРѕРІР°РЅС‹.
-//     Р’РѕСЃСЃС‚Р°РЅР°РІР»РёРІР°РµРј РїСЂРё РІС‹С…РѕРґРµ.
-// в”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђ
+ 
+// 18. Process Audit Policy (Event 4688) — временно отключаем аудит создания
+// процессов. Событие 4688 для нашего процесса уже создано (не убрать),
+// но дочерние процессы (e.g. cmd.exe для cleanup) не будут залогированы.
+// Восстанавливаем при выходе.
+ 
 // Process Creation audit subcategory GUID.
 static const GUID kAuditProcessCreation = {
     0x0cce922b, 0x69ae, 0x11d9,
@@ -1623,10 +1601,10 @@ static void RestoreProcessAudit() {
     g_audit_changed = false;
 }
 
-// в”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђ
-// 19. Jump Lists вЂ” .automaticDestinations-ms С„Р°Р№Р»С‹ СЃРѕРґРµСЂР¶Р°С‚ СЃРїРёСЃРѕРє РЅРµРґР°РІРЅРёС…
-//     РґРѕРєСѓРјРµРЅС‚РѕРІ РґР»СЏ РєР°Р¶РґРѕРіРѕ AppID. РЎРєР°РЅРёСЂСѓРµРј РЅР° РЅР°С€ AppID/РёРјСЏ exe.
-// в”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђ
+ 
+// 19. Jump Lists — .automaticDestinations-ms файлы содержат список недавних
+// документов для каждого AppID. Сканируем на наш AppID/имя exe.
+ 
 static void WipeJumpLists() {
     std::string exe_name, exe_ne, fp;
     GetSelfExeName(exe_name, exe_ne, fp);
@@ -1649,7 +1627,7 @@ static void WipeJumpLists() {
         do {
             if (fd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) continue;
             std::string full = dir + xorstr_("\\") + fd.cFileName;
-            // Р§РёС‚Р°РµРј РїРµСЂРІС‹Рµ 4KB С„Р°Р№Р»Р°, РёС‰РµРј РёРјСЏ РЅР°С€РµРіРѕ exe
+            // Читаем первые 4KB файла, ищем имя нашего exe
             HANDLE hF = CreateFileA(full.c_str(), GENERIC_READ, FILE_SHARE_READ,
                                     nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
             if (hF == INVALID_HANDLE_VALUE) continue;
@@ -1664,31 +1642,31 @@ static void WipeJumpLists() {
     }
 }
 
-// в”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђ
-// 20. Thumbnail Cache вЂ” СѓРґР°Р»СЏРµРј thumbcache РµСЃР»Рё РЅР°С€Р° РїР°РїРєР° Р±С‹Р»Р° РїСЂРѕРёРЅРґРµРєСЃРёСЂРѕРІР°РЅР°
+ 
+// 20. Thumbnail Cache — удаляем thumbcache если наша папка была проиндексирована
 //     Thumbcache_{size}.db РІ %LocalAppData%\Microsoft\Windows\Explorer
-// в”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђ
+ 
 static void WipeThumbnailCache() {
-    // Thumbnail cache РѕР±РЅРѕРІР»СЏРµС‚СЃСЏ С‚РѕР»СЊРєРѕ РїСЂРё РїСЂРѕСЃРјРѕС‚СЂРµ РїР°РїРєРё РІ Explorer
-    // Р•СЃР»Рё РїРѕР»СЊР·РѕРІР°С‚РµР»СЊ РѕС‚РєСЂС‹РІР°Р» РїР°РїРєСѓ СЃ РЅР°С€РёРј exe вЂ” С‚Р°Рј РјРѕР¶РµС‚ Р±С‹С‚СЊ Р·Р°РїРёСЃСЊ
-    // РЎР°РјС‹Р№ Р±РµР·РѕРїР°СЃРЅС‹Р№ РїСѓС‚СЊ: СѓРґР°Р»РёС‚СЊ thumbcache_{x}.db С„Р°Р№Р»С‹ (Explorer РїРµСЂРµСЃРѕР·РґР°СЃС‚)
-    // РќРѕ СЌС‚Рѕ Р·Р°С‚СЂРѕРЅРµС‚ Р’РЎР• РєСЌС€Рё вЂ” РїРѕСЌС‚РѕРјСѓ РїСЂРѕСЃС‚Рѕ СЃР±СЂР°СЃС‹РІР°РµРј thumbcache db С„Р°Р№Р»С‹
-    // С‡РµСЂРµР· РѕСЃС‚Р°РЅРѕРІРєСѓ Explorer thumbnail service (COMSurrogate)
-    // РќР° СЃР°РјРѕРј РґРµР»Рµ вЂ” РјС‹ РќР• РўР РћР“РђР•Рњ thumbcache (Р·Р°С‚СЂРѕРЅСѓР» Р±С‹ РІСЃРµС… РїРѕР»СЊР·РѕРІР°С‚РµР»РµР№)
-    // Р’РјРµСЃС‚Рѕ СЌС‚РѕРіРѕ РїСЂРѕСЃС‚Рѕ СѓР±РµР¶РґР°РµРјСЃСЏ С‡С‚Рѕ РЅР°С€ exe РќР• РёРјРµР» РёРєРѕРЅРєРё Windows Explorer
-    // (СѓР¶Рµ СЃРґРµР»Р°РЅРѕ С‡РµСЂРµР· HIDDEN|SYSTEM Р°С‚СЂРёР±СѓС‚С‹ вЂ” Explorer РЅРµ РіРµРЅРµСЂРёСЂРѕРІР°Р» thumbnail)
-    (void)0; // РЅР°РјРµСЂРµРЅРЅРѕ РїСѓСЃС‚Рѕ вЂ” СЃРј. РєРѕРјРјРµРЅС‚Р°СЂРёР№ РІС‹С€Рµ
+    // Thumbnail cache обновляется только при просмотре папки в Explorer
+    // Если пользователь открывал папку с нашим exe — там может быть запись
+    // Самый безопасный путь: удалить thumbcache_{x}.db файлы (Explorer пересоздаст)
+    // Но это затронет ВСЕ кэши — поэтому просто сбрасываем thumbcache db файлы
+    // через остановку Explorer thumbnail service (COMSurrogate)
+    // На самом деле — мы НЕ ТРОГАЕМ thumbcache (затронул бы всех пользователей)
+    // Вместо этого просто убеждаемся что наш exe НЕ имел иконки Windows Explorer
+    // (уже сделано через HIDDEN|SYSTEM атрибуты — Explorer не генерировал thumbnail)
+    (void)0; // намеренно пусто — см. комментарий выше
 }
 
-// в”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђ
-// 21. Network List вЂ” РёСЃС‚РѕСЂРёСЏ РїРѕРґРєР»СЋС‡РµРЅРёР№ Рє СЃРµС‚СЏРј РїСЂРё РёСЃРїРѕР»СЊР·РѕРІР°РЅРёРё WinHTTP/WinInet
-//     РЈРґР°Р»СЏРµРј Р·Р°РїРёСЃСЊ РЅР°С€РµРіРѕ РїСЂРѕС†РµСЃСЃР° РёР· NetworkList Profile
-// в”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђ
+ 
+// 21. Network List — история подключений к сетям при использовании WinHTTP/WinInet
+// Удаляем запись нашего процесса из NetworkList Profile
+ 
 static void WipeNetworkListEntries() {
     // HKLM\SOFTWARE\Microsoft\Windows NT\CurrentVersion\NetworkList\Profiles
-    // РљР°Р¶РґС‹Р№ РїСЂРѕС„РёР»СЊ СЃРѕРґРµСЂР¶РёС‚ РїРѕР»Рµ Description Рё DateLastConnected
-    // РњС‹ РЅРµ СЃРѕР·РґР°С‘Рј РЅРѕРІС‹С… СЃРµС‚РµР№ вЂ” РїСЂРѕСЃС‚Рѕ С‡РёСЃС‚РёРј Signatures\Unmanaged
-    // (Р·Р°РїРёСЃРё Рѕ РїРѕРґРєР»СЋС‡РµРЅРёРё Рє РєРѕРЅРєСЂРµС‚РЅС‹Рј С…РѕСЃС‚Р°Рј)
+    // Каждый профиль содержит поле Description и DateLastConnected
+    // Мы не создаём новых сетей — просто чистим Signatures\Unmanaged
+    // (записи о подключении к конкретным хостам)
     const char* NL_KEYS[] = {
         xorstr_("SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion\\NetworkList\\Signatures\\Unmanaged"),
         xorstr_("SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion\\NetworkList\\Signatures\\Managed"),
@@ -1717,7 +1695,7 @@ static void WipeNetworkListEntries() {
                 if (RegQueryValueExA(hSub, xorstr_("DnsSuffix"), nullptr, nullptr,
                                      (BYTE*)dns, &dsz) == ERROR_SUCCESS) {
                     std::string dns_str(dns, dsz);
-                    // shadowcheats.cc РёР»Рё РЅР°С€Рё РґРѕРјРµРЅС‹
+                    // shadowcheats.cc или наши домены
                     if (dns_str.find(xorstr_("shadowcheats")) != std::string::npos)
                         bad_keys.push_back(kname);
                 }
@@ -1730,20 +1708,20 @@ static void WipeNetworkListEntries() {
     }
 }
 
-// в”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђ
-// INIT вЂ” РІС‹Р·С‹РІР°РµС‚СЃСЏ РІ СЃР°РјРѕРј РЅР°С‡Р°Р»Рµ wWinMain (Р”Рћ ShowWindow, Р”Рћ Р»СЋР±С‹С… РѕРїРµСЂР°С†РёР№)
+ 
+// INIT — вызывается в самом начале wWinMain (ДО ShowWindow, ДО любых операций)
 //
 // РўРћР›Р¬РљРћ РїСЂРµРІРµРЅС‚РёРІРЅС‹Рµ РґРµР№СЃС‚РІРёСЏ вЂ” РїРѕРґР°РІР»СЏРµРј РЎРћР—Р”РђРќРР• РЅРѕРІС‹С… Р»РѕРіРѕРІ.
-// РќРёС‡РµРіРѕ РЅРµ С‡РёСЃС‚РёРј: РЅРµС‡РµРіРѕ С‡РёСЃС‚РёС‚СЊ, РїРѕС‚РѕРјСѓ С‡С‚Рѕ РІСЃС‘ Р·Р°Р±Р»РѕРєРёСЂРѕРІР°РЅРѕ Р·Р°СЂР°РЅРµРµ.
-// в”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђ
-// ─────────────────────────────────────────────────────────────────────────────
+// Ничего не чистим: нечего чистить, потому что всё заблокировано заранее.
+ 
+ 
 // 22. USN Journal — usermode deletion via FSCTL_DELETE_USN_JOURNAL.
 //     The journal cannot be edited per-record from usermode: the only API is
 //     delete-the-whole-journal. We run this on the system drive and on the
 //     drive the loader lives on. The kernel cleanup path does the same through
 //     ZwFsControlFile; this usermode pass runs first so a no-driver cleanup
 //     still covers Echo-Journal / JournalTrace.
-// ─────────────────────────────────────────────────────────────────────────────
+ 
 static void DeleteUsnJournalOnVolume(wchar_t drive) {
     wchar_t vol_path[8] = { L'\\', L'\\', L'.', L'\\', drive, L':', 0, 0 };
     HANDLE hVol = CreateFileW(vol_path, GENERIC_READ | GENERIC_WRITE,
@@ -1805,7 +1783,7 @@ static bool VerifyUsnJournalDeleted() {
     return sys_gone && self_gone;
 }
 
-// ─── Сервисы через SCM API (без cmd.exe / net.exe дочерних процессов) ──────
+// ─── Сервисы через SCM API (без cmd.exe / net.exe дочерних процессов)
 static bool IsServiceRunning(const char* name) {
     SC_HANDLE hScm = OpenSCManagerA(nullptr, nullptr, SC_MANAGER_CONNECT);
     if (!hScm) return true; // не знаем — считаем запущенным (не форсируем SRUM)
@@ -1858,13 +1836,13 @@ static void RestoreDpsSvc() {
     g_dps_was_running = false;
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
+ 
 // 23. SRUM (NetworkUsageView) — remove our process rows from SRUDB.dat.
 //     DPS (the SRU collector) is already stopped by DPSGuard for the whole
 //     loader session, so the ESE database is free to open read-write.
 //     Surgical: delete only rows whose IdBlob names our exe; everything else
 //     in the database stays untouched.
-// ─────────────────────────────────────────────────────────────────────────────
+ 
 typedef long AF_JET_ERR;
 typedef void* AF_JET_INSTANCE;
 typedef void* AF_JET_SESID;
@@ -2051,10 +2029,10 @@ static void WipeSrumRecords() {
     FreeLibrary(a.dll);
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
+ 
 // 24. CrashDumps / ReportArchive — delete existing dumps and WER archives that
 //     name our image. DisableWer() stops NEW reports; this clears OLD ones.
-// ─────────────────────────────────────────────────────────────────────────────
+ 
 static void WipeDirectoryEntriesMatching(const std::string& dir,
                                          const std::string& exe_name,
                                          const std::string& exe_ne) {
@@ -2108,12 +2086,12 @@ static void WipeCrashDumps() {
     }
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
+ 
 // 26. Sibling loader copies — the user often has more than one copy of the
 //     loader on disk (Downloads\loader (2).exe next to the running one).
 //     Self-delete only removes the running image; on Clean we also wipe every
 //     <ourname>*.exe in Downloads and Desktop so no spare copy survives.
-// ─────────────────────────────────────────────────────────────────────────────
+ 
 static void WipeSiblingLoaderCopies() {
     std::string exe_name, exe_ne, fp;
     GetSelfExeName(exe_name, exe_ne, fp);
@@ -2146,11 +2124,11 @@ static void WipeSiblingLoaderCopies() {
     }
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
+ 
 // 25. Own Prefetch file — the Sysmain mute hook prevents creation while we
 //     run, but our process starts before the hook lands, so a .pf can exist
 //     from the first seconds. Overwrite+delete it on the way out.
-// ─────────────────────────────────────────────────────────────────────────────
+ 
 static void WipeOwnPrefetch() {
     std::string exe_name, exe_ne, fp;
     GetSelfExeName(exe_name, exe_ne, fp);
@@ -2177,8 +2155,8 @@ inline void Init() {
     //    -> .pf файл нашего exe не будет создан вообще
     InjectPrefetchMuteHook();
 
-    // 2. AmCache: РѕСЃС‚Р°РЅР°РІР»РёРІР°РµРј AeLookupSvc (СЃРѕС…СЂР°РЅСЏРµРј СЃС‚Р°С‚СѓСЃ РґР»СЏ restore)
-    //    в†’ Р·Р°РїРёСЃСЊ РІ Amcache.hve РЅРµ РїСЂРѕРёР·РѕР№РґС‘С‚ РїРѕРєР° СЃР»СѓР¶Р±Р° СЃС‚РѕРёС‚
+    // 2. AmCache: останавливаем AeLookupSvc (сохраняем статус для restore)
+    // → запись в Amcache.hve не произойдёт пока служба стоит
     StopAeLookupSvc();
 
     // 2b. SRUM: останавливаем DPS (SRU collector) через SCM API — без
@@ -2186,85 +2164,85 @@ inline void Init() {
     //     main.cpp через `cmd /c net stop` + на выходе `wevtutil cl`.
     StopDpsSvc();
 
-    // 3. RecentDocs: РѕС‚РєР»СЋС‡Р°РµРј Р·Р°РїРёСЃСЊ (СЃРѕС…СЂР°РЅСЏРµРј РѕСЂРёРіРёРЅР°Р» С„Р»Р°РіР° РґР»СЏ restore)
-    //    в†’ LNK Рё Recent Docs РЅРµ СЃРѕР·РґР°СЋС‚СЃСЏ РїРѕРєР° С„Р»Р°Рі РІС‹СЃС‚Р°РІР»РµРЅ
+    // 3. RecentDocs: отключаем запись (сохраняем оригинал флага для restore)
+    // → LNK и Recent Docs не создаются пока флаг выставлен
     DisableRecentDocs();
 
-    // 4. Shimcache: СЃРѕС…СЂР°РЅСЏРµРј С‚РµРєСѓС‰РёР№ blob вЂ” РІРѕСЃСЃС‚Р°РЅРѕРІРёРј РµРіРѕ РїСЂРё РІС‹С…РѕРґРµ
-    //    в†’ Windows РїРѕРїС‹С‚Р°РµС‚СЃСЏ РґРѕР±Р°РІРёС‚СЊ РЅР°С€ entry РїСЂРё ExitProcess,
-    //       РЅРѕ РјС‹ СѓСЃРїРµРµРј РІРѕСЃСЃС‚Р°РЅРѕРІРёС‚СЊ РѕСЂРёРіРёРЅР°Р» Р”Рћ СЌС‚РѕРіРѕ РІ Shutdown()
+    // 4. Shimcache: сохраняем текущий blob — восстановим его при выходе
+    // → Windows попытается добавить наш entry при ExitProcess,
+    // но мы успеем восстановить оригинал ДО этого в Shutdown()
     BackupShimcache();
 
-    // 5. ETW: РїР°С‚С‡ EtwEventWriteв†’ret С‚РѕР»СЊРєРѕ РІ РЅР°С€РµРј process address space
-    //    в†’ РЅР°С€ РїСЂРѕС†РµСЃСЃ РЅРµ РіРµРЅРµСЂРёСЂСѓРµС‚ РЅРё РѕРґРЅРѕРіРѕ Event Log СЃРѕР±С‹С‚РёСЏ
+    // 5. ETW: патч EtwEventWrite→ret только в нашем process address space
+    // → наш процесс не генерирует ни одного Event Log события
     DisableEtwForProcess();
 
-    // 6. Windows Timeline: РѕС‚РєР»СЋС‡Р°РµРј ActivityFeed (СЃРѕС…СЂР°РЅСЏРµРј РѕСЂРёРіРёРЅР°Р»)
-    //    в†’ Timeline РЅРµ РїРёС€РµС‚ РЅР°С€Рё Р°РєС‚РёРІРЅРѕСЃС‚Рё
+    // 6. Windows Timeline: отключаем ActivityFeed (сохраняем оригинал)
+    // → Timeline не пишет наши активности
     DisableTimeline();
 
-    // 7. WER: РѕС‚РєР»СЋС‡Р°РµРј Windows Error Reporting РґР»СЏ РЅР°С€РµРіРѕ РїСЂРѕС†РµСЃСЃР°
-    //    в†’ crash dump Рё .wer РЅРµ СЃРѕР·РґР°СЋС‚СЃСЏ
+    // 7. WER: отключаем Windows Error Reporting для нашего процесса
+    // → crash dump и .wer не создаются
     DisableWer();
 
-    // 8. Process Audit: РѕС‚РєР»СЋС‡Р°РµРј 4688 events С‡РµСЂРµР· auditpol
-    //    в†’ РґРѕС‡РµСЂРЅРёРµ РїСЂРѕС†РµСЃСЃС‹ РЅРµ Р»РѕРіРёСЂСѓСЋС‚СЃСЏ (РЅР°С€ 4688 СѓР¶Рµ СЃРѕР·РґР°РЅ РћРЎ, РЅРѕ РЅРµ Р±СѓРґСѓС‰РёРµ)
+    // 8. Process Audit: отключаем 4688 events через auditpol
+    // → дочерние процессы не логируются (наш 4688 уже создан ОС, но не будущие)
     DisableProcessAudit();
 
-    // 9. Zone.Identifier ADS: СѓРґР°Р»СЏРµРј РјРµС‚РєСѓ "СЃРєР°С‡Р°РЅРѕ РёР· РёРЅС‚РµСЂРЅРµС‚Р°"
-    //    в†’ РїСЂРµРІРµРЅС‚РёРІРЅРѕ (РјРѕРі Р±С‹С‚СЊ РїРѕСЃС‚Р°РІР»РµРЅ РїСЂРё СЃРєР°С‡РёРІР°РЅРёРё exe)
+    // 9. Zone.Identifier ADS: удаляем метку "скачано из интернета"
+    // → превентивно (мог быть поставлен при скачивании exe)
     WipeZoneIdentifier();
 
-    // 10. Everything: СЃС‚Р°РІРёРј HIDDEN|SYSTEM Р°С‚СЂРёР±СѓС‚С‹ РЅР° РЅР°С€ exe
-    //     в†’ Everything РЅРµ РёРЅРґРµРєСЃРёСЂСѓРµС‚ hidden|system С„Р°Р№Р»С‹ РїРѕ СѓРјРѕР»С‡Р°РЅРёСЋ
+    // 10. Everything: ставим HIDDEN|SYSTEM атрибуты на наш exe
+    // → Everything не индексирует hidden|system файлы по умолчанию
     HideExeFromEverything();
 }
 
-// в”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђ
-// SHUTDOWN вЂ” РІС‹Р·С‹РІР°РµС‚СЃСЏ Р”Рћ РІС‹С…РѕРґР° РёР· РїСЂРѕС†РµСЃСЃР° (РїСЂРё Р»СЋР±РѕРј СЃС†РµРЅР°СЂРёРё РІС‹С…РѕРґР°)
+ 
+// SHUTDOWN — вызывается ДО выхода из процесса (при любом сценарии выхода)
 //
-// РўРћР›Р¬РљРћ РІРѕСЃСЃС‚Р°РЅР°РІР»РёРІР°РµРј РІСЃС‘ С‡С‚Рѕ РјРµРЅСЏР»Рё РІ Init().
-// РЎРёСЃС‚РµРјР° РІРѕР·РІСЂР°С‰Р°РµС‚СЃСЏ РІ РёСЃС…РѕРґРЅРѕРµ СЃРѕСЃС‚РѕСЏРЅРёРµ вЂ” РЅРёРєР°РєРёС… СЃР»РµРґРѕРІ РІРјРµС€Р°С‚РµР»СЊСЃС‚РІР°.
-// в”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђ
+// ТОЛЬКО восстанавливаем всё что меняли в Init().
+// Система возвращается в исходное состояние — никаких следов вмешательства.
+ 
 inline void Shutdown() {
-    // Р’РѕСЃСЃС‚Р°РЅР°РІР»РёРІР°РµРј Р°С‚СЂРёР±СѓС‚С‹ exe (СѓР±РёСЂР°РµРј HIDDEN|SYSTEM)
+    // Восстанавливаем атрибуты exe (убираем HIDDEN|SYSTEM)
     RestoreExeAttributes();
 
-    // Р’РѕСЃСЃС‚Р°РЅР°РІР»РёРІР°РµРј Shimcache С‚РѕС‡РЅРѕ РІ РѕСЂРёРіРёРЅР°Р»СЊРЅРѕРµ СЃРѕСЃС‚РѕСЏРЅРёРµ
-    // (РЅР°С€ entry РЅРµ РїРѕРїР°РґС‘С‚ С‚СѓРґР° вЂ” РјС‹ РІС‹Р·С‹РІР°РµРј СЌС‚Рѕ Р”Рћ ExitProcess)
+    // Восстанавливаем Shimcache точно в оригинальное состояние
+    // (наш entry не попадёт туда — мы вызываем это ДО ExitProcess)
     RestoreShimcache();
 
-    // Р’РѕСЃСЃС‚Р°РЅР°РІР»РёРІР°РµРј С„Р»Р°Рі NoRecentDocsHistory РІ РѕСЂРёРіРёРЅР°Р»СЊРЅРѕРµ Р·РЅР°С‡РµРЅРёРµ
+    // Восстанавливаем флаг NoRecentDocsHistory в оригинальное значение
     RestoreRecentDocs();
 
     // RestorePrefetch не нужен, хук только in-memory
 
-    // Р’РѕСЃСЃС‚Р°РЅР°РІР»РёРІР°РµРј AeLookupSvc РІ РёСЃС…РѕРґРЅРѕРµ СЃРѕСЃС‚РѕСЏРЅРёРµ
+    // Восстанавливаем AeLookupSvc в исходное состояние
     RestoreAeLookupSvc();
 
     // Рестартуем DPS (SRU collector), если он был запущен до нас
     RestoreDpsSvc();
 
-    // Р’РѕСЃСЃС‚Р°РЅР°РІР»РёРІР°РµРј Timeline РїРѕР»РёС‚РёРєСѓ
+    // Восстанавливаем Timeline политику
     RestoreTimeline();
 
-    // Р’РѕСЃСЃС‚Р°РЅР°РІР»РёРІР°РµРј WER (СѓРґР°Р»СЏРµРј РІС‹СЃС‚Р°РІР»РµРЅРЅС‹Р№ РЅР°РјРё Disabled С„Р»Р°Рі)
+    // Восстанавливаем WER (удаляем выставленный нами Disabled флаг)
     RestoreWer();
 
-    // Р’РѕСЃСЃС‚Р°РЅР°РІР»РёРІР°РµРј Process Audit policy
+    // Восстанавливаем Process Audit policy
     RestoreProcessAudit();
 
     // Удаляем наш .pf, если Sysmain успел создать его до установки хука.
     WipeOwnPrefetch();
 }
 
-// в”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђ
-// ACTIVEWIPE вЂ” РІС‹Р·С‹РІР°РµС‚СЃСЏ РўРћР›Р¬РљРћ РєРЅРѕРїРєРѕР№ "Clean" РІ UI.
+ 
+// ACTIVEWIPE — вызывается ТОЛЬКО кнопкой "Clean" в UI.
 //
-// РђРєС‚РёРІРЅРѕ СѓРґР°Р»СЏРµС‚ СѓР¶Рµ СЃСѓС‰РµСЃС‚РІСѓСЋС‰РёРµ Р°СЂС‚РµС„Р°РєС‚С‹ (СЃР»РµРґС‹ СЃС‚Р°СЂС‹С… Р·Р°РїСѓСЃРєРѕРІ +
-// С‚Рѕ С‡С‚Рѕ РЅР°РєРѕРїРёР»РѕСЃСЊ Р·Р° С‚РµРєСѓС‰СѓСЋ СЃРµСЃСЃРёСЋ).
+// Активно удаляет уже существующие артефакты (следы старых запусков +
+// то что накопилось за текущую сессию).
 // Init() Рє СЌС‚РѕРјСѓ РјРѕРјРµРЅС‚Сѓ СѓР¶Рµ Р±Р»РѕРєРёСЂСѓРµС‚ РЎРћР—Р”РђРќРР• РЅРѕРІС‹С… вЂ” Р·РґРµСЃСЊ С‡РёСЃС‚РёРј РЎРўРђР Р«Р•.
-// в”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђ
+ 
 // Активная зачистка переехала в clean_pipeline.hpp (Pipeline::Run) —
 // упорядоченная, с верификацией и без гонок. Здесь остаются только превенция
 // (Init/Shutdown) и примитивы, которые пайплайн вызывает по одному.
